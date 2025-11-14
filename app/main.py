@@ -1,0 +1,34 @@
+# app/main.py
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+
+from app.routers.health import router as health_router
+from app.routers.leads import router as leads_router
+from app.routers.kanban import router as kanban_router
+from app.routers.diagnostic import router as diagnostic_router
+from app.core.config import settings
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version="0.1.0",
+)
+
+
+@app.get("/", include_in_schema=False)
+@app.get("", include_in_schema=False)
+def root():
+    return {"message": "backend no ar"}
+
+app.include_router(diagnostic_router)
+app.include_router(health_router)
+app.include_router(leads_router)
+app.include_router(kanban_router)
+
+
+@app.on_event("startup")
+async def print_routes():
+    print("=== ROTAS REGISTRADAS ===")
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            print(f"{sorted(route.methods)} -> {route.path}")
+    print("=========================")
