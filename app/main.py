@@ -1,6 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers.health import router as health_router
 from app.routers.leads import router as leads_router
@@ -13,6 +14,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
+origins = [
+    "http://localhost:3000",                # dev
+    "https://app.autentika.com.br",         # ajustar para o domínio real
+    "https://contemplahub.vercel.app",      # exemplo, se usar Vercel
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/", include_in_schema=False)
 @app.get("", include_in_schema=False)

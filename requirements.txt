@@ -1,4 +1,5 @@
 pydantic~=2.12.4
+uvicorn[standard]
 python-dotenv~=1.0.1
 supabase~=2.24.0
 fastapi~=0.121.1
