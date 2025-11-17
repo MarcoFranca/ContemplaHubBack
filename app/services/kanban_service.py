@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any  # garante Any aqui
+from typing import Any, Dict, List, Optional
 
 from supabase import Client
 
-from app.schemas.kanban import KanbanSnapshot, LeadCard, Stage, KanbanMetrics
+from app.schemas.kanban import KanbanSnapshot, LeadCard, Stage, KanbanMetrics, Interest
 
 
 def _empty_columns() -> Dict[Stage, List[LeadCard]]:
@@ -29,12 +29,14 @@ def build_kanban_snapshot(
 ) -> KanbanSnapshot:
     """
     Monta o snapshot de Kanban a partir da tabela leads,
-    já enriquecendo com o interesse aberto mais recente.
+    enriquecendo com:
+      - interesse aberto mais recente (lead_interesses)
+      - scores de diagnóstico (lead_diagnosticos)
     """
 
     # 1) Quais etapas vamos buscar
     if not show_active and not show_lost:
-        stages: list[Stage] = ["novo", "diagnostico", "proposta", "negociacao", "contrato"]
+        stages: List[Stage] = ["novo", "diagnostico", "proposta", "negociacao", "contrato"]
     elif show_active and not show_lost:
         stages = ["ativo"]
     elif show_lost and not show_active:
@@ -42,7 +44,7 @@ def build_kanban_snapshot(
     else:
         stages = ["ativo", "perdido"]
 
-    # 2) Busca os leads
+    # 2) Busca os leads da organização nessas etapas
     resp = (
         supa.table("leads")
         .select(
@@ -52,11 +54,22 @@ def build_kanban_snapshot(
         .in_("etapa", stages)
         .execute()
     )
-    rows: list[dict[str, Any]] = resp.data or []
+    rows: List[Dict[str, Any]] = resp.data or []
 
-    # 3) Se tivermos leads, busca o interesse aberto mais recente para cada um
-    interests_by_lead: Dict[str, dict] = {}
-    lead_ids = [r["id"] for r in rows]
+    columns = _empty_columns()
+
+    if not rows:
+        return KanbanSnapshot(columns=columns)
+
+    # ---------------------------------------------------------
+    # 3) Descobre todos os lead_ids envolvidos
+    # ---------------------------------------------------------
+    lead_ids = [r["id"] for r in rows if r.get("id")]
+
+    # ---------------------------------------------------------
+    # 4) Busca interesse aberto mais recente em lead_interesses
+    # ---------------------------------------------------------
+    interests_by_lead: Dict[str, Interest] = {}
 
     if lead_ids:
         i_resp = (
@@ -69,7 +82,7 @@ def build_kanban_snapshot(
             .order("created_at", desc=True)
             .execute()
         )
-        i_rows = i_resp.data or []
+        i_rows: List[Dict[str, Any]] = i_resp.data or []
 
         for r in i_rows:
             lid = r.get("lead_id")
@@ -77,33 +90,60 @@ def build_kanban_snapshot(
             if not lid or lid in interests_by_lead:
                 continue
 
-            interests_by_lead[lid] = {
-                "produto": r.get("produto"),
-                # front espera string: mantemos como string formatada simples;
-                # se quiser mais bonito, depois formatamos em TS.
-                "valorTotal": (
-                    str(r.get("valor_total"))
-                    if r.get("valor_total") is not None
-                    else None
-                ),
-                "prazoMeses": r.get("prazo_meses"),
-                "objetivo": r.get("objetivo"),
-                "perfilDesejado": r.get("perfil_desejado"),
-                "observacao": r.get("observacao"),
+            interests_by_lead[lid] = Interest(
+                produto=r.get("produto"),
+                # front espera string; deixamos simples (ex.: "300000").
+                valorTotal=str(r.get("valor_total")) if r.get("valor_total") is not None else None,
+                prazoMeses=r.get("prazo_meses"),
+                objetivo=r.get("objetivo"),
+                perfilDesejado=r.get("perfil_desejado"),
+                observacao=r.get("observacao"),
+            )
+
+    # ---------------------------------------------------------
+    # 5) Busca diagnóstico atual em lead_diagnosticos
+    # ---------------------------------------------------------
+    diag_by_lead: Dict[str, Dict[str, Any]] = {}
+
+    if lead_ids:
+        d_resp = (
+            supa.table("lead_diagnosticos")
+            .select(
+                "lead_id, readiness_score, score_risco, prob_conversao"
+            )
+            .eq("org_id", org_id)
+            .in_("lead_id", lead_ids)
+            .execute()
+        )
+        d_rows: List[Dict[str, Any]] = d_resp.data or []
+
+        for r in d_rows:
+            lid = r.get("lead_id")
+            if not lid:
+                continue
+            # só 1 por lead (upsert manual garante),
+            # se vier mais de um, o último sobrescreve.
+            diag_by_lead[lid] = {
+                "readiness_score": r.get("readiness_score"),
+                "score_risco": r.get("score_risco"),
+                "prob_conversao": r.get("prob_conversao"),
             }
 
-    # 4) Monta as colunas já com interest
-    columns = _empty_columns()
-
+    # ---------------------------------------------------------
+    # 6) Monta as colunas já com interest + diagnóstico
+    # ---------------------------------------------------------
     for row in rows:
         etapa = row.get("etapa")
         if etapa not in columns:
             continue
 
-        interest = interests_by_lead.get(row["id"])
+        lid = row["id"]
+
+        interest = interests_by_lead.get(lid)
+        diag = diag_by_lead.get(lid) or {}
 
         card = LeadCard(
-            id=row["id"],
+            id=lid,
             nome=row.get("nome") or "Sem nome",
             etapa=etapa,
             telefone=row.get("telefone"),
@@ -113,6 +153,9 @@ def build_kanban_snapshot(
             created_at=row.get("created_at"),
             first_contact_at=row.get("first_contact_at"),
             interest=interest,
+            readiness_score=diag.get("readiness_score"),
+            score_risco=diag.get("score_risco"),
+            prob_conversao=diag.get("prob_conversao"),
         )
         columns[etapa].append(card)
 
@@ -136,7 +179,7 @@ def _apply_stage_business_rules(
     if from_stage == "novo" and not first_contact_at and new_stage != "novo":
         updates["first_contact_at"] = datetime.now(timezone.utc).isoformat()
 
-    # Aqui adicionamos outras regras no futuro (contrato, ativo, perdido, etc.)
+    # Outras regras futuras (contrato, ativo, perdido, etc.) entram aqui
     return updates
 
 
@@ -152,7 +195,6 @@ def move_lead_stage(
     garantindo que o lead pertence ao org_id informado.
     """
     # 1) carrega lead atual
-    #    traz também first_contact_at para as regras
     current = (
         supa.table("leads")
         .select("id, etapa, org_id, first_contact_at")
@@ -185,7 +227,7 @@ def move_lead_stage(
     # 2) aplica regras de negócio
     updates = _apply_stage_business_rules(row, new_stage)
 
-    # TODO: se quiser guardar reason em alguma coluna de observação / histórico, tratamos aqui
+    # TODO: se quiser guardar reason em alguma coluna de observação / histórico, tratar aqui
 
     # 3) atualiza no Supabase
     upd_resp = (
