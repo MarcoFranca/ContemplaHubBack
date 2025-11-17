@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any  # garante Any aqui
 
 from supabase import Client
 
@@ -28,16 +28,11 @@ def build_kanban_snapshot(
     show_lost: bool = False,
 ) -> KanbanSnapshot:
     """
-    Monta o snapshot de Kanban a partir da tabela leads.
-
-    Regras de filtro:
-    - Nenhum flag (padrão)       -> etapas de funil: novo..contrato
-    - show_active=true           -> somente 'ativo'
-    - show_lost=true             -> somente 'perdido'
-    - show_active=true & show_lost=true -> 'ativo' + 'perdido'
+    Monta o snapshot de Kanban a partir da tabela leads,
+    já enriquecendo com o interesse aberto mais recente.
     """
 
-    # Definir quais etapas vamos buscar no banco
+    # 1) Quais etapas vamos buscar
     if not show_active and not show_lost:
         stages: list[Stage] = ["novo", "diagnostico", "proposta", "negociacao", "contrato"]
     elif show_active and not show_lost:
@@ -45,27 +40,67 @@ def build_kanban_snapshot(
     elif show_lost and not show_active:
         stages = ["perdido"]
     else:
-        # show_active=true & show_lost=true
         stages = ["ativo", "perdido"]
 
-    query = (
+    # 2) Busca os leads
+    resp = (
         supa.table("leads")
         .select(
             "id, nome, etapa, telefone, email, origem, owner_id, created_at, first_contact_at"
         )
         .eq("org_id", org_id)
         .in_("etapa", stages)
+        .execute()
     )
+    rows: list[dict[str, Any]] = resp.data or []
 
-    resp = query.execute()
-    rows = resp.data or []
+    # 3) Se tivermos leads, busca o interesse aberto mais recente para cada um
+    interests_by_lead: Dict[str, dict] = {}
+    lead_ids = [r["id"] for r in rows]
 
+    if lead_ids:
+        i_resp = (
+            supa.table("lead_interesses")
+            .select(
+                "lead_id, produto, valor_total, prazo_meses, objetivo, perfil_desejado, observacao, created_at, status"
+            )
+            .in_("lead_id", lead_ids)
+            .eq("status", "aberto")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        i_rows = i_resp.data or []
+
+        for r in i_rows:
+            lid = r.get("lead_id")
+            # como ordenamos por created_at desc, o primeiro que cair aqui é o mais recente
+            if not lid or lid in interests_by_lead:
+                continue
+
+            interests_by_lead[lid] = {
+                "produto": r.get("produto"),
+                # front espera string: mantemos como string formatada simples;
+                # se quiser mais bonito, depois formatamos em TS.
+                "valorTotal": (
+                    str(r.get("valor_total"))
+                    if r.get("valor_total") is not None
+                    else None
+                ),
+                "prazoMeses": r.get("prazo_meses"),
+                "objetivo": r.get("objetivo"),
+                "perfilDesejado": r.get("perfil_desejado"),
+                "observacao": r.get("observacao"),
+            }
+
+    # 4) Monta as colunas já com interest
     columns = _empty_columns()
 
     for row in rows:
         etapa = row.get("etapa")
         if etapa not in columns:
             continue
+
+        interest = interests_by_lead.get(row["id"])
 
         card = LeadCard(
             id=row["id"],
@@ -77,6 +112,7 @@ def build_kanban_snapshot(
             owner_id=row.get("owner_id"),
             created_at=row.get("created_at"),
             first_contact_at=row.get("first_contact_at"),
+            interest=interest,
         )
         columns[etapa].append(card)
 
