@@ -28,6 +28,15 @@ class Interest(BaseModel):
     observacao: Optional[str] = None
 
 
+class InterestInsight(BaseModel):
+    score: int                       # 0–100: qualidade/força do interesse
+    missing_fields: List[str]        # ["Prazo", "Objetivo", ...]
+    next_best_action: str            # texto pronto pro consultor
+    suggested_questions: List[str]   # 3–5 perguntas chave
+    likely_objections: List[str]     # objeções prováveis (educacional)
+    priority: Literal["baixa", "media", "alta"]  # combinado com diagnóstico (depois)
+
+
 class LeadCard(BaseModel):
     """
     Card de lead usado nas colunas do Kanban.
@@ -46,6 +55,7 @@ class LeadCard(BaseModel):
 
     # Interesse aberto mais recente (lead_interesses)
     interest: Optional[Interest] = None
+    interest_insight: Optional[InterestInsight] = None
 
     # Scores do diagnóstico (lead_diagnosticos)
     readiness_score: Optional[int] = None

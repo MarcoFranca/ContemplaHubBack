@@ -6,7 +6,10 @@ from typing import Any, Dict, List, Optional
 
 from supabase import Client
 
-from app.schemas.kanban import KanbanSnapshot, LeadCard, Stage, KanbanMetrics, Interest
+from app.schemas.kanban import KanbanSnapshot, LeadCard, Stage, KanbanMetrics
+
+from app.schemas.kanban import Interest
+from app.services.kanban_interest_insights import build_interest_insight
 
 
 def _empty_columns() -> Dict[Stage, List[LeadCard]]:
@@ -141,6 +144,7 @@ def build_kanban_snapshot(
 
         interest = interests_by_lead.get(lid)
         diag = diag_by_lead.get(lid) or {}
+        insight = build_interest_insight(interest, diag)
 
         card = LeadCard(
             id=lid,
@@ -156,6 +160,7 @@ def build_kanban_snapshot(
             readiness_score=diag.get("readiness_score"),
             score_risco=diag.get("score_risco"),
             prob_conversao=diag.get("prob_conversao"),
+            interest_insight=insight,
         )
         columns[etapa].append(card)
 
@@ -259,65 +264,67 @@ def get_kanban_metrics(
     """
     Lê as métricas do Kanban usando a função SQL get_kanban_metrics(p_org uuid).
 
-    Faz parsing defensivo, pois o Supabase pode retornar:
-    - uma lista com 1 dict
-    - uma lista com várias linhas
-    - ou um dict direto (jsonb)
+    Espera um formato flexível:
+    - dict com chave "rows": {"rows": [{...}, {...}]}
+    - ou uma lista direta de linhas: [{...}, {...}]
+    Cada linha deve ter ao menos: etapa, avgDays, conversion, readinessAvg,
+    tFirstContactAvgMin, diagnosticCompletionPct.
     """
     resp = supa.rpc("get_kanban_metrics", {"p_org": org_id}).execute()
     data: Any = resp.data
 
-    # Normalizar para um dict "parsed"
-    parsed: dict
+    rows: List[Dict[str, Any]] = []
 
-    if isinstance(data, list):
-        if not data:
-            parsed = {}
-        elif len(data) == 1 and isinstance(data[0], dict):
-            # caso mais comum: 1 linha com as colunas/JSON
-            parsed = data[0]
-        else:
-            # fallback: não sabemos o formato, devolvemos tudo em "rows"
-            parsed = {"rows": data}
-    elif isinstance(data, dict):
-        parsed = data
-    else:
-        # qualquer outro tipo (string, número etc.)
-        parsed = {"value": data}
+    # Normaliza para uma lista de dicts "rows"
+    if isinstance(data, dict) and "rows" in data:
+        if isinstance(data["rows"], list):
+            rows = [r for r in data["rows"] if isinstance(r, dict)]
+    elif isinstance(data, list):
+        rows = [r for r in data if isinstance(r, dict)]
 
-    # Tentamos encontrar campos padrão com alguns nomes possíveis
-    avg_days = (
-        parsed.get("avgDays")
-        or parsed.get("avg_days")
-        or parsed.get("avg_days_by_stage")
-        or None
-    )
-    conversion = (
-        parsed.get("conversion")
-        or parsed.get("conversion_by_stage")
-        or None
-    )
-    diag_completion = (
-        parsed.get("diagCompletionPct")
-        or parsed.get("diag_completion_pct")
-        or None
-    )
-    readiness_avg = (
-        parsed.get("readinessAvg")
-        or parsed.get("readiness_avg")
-        or None
-    )
-    t_first_contact = (
-        parsed.get("tFirstContactAvgMin")
-        or parsed.get("tfirstcontact_avg_min")
-        or None
-    )
+    # Se não veio nada estruturado, devolve só o raw
+    if not rows:
+        return KanbanMetrics(
+            avgDays=None,
+            conversion=None,
+            diagCompletionPct=None,
+            readinessAvg=None,
+            tFirstContactAvgMin=None,
+            raw=data,
+        )
+
+    avg_days: Dict[str, float] = {}
+    conversion: Dict[str, float] = {}
+    diag_completion: Dict[str, float] = {}
+    readiness_avg: Dict[str, float] = {}
+    t_first_contact: Dict[str, float] = {}
+
+    for r in rows:
+        etapa = r.get("etapa")
+        if not etapa:
+            continue
+
+        if (v := r.get("avgDays")) is not None:
+            avg_days[etapa] = float(v)
+
+        if (v := r.get("conversion")) is not None:
+            conversion[etapa] = float(v)
+
+        if (v := r.get("readinessAvg")) is not None:
+            readiness_avg[etapa] = float(v)
+
+        if (v := r.get("tFirstContactAvgMin")) is not None:
+            t_first_contact[etapa] = float(v)
+
+        # RPC usa "diagnosticCompletionPct", mapeamos para diagCompletionPct
+        if (v := r.get("diagnosticCompletionPct")) is not None:
+            diag_completion[etapa] = float(v)
 
     return KanbanMetrics(
-        avgDays=avg_days,
-        conversion=conversion,
-        diagCompletionPct=diag_completion,
-        readinessAvg=readiness_avg,
-        tFirstContactAvgMin=t_first_contact,
-        raw=parsed,
+        avgDays=avg_days or None,
+        conversion=conversion or None,
+        diagCompletionPct=diag_completion or None,
+        readinessAvg=readiness_avg or None,
+        tFirstContactAvgMin=t_first_contact or None,
+        raw=data,
     )
