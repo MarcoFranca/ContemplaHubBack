@@ -6,6 +6,92 @@ from typing import Any, List, Optional
 from app.schemas.kanban import Interest, InterestInsight
 
 
+def _parse_valor(i: Interest) -> float:
+    if not i.valorTotal:
+        return 0.0
+    digits = "".join(ch for ch in i.valorTotal if ch.isdigit())
+    return float(digits) if digits else 0.0
+
+
+def _strategy_ideas(i: Interest, readiness: Optional[int]) -> list[str]:
+    ideas: list[str] = []
+    v = _parse_valor(i)
+    pronto = readiness is not None and readiness >= 70
+
+    # Sem valor definido ainda: foco em diagnóstico
+    if v <= 0:
+        ideas.append(
+            "Usar próxima conversa para travar faixa de carta (ex.: 200 a 300 mil) "
+            "e só então comparar administradoras / prazos."
+        )
+        return ideas
+
+    # IMOBILIÁRIO – foco em redutor / combinação de cartas
+    if i.produto == "imobiliario":
+        if v >= 400_000:
+            ideas.append(
+                "Avaliar se faz sentido dividir em 2 cartas (ex.: 2×250 mil) para "
+                "combinar moradia + renda futura (aluguel/Airbnb) e ter mais flexibilidade na contemplação."
+            )
+        if v >= 300_000 and pronto:
+            ideas.append(
+                "Simular carta com redutor no prazo máximo (ex.: 200–220m) para "
+                "trazer parcela confortável e manter espaço para um eventual segundo investimento."
+            )
+        else:
+            ideas.append(
+                "Começar com uma carta única na faixa informada, comparando cenário com e sem redutor "
+                "para mostrar impacto na parcela e na capacidade de lance."
+            )
+
+        if i.objetivo in ("primeira-casa", "moradia", "moradia-propria"):
+            ideas.append(
+                "Enfatizar segurança de longo prazo: carta voltada para moradia, "
+                "com foco em não comprometer mais que 25–30% da renda familiar."
+            )
+
+    # AUTO – escadinha de valor
+    elif i.produto == "auto":
+        if v >= 80_000:
+            ideas.append(
+                "Testar simulação com carta um degrau acima do veículo alvo para "
+                "dar margem a upgrades de modelo/ano sem sufocar o orçamento."
+            )
+        else:
+            ideas.append(
+                "Começar com carta alinhada ao modelo alvo e prazo entre 60–84 meses "
+                "para equilibrar parcela e rapidez na contemplação."
+            )
+
+    # fallback genérico
+    if not ideas:
+        ideas.append(
+            "Usar o interesse atual como ponto de partida e apresentar 2–3 cenários de carta "
+            "(valor e prazo diferentes) para o cliente reagir e ajudar na escolha."
+        )
+
+    return ideas
+
+
+def _suggested_ticket_splits(i: Interest) -> list[str]:
+    splits: list[str] = []
+    v = _parse_valor(i)
+    if v <= 0:
+        return splits
+
+    # Divisões simples de ticket, só como sugestão visual
+    if i.produto == "imobiliario" and v >= 400_000:
+        splits.append("1× R$ {:.0f} mil (carta única)".format(v / 1000))
+        splits.append("2× R$ {:.0f} mil (moradia + renda)".format((v / 2) / 1000))
+    elif i.produto == "imobiliario":
+        splits.append("1× R$ {:.0f} mil (carta principal)".format(v / 1000))
+
+    if i.produto == "auto" and v >= 80_000:
+        splits.append("1× carta alvo + 1× menor para upgrade futuro")
+
+    return splits
+
+
 def _score_interest(i: Interest) -> int:
     s = 0
     if i.produto:
@@ -129,6 +215,9 @@ def build_interest_insight(
     questions = _suggested_questions(interest)
     objections = _likely_objections(interest)
 
+    strategy_ideas = _strategy_ideas(interest, readiness)
+    ticket_splits = _suggested_ticket_splits(interest)
+
     # prioridade baseada em interesse + readiness
     if score >= 70 and (readiness is not None and readiness >= 70):
         priority = "alta"
@@ -144,4 +233,7 @@ def build_interest_insight(
         suggested_questions=questions,
         likely_objections=objections,
         priority=priority,
+        strategy_ideas=strategy_ideas or None,
+        suggested_ticket_splits=ticket_splits or None,
     )
+

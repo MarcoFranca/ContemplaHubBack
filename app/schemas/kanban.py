@@ -36,6 +36,9 @@ class InterestInsight(BaseModel):
     likely_objections: List[str]     # objeções prováveis (educacional)
     priority: Literal["baixa", "media", "alta"]  # combinado com diagnóstico (depois)
 
+    strategy_ideas: Optional[List[str]] = None           # frases de estratégia
+    suggested_ticket_splits: Optional[List[str]] = None  # “1x 500k” / “2x 250k”
+
 
 class LeadCard(BaseModel):
     """
