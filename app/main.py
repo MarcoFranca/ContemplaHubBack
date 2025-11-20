@@ -4,6 +4,7 @@ from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers.health import router as health_router
+from app.routers.lead_propostas import router as lead_propostas
 from app.routers.leads import router as leads_router
 from app.routers.kanban import router as kanban_router
 from app.routers.diagnostic import router as diagnostic_router
@@ -28,15 +29,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/", include_in_schema=False)
 @app.get("", include_in_schema=False)
 def root():
     return {"message": "backend no ar"}
 
+
 app.include_router(diagnostic_router)
 app.include_router(health_router)
 app.include_router(leads_router)
 app.include_router(kanban_router)
+app.include_router(lead_propostas)
 
 
 @app.on_event("startup")
