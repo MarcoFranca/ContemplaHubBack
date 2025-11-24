@@ -122,9 +122,16 @@ def create_lead_proposta(
                 valor_carta=c.valor_carta,
                 prazo_meses=c.prazo_meses,
                 com_redutor=c.com_redutor,
+                redutor_percent=c.redutor_percent,
                 parcela_cheia=c.parcela_cheia,
                 parcela_reduzida=c.parcela_reduzida,
                 taxa_admin_anual=c.taxa_admin_anual,
+                fundo_reserva_pct=c.fundo_reserva_pct,
+                seguro_prestamista=c.seguro_prestamista,
+                lance_fixo_pct_1=c.lance_fixo_pct_1,
+                lance_fixo_pct_2=c.lance_fixo_pct_2,
+                permite_lance_embutido=c.permite_lance_embutido,
+                lance_embutido_pct_max=c.lance_embutido_pct_max,
                 observacoes=c.observacoes,
             )
         )

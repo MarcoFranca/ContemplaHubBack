@@ -31,11 +31,49 @@ class ProposalScenario(BaseModel):
     administradora: Optional[str] = None   # Porto, Embracon, etc.
     valor_carta: float                     # 500000
     prazo_meses: int                       # 200
-    com_redutor: Optional[bool] = None
 
-    parcela_cheia: Optional[float] = None  # sem redutor
-    parcela_reduzida: Optional[float] = None  # com redutor (se houver)
-    taxa_admin_anual: Optional[float] = None   # em %
+    # Redutor de parcela
+    com_redutor: Optional[bool] = None
+    redutor_percent: Optional[float] = Field(
+        default=None,
+        description="Percentual de redutor de parcela (0–100). Ex.: 40 para 40%."
+    )
+
+    # Parcelas
+    parcela_cheia: Optional[float] = None          # sem redutor
+    parcela_reduzida: Optional[float] = None       # com redutor (se houver)
+
+    # Taxa adm total (%) sobre a carta
+    taxa_admin_anual: Optional[float] = Field(
+        default=None,
+        description="Taxa de administração total (%) sobre a carta."
+    )
+
+    # Fundo de reserva (% sobre a carta)
+    fundo_reserva_pct: Optional[float] = Field(
+        default=None,
+        description="Percentual de fundo de reserva (0–100)."
+    )
+
+    # Seguro prestamista (sim/não)
+    seguro_prestamista: Optional[bool] = None
+
+    # Lances fixos (podem existir até 2)
+    lance_fixo_pct_1: Optional[float] = Field(
+        default=None,
+        description="Percentual do primeiro lance fixo (0–100)."
+    )
+    lance_fixo_pct_2: Optional[float] = Field(
+        default=None,
+        description="Percentual do segundo lance fixo (0–100)."
+    )
+
+    # Lance embutido
+    permite_lance_embutido: Optional[bool] = None
+    lance_embutido_pct_max: Optional[float] = Field(
+        default=None,
+        description="Percentual máximo de lance embutido (0–100)."
+    )
 
     observacoes: Optional[str] = None      # notas que irão no PDF
 
@@ -65,8 +103,6 @@ class LeadProposalPayload(BaseModel):
 class CreateProposalScenarioInput(BaseModel):
     """
     O que o front manda para cada cenário ao criar proposta.
-    Essencialmente igual ao ProposalScenario, mas sem forçar todos
-    os campos opcionais.
     """
     id: str
     titulo: str
@@ -75,11 +111,22 @@ class CreateProposalScenarioInput(BaseModel):
     administradora: Optional[str] = None
     valor_carta: float
     prazo_meses: int
+
     com_redutor: Optional[bool] = None
+    redutor_percent: Optional[float] = None
 
     parcela_cheia: Optional[float] = None
     parcela_reduzida: Optional[float] = None
     taxa_admin_anual: Optional[float] = None
+
+    fundo_reserva_pct: Optional[float] = None
+    seguro_prestamista: Optional[bool] = None
+
+    lance_fixo_pct_1: Optional[float] = None
+    lance_fixo_pct_2: Optional[float] = None
+
+    permite_lance_embutido: Optional[bool] = None
+    lance_embutido_pct_max: Optional[float] = None
 
     observacoes: Optional[str] = None
 
