@@ -1,7 +1,8 @@
-# app/routers/lead_propostas.py
 from __future__ import annotations
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel
 from supabase import Client
 
 from app.deps import get_supabase_admin
@@ -10,9 +11,89 @@ from app.services.lead_propostas_service import (
     create_lead_proposta,
     list_lead_propostas,
     get_proposta_by_public_hash,
+    delete_proposta,
+    update_proposta_status,
+    inativar_proposta,
 )
 
 router = APIRouter(prefix="/lead-propostas", tags=["lead-propostas"])
+
+
+class UpdateStatusBody(BaseModel):
+    status: Literal["rascunho", "enviado", "aprovada", "recusada", "inativa"]
+
+
+@router.patch("/{proposta_id}/status", response_model=LeadProposalRecord)
+def api_update_proposta_status(
+    proposta_id: str,
+    body: UpdateStatusBody,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header é obrigatório por enquanto",
+        )
+    try:
+        return update_proposta_status(
+            org_id=x_org_id,
+            proposta_id=proposta_id,
+            novo_status=body.status,
+            supa=supa,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print("ERRO ao atualizar status proposta:", repr(e))
+        raise HTTPException(500, "Erro ao atualizar status da proposta.")
+
+
+@router.patch("/{proposta_id}/inativar", response_model=LeadProposalRecord)
+def api_inativar_proposta(
+    proposta_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header é obrigatório por enquanto",
+        )
+    try:
+        return inativar_proposta(
+            org_id=x_org_id,
+            proposta_id=proposta_id,
+            supa=supa,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print("ERRO ao inativar proposta:", repr(e))
+        raise HTTPException(500, "Erro ao inativar proposta.")
+
+
+@router.delete("/{proposta_id}", status_code=204)
+def api_delete_proposta(
+    proposta_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header é obrigatório por enquanto",
+        )
+    try:
+        delete_proposta(
+            org_id=x_org_id,
+            proposta_id=proposta_id,
+            supa=supa,
+        )
+        return
+    except Exception as e:
+        print("ERRO ao deletar proposta:", repr(e))
+        raise HTTPException(500, "Erro ao deletar proposta.")
 
 
 @router.get("/lead/{lead_id}", response_model=list[LeadProposalRecord])
@@ -61,12 +142,13 @@ def api_create_lead_proposta(
         import traceback
 
         print("ERRO ao criar proposta:", repr(e))
-        traceback.print_exc()  # <<< isso imprime o stack trace completo no console
+        traceback.print_exc()
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro interno ao criar proposta: {repr(e)}",
         )
+
 
 @router.get("/p/{public_hash}", response_model=LeadProposalRecord)
 def api_get_public_proposta(

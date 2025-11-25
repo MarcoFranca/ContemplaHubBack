@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import random
 import string
-from typing import Any, List, Optional, Dict
+from typing import Any, List, Optional, Dict, Literal
 
 from supabase import Client
 
@@ -13,8 +13,95 @@ from app.schemas.propostas import (
     LeadProposalPayload,
     ProposalClientInfo,
     ProposalScenario,
+    ProposalMeta,
 )
-from app.schemas.propostas import ProposalMeta
+
+StatusTipo = Literal["rascunho", "enviado", "aprovada", "recusada", "inativa"]
+
+
+def update_proposta_status(
+    org_id: str,
+    proposta_id: str,
+    novo_status: StatusTipo,
+    supa: Client,
+) -> LeadProposalRecord:
+    print("DEBUG update_proposta_status org_id:", org_id)
+    print("DEBUG update_proposta_status proposta_id:", proposta_id)
+
+    resp = (
+        supa.table("lead_propostas")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("id", proposta_id)
+        .maybe_single()
+        .execute()
+    )
+    print("DEBUG supabase raw resp:", resp)
+    row = _get_resp_data(resp)
+    print("DEBUG supabase data:", row)
+
+    if not row:
+        raise ValueError("Proposta não encontrada.")
+
+    # se marcar inativa, pode já setar ativo = false
+    update_data: dict[str, Any] = {"status": novo_status}
+    if novo_status == "inativa":
+        update_data["ativo"] = False
+
+    upd = (
+        supa.table("lead_propostas")
+        .update(update_data)
+        .eq("org_id", org_id)
+        .eq("id", proposta_id)
+        .execute()
+    )
+
+    rows = _get_resp_data(upd) or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    if not rows:
+        raise RuntimeError("Falha ao atualizar proposta.")
+
+    r = rows[0]
+    payload_dict = _normalize_payload(r["payload"])
+
+    return LeadProposalRecord(
+        id=r["id"],
+        org_id=r["org_id"],
+        lead_id=r["lead_id"],
+        titulo=r.get("titulo"),
+        campanha=r.get("campanha"),
+        status=r.get("status"),
+        public_hash=r.get("public_hash"),
+        payload=LeadProposalPayload(**payload_dict),
+        pdf_url=r.get("pdf_url"),
+        created_at=r.get("created_at"),
+        created_by=r.get("created_by"),
+        updated_at=r.get("updated_at"),
+    )
+
+
+def inativar_proposta(
+    org_id: str,
+    proposta_id: str,
+    supa: Client,
+) -> LeadProposalRecord:
+    return update_proposta_status(org_id, proposta_id, "inativa", supa)
+
+
+def delete_proposta(
+    org_id: str,
+    proposta_id: str,
+    supa: Client,
+) -> None:
+    (
+        supa.table("lead_propostas")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("id", proposta_id)
+        .execute()
+    )
+
 
 def _get_resp_data(resp: Any) -> Any:
     """
@@ -27,7 +114,6 @@ def _get_resp_data(resp: Any) -> Any:
 
     data = getattr(resp, "data", None)
     if data is None:
-        # Em dev, isso ajuda demais
         print("WARN: Supabase response without data. Full resp:", resp)
     return data
 
@@ -62,7 +148,6 @@ def _generate_unique_public_hash(supa: Client) -> str:
         data = _get_resp_data(resp)
 
         if not data:
-            # Não achou ninguém com esse hash -> está livre pra usar
             return h
 
     # fallback bruto se tudo colapsar (chances quase zero)
@@ -161,7 +246,7 @@ def create_lead_proposta(
     if created_by is not None and not str(created_by).strip():
         created_by = None
 
-        # 5) Insere no Supabase
+    # 5) Insere no Supabase
     insert_payload = {
         "org_id": org_id,
         "lead_id": lead_id,
@@ -171,6 +256,7 @@ def create_lead_proposta(
         "public_hash": public_hash,
         "payload": payload.dict(),
         "created_by": created_by,  # pode ser None -> vira NULL no Postgres
+        "ativo": True,
     }
 
     resp = supa.table("lead_propostas").insert(insert_payload).execute()
@@ -178,7 +264,6 @@ def create_lead_proposta(
 
     rows_raw = _get_resp_data(resp)
 
-    # supabase-py geralmente manda uma lista; mas se vier dict, tratamos também:
     if isinstance(rows_raw, dict):
         rows = [rows_raw]
     else:
@@ -211,18 +296,21 @@ def list_lead_propostas(
     org_id: str,
     lead_id: str,
     supa: Client,
+    incluir_inativas: bool = False,
 ) -> list[LeadProposalRecord]:
     """
     Lista propostas já criadas para um lead (pra mostrar na timeline do lead).
     """
-    resp = (
+    q = (
         supa.table("lead_propostas")
         .select("*")
         .eq("org_id", org_id)
         .eq("lead_id", lead_id)
-        .order("created_at", desc=True)
-        .execute()
     )
+    if not incluir_inativas:
+        q = q.eq("ativo", True)
+
+    resp = q.order("created_at", desc=True).execute()
 
     rows_raw = _get_resp_data(resp) or []
     if isinstance(rows_raw, dict):
