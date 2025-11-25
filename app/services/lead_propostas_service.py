@@ -16,7 +16,7 @@ from app.schemas.propostas import (
     ProposalMeta,
 )
 
-StatusTipo = Literal["rascunho", "enviado", "aprovada", "recusada", "inativa"]
+StatusTipo = Literal["rascunho", "enviada", "aprovada", "recusada", "inativa"]
 
 
 def update_proposta_status(
