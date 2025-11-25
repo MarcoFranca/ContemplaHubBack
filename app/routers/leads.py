@@ -56,3 +56,32 @@ def move_stage(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=result.get("message"))
 
     return result
+
+
+@router.delete("/{lead_id}", status_code=204)
+def api_delete_lead(
+    lead_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header é obrigatório por enquanto",
+        )
+
+    try:
+        (
+            supa.table("leads")
+            .delete()
+            .eq("org_id", x_org_id)
+            .eq("id", lead_id)
+            .execute()
+        )
+        return
+    except Exception as e:
+        print("ERRO ao deletar lead:", repr(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao deletar lead.",
+        )
