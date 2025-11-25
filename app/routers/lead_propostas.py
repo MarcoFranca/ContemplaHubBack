@@ -20,7 +20,7 @@ router = APIRouter(prefix="/lead-propostas", tags=["lead-propostas"])
 
 
 class UpdateStatusBody(BaseModel):
-    status: Literal["rascunho", "enviado", "aprovada", "recusada", "inativa"]
+    status: Literal["rascunho", "enviada", "aprovada", "recusada", "inativa"]
 
 
 @router.patch("/{proposta_id}/status", response_model=LeadProposalRecord)
