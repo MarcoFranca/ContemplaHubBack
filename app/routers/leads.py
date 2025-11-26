@@ -71,62 +71,28 @@ def api_delete_lead(
         )
 
     try:
-        # 1) Apagar propostas
-        supa.table("lead_propostas") \
-            .delete() \
-            .eq("org_id", x_org_id) \
-            .eq("lead_id", lead_id) \
-            .execute()
-
-        # 2) Apagar diagnósticos
-        supa.table("lead_diagnosticos") \
-            .delete() \
-            .eq("org_id", x_org_id) \
-            .eq("lead_id", lead_id) \
-            .execute()
-
-        # 3) Buscar COTAS do lead
-        cotas_resp = (
-            supa.table("cotas")
-            .select("id")
+        resp = (
+            supa.table("leads")
+            .delete()
             .eq("org_id", x_org_id)
-            .eq("lead_id", lead_id)
+            .eq("id", lead_id)
             .execute()
         )
 
-        cotas = cotas_resp.data or []
+        data = getattr(resp, "data", None) or []
+        # Se quiser ser mais estrito, dá pra retornar 404 se não deletou nada:
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead não encontrado para esta organização.",
+            )
 
-        # 4) Para cada cota, apagar CONTRATOS associados
-        for c in cotas:
-            supa.table("contratos") \
-                .delete() \
-                .eq("org_id", x_org_id) \
-                .eq("cota_id", c["id"]) \
-                .execute()
-
-        # 5) Apagar COTAS
-        supa.table("cotas") \
-            .delete() \
-            .eq("org_id", x_org_id) \
-            .eq("lead_id", lead_id) \
-            .execute()
-
-        # 6) Apagar histórico de mudança de estágio (tabela correta)
-        supa.table("lead_stage_history") \
-            .delete() \
-            .eq("org_id", x_org_id) \
-            .eq("lead_id", lead_id) \
-            .execute()
-
-        # 7) Finalmente apagar o LEAD
-        supa.table("leads") \
-            .delete() \
-            .eq("org_id", x_org_id) \
-            .eq("id", lead_id) \
-            .execute()
-
+        # 204 No Content
         return
 
+    except HTTPException:
+        # Repassa HTTPExceptions que você mesmo levantou
+        raise
     except Exception as e:
         print("\n\nERRO ao deletar lead:", repr(e), "\n\n")
         raise HTTPException(
