@@ -85,16 +85,18 @@ def api_delete_lead(
             .eq("lead_id", lead_id) \
             .execute()
 
-        # 3) Buscar todas as cotas do lead
-        resp_cotas = supa.table("cotas") \
-            .select("id") \
-            .eq("org_id", x_org_id) \
-            .eq("lead_id", lead_id) \
+        # 3) Buscar COTAS do lead
+        cotas_resp = (
+            supa.table("cotas")
+            .select("id")
+            .eq("org_id", x_org_id)
+            .eq("lead_id", lead_id)
             .execute()
+        )
 
-        cotas = resp_cotas.data or []
+        cotas = cotas_resp.data or []
 
-        # 4) Apagar contratos dessas cotas
+        # 4) Para cada cota, apagar CONTRATOS associados
         for c in cotas:
             supa.table("contratos") \
                 .delete() \
@@ -102,21 +104,21 @@ def api_delete_lead(
                 .eq("cota_id", c["id"]) \
                 .execute()
 
-        # 5) Apagar cotas do lead
+        # 5) Apagar COTAS
         supa.table("cotas") \
             .delete() \
             .eq("org_id", x_org_id) \
             .eq("lead_id", lead_id) \
             .execute()
 
-        # 6) Apagar histórico de Kanban
-        supa.table("kanban_history") \
+        # 6) Apagar histórico de mudança de estágio (tabela correta)
+        supa.table("lead_stage_history") \
             .delete() \
             .eq("org_id", x_org_id) \
             .eq("lead_id", lead_id) \
             .execute()
 
-        # 7) Finalmente apagar o lead
+        # 7) Finalmente apagar o LEAD
         supa.table("leads") \
             .delete() \
             .eq("org_id", x_org_id) \
@@ -126,9 +128,8 @@ def api_delete_lead(
         return
 
     except Exception as e:
-        print("ERRO ao deletar lead:", repr(e))
+        print("\n\nERRO ao deletar lead:", repr(e), "\n\n")
         raise HTTPException(
             status_code=500,
             detail="Erro ao deletar lead e registros associados.",
         )
-
