@@ -71,17 +71,64 @@ def api_delete_lead(
         )
 
     try:
-        (
-            supa.table("leads")
-            .delete()
-            .eq("org_id", x_org_id)
-            .eq("id", lead_id)
+        # 1) Apagar propostas
+        supa.table("lead_propostas") \
+            .delete() \
+            .eq("org_id", x_org_id) \
+            .eq("lead_id", lead_id) \
             .execute()
-        )
+
+        # 2) Apagar diagnósticos
+        supa.table("lead_diagnosticos") \
+            .delete() \
+            .eq("org_id", x_org_id) \
+            .eq("lead_id", lead_id) \
+            .execute()
+
+        # 3) Buscar todas as cotas do lead
+        resp_cotas = supa.table("cotas") \
+            .select("id") \
+            .eq("org_id", x_org_id) \
+            .eq("lead_id", lead_id) \
+            .execute()
+
+        cotas = resp_cotas.data or []
+
+        # 4) Apagar contratos dessas cotas
+        for c in cotas:
+            supa.table("contratos") \
+                .delete() \
+                .eq("org_id", x_org_id) \
+                .eq("cota_id", c["id"]) \
+                .execute()
+
+        # 5) Apagar cotas do lead
+        supa.table("cotas") \
+            .delete() \
+            .eq("org_id", x_org_id) \
+            .eq("lead_id", lead_id) \
+            .execute()
+
+        # 6) Apagar histórico de Kanban
+        supa.table("kanban_history") \
+            .delete() \
+            .eq("org_id", x_org_id) \
+            .eq("lead_id", lead_id) \
+            .execute()
+
+        # 7) Finalmente apagar o lead
+        supa.table("leads") \
+            .delete() \
+            .eq("org_id", x_org_id) \
+            .eq("id", lead_id) \
+            .execute()
+
         return
+
     except Exception as e:
         print("ERRO ao deletar lead:", repr(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao deletar lead.",
+            status_code=500,
+            detail="Erro ao deletar lead e registros associados.",
         )
+
