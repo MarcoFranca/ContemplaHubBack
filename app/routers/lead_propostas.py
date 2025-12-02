@@ -162,3 +162,40 @@ def api_get_public_proposta(
             detail="Proposta não encontrada.",
         )
     return rec
+
+
+class AcceptPropostaPayload(BaseModel):
+    source: str | None = None
+    ip: str | None = None
+    user_agent: str | None = None
+
+
+@router.post("/p/{public_hash}/accept")
+def api_accept_public_proposta(
+    public_hash: str,
+    payload: AcceptPropostaPayload,
+    supa: Client = Depends(get_supabase_admin),
+):
+    # 1) localizar proposta pelo hash público
+    rec = get_proposta_by_public_hash(public_hash, supa)
+    if not rec:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proposta não encontrada.",
+        )
+
+    # 🔹 A partir daqui você pode:
+    # - Inserir um registro em uma tabela proposta_aceites
+    # - Publicar um evento na outbox (proposal_accepted)
+    # - Disparar e-mail via Postmark/Twilio, etc.
+    #
+    # Exemplo de TODO (sem quebrar nada por enquanto):
+    # register_proposal_accept(
+    #     supa=supa,
+    #     proposta=rec,
+    #     source=payload.source,
+    #     ip=payload.ip,
+    #     user_agent=payload.user_agent,
+    # )
+
+    return {"ok": True}
