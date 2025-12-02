@@ -14,6 +14,7 @@ from app.services.lead_propostas_service import (
     delete_proposta,
     update_proposta_status,
     inativar_proposta,
+    get_proposta_by_id,
 )
 
 router = APIRouter(prefix="/lead-propostas", tags=["lead-propostas"])
@@ -94,6 +95,43 @@ def api_delete_proposta(
     except Exception as e:
         print("ERRO ao deletar proposta:", repr(e))
         raise HTTPException(500, "Erro ao deletar proposta.")
+
+
+@router.get("/{proposta_id}", response_model=LeadProposalRecord)
+def api_get_proposta_by_id(
+    proposta_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    """
+    Retorna uma proposta interna pelo ID (usada na página interna do lead).
+    """
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header é obrigatório por enquanto",
+        )
+
+    try:
+        rec = get_proposta_by_id(
+            org_id=x_org_id,
+            proposta_id=proposta_id,
+            supa=supa,
+        )
+    except Exception as e:
+        print("ERRO ao buscar proposta por id:", repr(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao buscar proposta.",
+        )
+
+    if not rec:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proposta não encontrada.",
+        )
+
+    return rec
 
 
 @router.get("/lead/{lead_id}", response_model=list[LeadProposalRecord])

@@ -345,6 +345,46 @@ def list_lead_propostas(
     return out
 
 
+def get_proposta_by_id(
+    org_id: str,
+    proposta_id: str,
+    supa: Client,
+) -> LeadProposalRecord | None:
+    """
+    Busca uma proposta interna pelo ID (usada na página interna do consultor).
+    Garante que pertence à org_id informada.
+    """
+    resp = (
+        supa.table("lead_propostas")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("id", proposta_id)
+        .maybe_single()
+        .execute()
+    )
+
+    row = _get_resp_data(resp)
+    if not row:
+        return None
+
+    payload_dict = _normalize_payload(row["payload"])
+
+    return LeadProposalRecord(
+        id=row["id"],
+        org_id=row["org_id"],
+        lead_id=row["lead_id"],
+        titulo=row.get("titulo"),
+        campanha=row.get("campanha"),
+        status=row.get("status"),
+        public_hash=row.get("public_hash"),
+        payload=LeadProposalPayload(**payload_dict),
+        pdf_url=row.get("pdf_url"),
+        created_at=row.get("created_at"),
+        created_by=row.get("created_by"),
+        updated_at=row.get("updated_at"),
+    )
+
+
 def get_proposta_by_public_hash(
     public_hash: str,
     supa: Client,
