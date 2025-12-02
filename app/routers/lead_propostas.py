@@ -33,55 +33,33 @@ def notify_email_proposta_aprovada(
     payload: AcceptPropostaPayload,
 ) -> None:
     """
-    Notifica internamente que o cliente marcou a proposta como APROVADA.
-
-    Aqui eu deixo toda a lógica mastigada e você só precisa plugar
-    o provider de e-mail onde está o TODO.
+    Notifica a organização (org.email_from) que o cliente marcou a proposta como APROVADA.
     """
 
-    # 1) tentar pegar e-mail do consultor (created_by) na tabela de perfis
     user_email: str | None = None
     user_name: str | None = None
 
+    # 1) Buscar e-mail da organização (orgs.email_from)
     try:
-        if proposta.created_by:
-            resp = (
-                supa.table("profiles")
-                .select("email, nome")
-                .eq("user_id", proposta.created_by)  # ajuste se a coluna for diferente
-                .maybe_single()
-                .execute()
-            )
-            data = getattr(resp, "data", None)
-            if data:
-                user_email = data.get("email")
-                user_name = data.get("nome")
+        resp = (
+            supa.table("orgs")
+            .select("email_from, nome")
+            .eq("id", proposta.org_id)
+            .maybe_single()
+            .execute()
+        )
+        data = getattr(resp, "data", None)
+        if data:
+            user_email = data.get("email_from")
+            user_name = data.get("nome")
     except Exception as e:
-        print("WARN: erro ao buscar e-mail do consultor:", repr(e))
-
-    # 2) fallback: e-mail padrão da organização (ajuste para o seu schema)
-    if not user_email:
-        try:
-            resp = (
-                supa.table("orgs")
-                .select("email_notificacoes, nome")
-                .eq("id", proposta.org_id)
-                .maybe_single()
-                .execute()
-            )
-            data = getattr(resp, "data", None)
-            if data:
-                user_email = data.get("email_notificacoes")
-                if not user_name:
-                    user_name = data.get("nome")
-        except Exception as e:
-            print("WARN: erro ao buscar e-mail padrão da org:", repr(e))
+        print("WARN: erro ao buscar e-mail da org:", repr(e))
 
     if not user_email:
-        print("WARN: nenhum e-mail de destino para notificar proposta aprovada")
+        print("WARN: nenhum e-mail de destino para notificar proposta aprovada (org.email_from vazio)")
         return
 
-    # 3) montar assunto e corpo do e-mail
+    # 2) Montar assunto e corpo
     cliente_nome = (
         proposta.payload.cliente.nome
         if proposta.payload and proposta.payload.cliente
@@ -115,7 +93,8 @@ def notify_email_proposta_aprovada(
 
     body = "\n".join(body_lines)
 
-    send_system_email(user_email, subject, body)
+    # 3) Disparar e-mail via Resend
+    send_system_email(to=user_email, subject=subject, text_body=body)
 
 
 class UpdateStatusBody(BaseModel):
