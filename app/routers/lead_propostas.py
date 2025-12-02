@@ -7,6 +7,7 @@ from supabase import Client
 
 from app.deps import get_supabase_admin
 from app.schemas.propostas import CreateLeadProposalInput, LeadProposalRecord
+from app.services.email_service import send_system_email
 from app.services.lead_propostas_service import (
     create_lead_proposta,
     list_lead_propostas,
@@ -18,6 +19,103 @@ from app.services.lead_propostas_service import (
 )
 
 router = APIRouter(prefix="/lead-propostas", tags=["lead-propostas"])
+
+
+class AcceptPropostaPayload(BaseModel):
+    source: str | None = None
+    ip: str | None = None
+    user_agent: str | None = None
+
+
+def notify_email_proposta_aprovada(
+    supa: Client,
+    proposta: LeadProposalRecord,
+    payload: AcceptPropostaPayload,
+) -> None:
+    """
+    Notifica internamente que o cliente marcou a proposta como APROVADA.
+
+    Aqui eu deixo toda a lógica mastigada e você só precisa plugar
+    o provider de e-mail onde está o TODO.
+    """
+
+    # 1) tentar pegar e-mail do consultor (created_by) na tabela de perfis
+    user_email: str | None = None
+    user_name: str | None = None
+
+    try:
+        if proposta.created_by:
+            resp = (
+                supa.table("profiles")
+                .select("email, nome")
+                .eq("user_id", proposta.created_by)  # ajuste se a coluna for diferente
+                .maybe_single()
+                .execute()
+            )
+            data = getattr(resp, "data", None)
+            if data:
+                user_email = data.get("email")
+                user_name = data.get("nome")
+    except Exception as e:
+        print("WARN: erro ao buscar e-mail do consultor:", repr(e))
+
+    # 2) fallback: e-mail padrão da organização (ajuste para o seu schema)
+    if not user_email:
+        try:
+            resp = (
+                supa.table("orgs")
+                .select("email_notificacoes, nome")
+                .eq("id", proposta.org_id)
+                .maybe_single()
+                .execute()
+            )
+            data = getattr(resp, "data", None)
+            if data:
+                user_email = data.get("email_notificacoes")
+                if not user_name:
+                    user_name = data.get("nome")
+        except Exception as e:
+            print("WARN: erro ao buscar e-mail padrão da org:", repr(e))
+
+    if not user_email:
+        print("WARN: nenhum e-mail de destino para notificar proposta aprovada")
+        return
+
+    # 3) montar assunto e corpo do e-mail
+    cliente_nome = (
+        proposta.payload.cliente.nome
+        if proposta.payload and proposta.payload.cliente
+        else None
+    )
+
+    subject = f"Proposta aprovada pelo cliente – {proposta.titulo or 'Sem título'}"
+
+    body_lines = [
+        f"Olá{f', {user_name}' if user_name else ''}!",
+        "",
+        "Uma proposta foi marcada como APROVADA pelo cliente na página pública.",
+        "",
+        f"Título da proposta: {proposta.titulo or 'Sem título'}",
+        f"Cliente: {cliente_nome or '—'}",
+        f"Lead ID: {proposta.lead_id}",
+        f"Proposta ID: {proposta.id}",
+        "",
+        f"Origem da ação: {payload.source or 'public_proposal_page'}",
+        f"IP do cliente: {payload.ip or '—'}",
+        f"User-Agent do cliente: {payload.user_agent or '—'}",
+        "",
+        "Acesse o ContemplaHub para seguir com a contratação:",
+        "- Conferir documentos",
+        "- Orientar o cliente sobre os próximos passos",
+        "- Atualizar o status no funil, se necessário.",
+        "",
+        "Abraços,",
+        "ContemplaHub / Autentika",
+    ]
+
+    body = "\n".join(body_lines)
+
+    send_system_email(user_email, subject, body)
 
 
 class UpdateStatusBody(BaseModel):
@@ -222,18 +320,30 @@ def api_accept_public_proposta(
             detail="Proposta não encontrada.",
         )
 
-    # 🔹 A partir daqui você pode:
-    # - Inserir um registro em uma tabela proposta_aceites
-    # - Publicar um evento na outbox (proposal_accepted)
-    # - Disparar e-mail via Postmark/Twilio, etc.
-    #
-    # Exemplo de TODO (sem quebrar nada por enquanto):
-    # register_proposal_accept(
-    #     supa=supa,
-    #     proposta=rec,
-    #     source=payload.source,
-    #     ip=payload.ip,
-    #     user_agent=payload.user_agent,
-    # )
+    # 2) marcar como APROVADA
+    try:
+        updated = update_proposta_status(
+            org_id=rec.org_id,
+            proposta_id=rec.id,
+            novo_status="aprovada",
+            supa=supa,
+        )
+    except Exception as e:
+        print("ERRO ao marcar proposta como aprovada:", repr(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Falha ao marcar proposta como aprovada.",
+        )
+
+    # 3) notificar consultor / time interno por e-mail (não quebra se falhar)
+    try:
+        notify_email_proposta_aprovada(
+            supa=supa,
+            proposta=updated,
+            payload=payload,
+        )
+    except Exception as e:
+        print("WARN: falha ao enviar e-mail de proposta aprovada:", repr(e))
 
     return {"ok": True}
+
