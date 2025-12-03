@@ -4,7 +4,8 @@ from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers.health import router as health_router
-from app.routers.lead_propostas import router as lead_propostas
+from app.routers.lead_propostas import router as lead_propostas_router
+from app.routers.lead_cadastros import router as lead_cadastros_router
 from app.routers.leads import router as leads_router
 from app.routers.kanban import router as kanban_router
 from app.routers.diagnostic import router as diagnostic_router
@@ -18,7 +19,7 @@ app = FastAPI(
 origins = [
     "http://localhost:3000",                # dev
     "https://app.autentika.com.br",         # ajustar para o domínio real
-    "https://contemplahub.vercel.app",      # exemplo, se usar Vercel
+    "https://contemplahub.vercel.app",      # vercel
 ]
 
 app.add_middleware(
@@ -36,11 +37,13 @@ def root():
     return {"message": "backend no ar"}
 
 
-app.include_router(diagnostic_router)
+# 🔹 registra cada router UMA vez
 app.include_router(health_router)
+app.include_router(lead_propostas_router)
+app.include_router(lead_cadastros_router)
 app.include_router(leads_router)
 app.include_router(kanban_router)
-app.include_router(lead_propostas)
+app.include_router(diagnostic_router)
 
 
 @app.on_event("startup")
