@@ -26,7 +26,71 @@ router = APIRouter(prefix="/lead-propostas", tags=["lead-propostas"])
 FRONTEND_APP_URL = os.getenv("FRONTEND_APP_URL", "https://app.contemplahub.com")
 
 
+def notify_cliente_cadastro(
+    proposta: LeadProposalRecord,
+    cadastro: dict[str, Any],
+) -> None:
+    """
+    Envia e-mail para o CLIENTE com o link do cadastro
+    (dados pessoais + documentos).
+    """
+
+    # tentar pegar e-mail do cliente no payload
+    cliente_email: str | None = None
+    cliente_nome: str | None = None
+
+    try:
+        if proposta.payload and proposta.payload.cliente:
+            cliente_email = getattr(proposta.payload.cliente, "email", None)
+            cliente_nome = getattr(proposta.payload.cliente, "nome", None)
+    except Exception as e:
+        print("WARN: erro ao ler payload.cliente no notify_cliente_cadastro:", repr(e))
+
+    if not cliente_email:
+        print("WARN: proposta aprovada, mas sem email de cliente para enviar link de cadastro")
+        return
+
+    token = cadastro.get("token_publico")
+    if not token:
+        print("WARN: cadastro sem token_publico, não há link para enviar ao cliente")
+        return
+
+    link_cadastro = f"{FRONTEND_APP_URL}/cadastro/{token}"
+
+    subject = "Próximo passo: finalize seus dados para o consórcio"
+
+    # texto simples (fallback)
+    text_body_lines = [
+        f"Olá{f', {cliente_nome}' if cliente_nome else ''}!",
+        "",
+        "Recebemos a aprovação da sua proposta de consórcio.",
+        "Agora falta apenas um passo para seguirmos com a contratação:",
+        "preencher seus dados cadastrais e anexar os documentos.",
+        "",
+        f"Acesse o link seguro abaixo para completar o cadastro:",
+        link_cadastro,
+        "",
+        "Em caso de dúvidas, fale com seu consultor da Autentika.",
+        "",
+        "Autentika Consórcios · ContemplaHub",
+    ]
+    text_body = "\n".join(text_body_lines)
+
+    # HTML bonito (aquele que você já tem)
+    html_body = _build_cadastro_cliente_email_html(
+        proposta=proposta,
+        cadastro=cadastro,
+        link_cadastro=link_cadastro,
+    )
+
+    send_system_email(
+        to=cliente_email,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
 # ========= HELPERS NOVOS PARA CADASTRO =======================================
+
 
 def _random_token(length: int = 10) -> str:
     chars = string.ascii_letters + string.digits
@@ -652,7 +716,26 @@ def api_accept_public_proposta(
             detail="Falha ao marcar proposta como aprovada.",
         )
 
-    # 3) notificar consultor / time interno por e-mail (não quebra se falhar)
+    # 3) garantir/ criar um lead_cadastros para (org, lead, proposta)
+    cadastro = None
+    cadastro_token: str | None = None
+    cadastro_url: str | None = None
+
+    try:
+        cadastro = _ensure_cadastro_for_proposta(
+            supa=supa,
+            proposta=updated,
+            payload=payload,
+        )
+
+        cadastro_token = cadastro.get("token_publico")
+        if cadastro_token:
+            cadastro_url = f"{FRONTEND_APP_URL.rstrip('/')}/cadastro/{cadastro_token}"
+    except Exception as e:
+        print("ERRO ao criar/obter lead_cadastros:", repr(e))
+        # não vamos quebrar a requisição por causa disso
+
+    # 4) notificar consultor / time interno por e-mail (como já estava)
     try:
         notify_email_proposta_aprovada(
             supa=supa,
@@ -662,14 +745,8 @@ def api_accept_public_proposta(
     except Exception as e:
         print("WARN: falha ao enviar e-mail de proposta aprovada (interno):", repr(e))
 
-    # 4) criar/garantir cadastro + mandar e-mail pro CLIENTE com link de cadastro
+    # 5) enviar e-mail para o CLIENTE com o link de cadastro
     try:
-        cadastro = _ensure_cadastro_for_proposta(
-            supa=supa,
-            proposta=updated,
-            payload=payload,
-        )
-
         # e-mail do cliente vindo do payload da proposta
         cliente_email = (
             updated.payload.cliente.email
@@ -677,15 +754,12 @@ def api_accept_public_proposta(
             else None
         )
 
-        if cliente_email:
+        if cliente_email and cadastro_token and cadastro_url:
             cliente_nome = (
                 updated.payload.cliente.nome
                 if updated.payload and updated.payload.cliente
                 else "cliente"
             )
-
-            # URL do front (usa FRONTEND_APP_URL lá do topo do arquivo)
-            link_cadastro = f"{FRONTEND_APP_URL.rstrip('/')}/cadastro/{cadastro['token_publico']}"
 
             subject = "Próximo passo: dados para contratação do seu consórcio"
 
@@ -695,16 +769,16 @@ def api_accept_public_proposta(
                 "Recebemos a confirmação da sua proposta de consórcio.\n"
                 "Para avançarmos com a contratação, precisamos que você complete seus dados "
                 "e envie os documentos pela nossa área segura.\n\n"
-                f"Acesse o link:\n{link_cadastro}\n\n"
+                f"Acesse o link:\n{cadastro_url}\n\n"
                 "Se tiver qualquer dúvida, é só responder este e-mail ou falar com seu consultor.\n\n"
                 "Autentika / ContemplaHub"
             )
 
-            # corpo HTML bonitão
+            # corpo HTML bonitão (helper que você já tem)
             html_body = _build_cadastro_cliente_email_html(
                 proposta=updated,
                 cadastro=cadastro,
-                link_cadastro=link_cadastro,
+                link_cadastro=cadastro_url,
             )
 
             send_system_email(
@@ -714,10 +788,16 @@ def api_accept_public_proposta(
                 html_body=html_body,
             )
         else:
-            print("INFO: proposta aprovada, mas sem e-mail de cliente para envio de cadastro")
+            print(
+                "INFO: proposta aprovada, mas sem e-mail de cliente OU sem cadastro_url "
+                "- não foi possível enviar e-mail de onboarding."
+            )
     except Exception as e:
-        print("WARN: falha ao criar cadastro ou enviar e-mail de onboarding ao cliente:", repr(e))
+        print("WARN: falha ao enviar e-mail de onboarding ao cliente:", repr(e))
 
-    return {"ok": True}
-
-
+    # 6) retorno para o front (para poder redirecionar para o cadastro)
+    return {
+        "ok": True,
+        "cadastro_token": cadastro_token,
+        "cadastro_url": cadastro_url,
+    }
