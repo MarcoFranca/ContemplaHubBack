@@ -12,7 +12,7 @@ router = APIRouter(prefix="/lead-cadastros", tags=["lead-cadastros"])
 
 
 # --------------------------------------------------
-# Modelo de entrada para PF (form do front)
+# MODELO: entrada PF vinda do formulário público
 # --------------------------------------------------
 class LeadCadastroPFInput(BaseModel):
     nome_completo: str
@@ -31,19 +31,13 @@ class LeadCadastroPFInput(BaseModel):
 
 
 # --------------------------------------------------
-# GET público: carrega cadastro pelo token_publico
+# HELPER ÚNICO: buscar cadastro por token_publico
 # --------------------------------------------------
-@router.get("/p/{token}")
-def api_get_lead_cadastro_public(
+def _load_cadastro_by_token(
+    supa: Client,
     token: str,
-    supa: Client = Depends(get_supabase_admin),
-) -> Dict[str, Any]:
-    """
-    Endpoint público para carregar um lead_cadastros pelo token_publico.
-
-    Usado pela página /cadastro/[token] no front.
-    """
-    print("GET /lead-cadastros/p/{token} -> token_publico:", token)
+) -> Dict[str, Any] | None:
+    print("[_load_cadastro_by_token] token_publico recebido:", repr(token))
 
     try:
         resp = (
@@ -54,19 +48,41 @@ def api_get_lead_cadastro_public(
         )
     except Exception as e:
         print("ERRO ao buscar lead_cadastros por token:", repr(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao buscar cadastro.",
-        )
+        raise
 
     data = getattr(resp, "data", None)
-    print("GET lead_cadastros resp.data:", data)
+    print("[_load_cadastro_by_token] resp.data:", data)
 
     row: Dict[str, Any] | None = None
     if isinstance(data, list) and data:
         row = data[0]
     elif isinstance(data, dict) and data:
         row = data
+
+    return row
+
+
+# --------------------------------------------------
+# GET público: carrega cadastro pelo token_publico
+# --------------------------------------------------
+@router.get("/p/{token}")
+def api_get_lead_cadastro_public(
+    token: str,
+    supa: Client = Depends(get_supabase_admin),
+) -> Dict[str, Any]:
+    """
+    Endpoint público para carregar um lead_cadastros pelo token_publico.
+    Usado pela página /cadastro/[token] no front.
+    """
+    print("GET /lead-cadastros/p/{token} -> token:", repr(token))
+
+    try:
+        row = _load_cadastro_by_token(supa, token)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao buscar cadastro.",
+        )
 
     if not row:
         raise HTTPException(
@@ -87,7 +103,7 @@ def api_get_lead_cadastro_public(
 
 
 # --------------------------------------------------
-# PATCH público: salva dados PF para um token
+# PATCH público: salva os dados PF para um token
 # --------------------------------------------------
 @router.patch("/p/{token}/pf")
 def api_patch_lead_cadastro_pf(
@@ -98,17 +114,12 @@ def api_patch_lead_cadastro_pf(
     """
     Salva os dados de Pessoa Física para um lead_cadastros identificado por token_publico.
     """
-    print("PATCH /lead-cadastros/p/{token}/pf -> token_publico:", token)
+    print("PATCH /lead-cadastros/p/{token}/pf -> token:", repr(token))
     print("PATCH body:", body.dict())
 
-    # 1) Buscar o cadastro por token_publico
+    # 1) Buscar o cadastro por token_publico usando o MESMO helper do GET
     try:
-        resp = (
-            supa.table("lead_cadastros")
-            .select("*")
-            .eq("token_publico", token)
-            .execute()
-        )
+        row = _load_cadastro_by_token(supa, token)
     except Exception as e:
         print("ERRO ao buscar lead_cadastros (PF) por token:", repr(e))
         raise HTTPException(
@@ -116,20 +127,14 @@ def api_patch_lead_cadastro_pf(
             detail="Erro ao buscar cadastro.",
         )
 
-    data = getattr(resp, "data", None)
-    print("PATCH lead_cadastros resp.data:", data)
-
-    row: Dict[str, Any] | None = None
-    if isinstance(data, list) and data:
-        row = data[0]
-    elif isinstance(data, dict) and data:
-        row = data
-
     if not row:
+        print("PATCH: nenhum cadastro encontrado para token:", repr(token))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cadastro não encontrado para este token.",
         )
+
+    print("PATCH: cadastro encontrado:", row)
 
     if row.get("tipo_cliente") != "pf":
         raise HTTPException(
@@ -138,13 +143,13 @@ def api_patch_lead_cadastro_pf(
         )
 
     # 2) Montar os dados para atualizar
-    # AJUSTE: aqui você pode trocar "pf_dados" pelo nome real da coluna JSONB
+    # IMPORTANTE: ajuste o nome da coluna JSONB se for diferente de 'pf_dados'
     update_payload: Dict[str, Any] = {
         "pf_dados": body.dict(),
         "status": "pendente_documentos",  # ou outro status que você preferir
     }
 
-    print("PATCH update_payload:", update_payload, "para id:", row["id"])
+    print("PATCH update_payload para id", row["id"], ":", update_payload)
 
     try:
         resp_upd = (
