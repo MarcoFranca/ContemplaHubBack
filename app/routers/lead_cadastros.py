@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from supabase import Client
 
 from app.deps import get_supabase_admin
@@ -19,7 +19,7 @@ class LeadCadastroPFInput(BaseModel):
     cpf: str
     data_nascimento: Optional[str] = None   # yyyy-mm-dd
     estado_civil: Optional[str] = None
-    email: EmailStr
+    email: str
     telefone_celular: str
     renda_mensal: Optional[float] = None
     cep: Optional[str] = None
@@ -119,7 +119,6 @@ def api_patch_lead_cadastro_pf(
         row = data
 
     if not row:
-        # <-- É ESSA MENSAGEM QUE VOCÊ ESTÁ VENDO HOJE
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cadastro não encontrado para este token.",
@@ -158,10 +157,8 @@ def api_patch_lead_cadastro_pf(
     elif isinstance(data_upd, dict) and data_upd:
         updated = data_upd
     else:
-        # se o Supabase não retornou nada, devolve pelo menos o básico
         updated = {**row, **update_payload}
 
-    # Resposta enxuta pro front
     return {
         "ok": True,
         "id": updated.get("id"),
