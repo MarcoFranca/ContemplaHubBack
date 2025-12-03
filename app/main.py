@@ -3,9 +3,9 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers.health import router as health_router
 from app.routers.lead_propostas import router as lead_propostas_router
 from app.routers.lead_cadastros import router as lead_cadastros_router
+from app.routers.health import router as health_router
 from app.routers.leads import router as leads_router
 from app.routers.kanban import router as kanban_router
 from app.routers.diagnostic import router as diagnostic_router
@@ -37,13 +37,13 @@ def root():
     return {"message": "backend no ar"}
 
 
-# 🔹 registra cada router UMA vez
-app.include_router(health_router)
+# Routers
 app.include_router(lead_propostas_router)
 app.include_router(lead_cadastros_router)
+app.include_router(diagnostic_router)
+app.include_router(health_router)
 app.include_router(leads_router)
 app.include_router(kanban_router)
-app.include_router(diagnostic_router)
 
 
 @app.on_event("startup")

@@ -12,7 +12,7 @@ router = APIRouter(prefix="/lead-cadastros", tags=["lead-cadastros"])
 
 
 # --------------------------------------------------
-# Modelo de entrada para PF (o que o front está mandando)
+# Modelo de entrada para PF (form do front)
 # --------------------------------------------------
 class LeadCadastroPFInput(BaseModel):
     nome_completo: str
@@ -43,6 +43,8 @@ def api_get_lead_cadastro_public(
 
     Usado pela página /cadastro/[token] no front.
     """
+    print("GET /lead-cadastros/p/{token} -> token_publico:", token)
+
     try:
         resp = (
             supa.table("lead_cadastros")
@@ -58,6 +60,7 @@ def api_get_lead_cadastro_public(
         )
 
     data = getattr(resp, "data", None)
+    print("GET lead_cadastros resp.data:", data)
 
     row: Dict[str, Any] | None = None
     if isinstance(data, list) and data:
@@ -95,6 +98,9 @@ def api_patch_lead_cadastro_pf(
     """
     Salva os dados de Pessoa Física para um lead_cadastros identificado por token_publico.
     """
+    print("PATCH /lead-cadastros/p/{token}/pf -> token_publico:", token)
+    print("PATCH body:", body.dict())
+
     # 1) Buscar o cadastro por token_publico
     try:
         resp = (
@@ -111,6 +117,7 @@ def api_patch_lead_cadastro_pf(
         )
 
     data = getattr(resp, "data", None)
+    print("PATCH lead_cadastros resp.data:", data)
 
     row: Dict[str, Any] | None = None
     if isinstance(data, list) and data:
@@ -131,11 +138,13 @@ def api_patch_lead_cadastro_pf(
         )
 
     # 2) Montar os dados para atualizar
-    # ATENÇÃO: ajuste "pf_dados" para o nome real da coluna JSONB que você criou
+    # AJUSTE: aqui você pode trocar "pf_dados" pelo nome real da coluna JSONB
     update_payload: Dict[str, Any] = {
         "pf_dados": body.dict(),
         "status": "pendente_documentos",  # ou outro status que você preferir
     }
+
+    print("PATCH update_payload:", update_payload, "para id:", row["id"])
 
     try:
         resp_upd = (
@@ -152,6 +161,8 @@ def api_patch_lead_cadastro_pf(
         )
 
     data_upd = getattr(resp_upd, "data", None)
+    print("PATCH lead_cadastros update resp.data:", data_upd)
+
     if isinstance(data_upd, list) and data_upd:
         updated = data_upd[0]
     elif isinstance(data_upd, dict) and data_upd:
