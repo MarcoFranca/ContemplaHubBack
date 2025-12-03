@@ -1,6 +1,8 @@
 from __future__ import annotations
-from typing import Literal
+from typing import Literal, Any, Dict
 import os
+import random
+import string
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
@@ -23,6 +25,186 @@ from app.services.lead_propostas_service import (
 router = APIRouter(prefix="/lead-propostas", tags=["lead-propostas"])
 FRONTEND_APP_URL = os.getenv("FRONTEND_APP_URL", "https://app.contemplahub.com")
 
+
+# ========= HELPERS NOVOS PARA CADASTRO =======================================
+
+def _random_token(length: int = 10) -> str:
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
+
+
+def _ensure_unique_cadastro_token(supa: Client) -> str:
+    for _ in range(10):
+        token = _random_token(10)
+        resp = (
+            supa.table("lead_cadastros")
+            .select("id")
+            .eq("token_publico", token)
+            .maybe_single()
+            .execute()
+        )
+        data = getattr(resp, "data", None)
+        if not data:
+            return token
+    # fallback bruto
+    return _random_token(16)
+
+
+def _ensure_cadastro_for_proposta(
+    supa: Client,
+    proposta: LeadProposalRecord,
+    payload: "AcceptPropostaPayload",
+) -> Dict[str, Any]:
+    """
+    Garante que exista um lead_cadastros para (org, lead, proposta).
+    Se já existir, devolve o registro. Se não, cria um novo.
+    """
+
+    # tenta achar um existente
+    resp = (
+        supa.table("lead_cadastros")
+        .select("*")
+        .eq("org_id", proposta.org_id)
+        .eq("lead_id", proposta.lead_id)
+        .eq("proposta_id", proposta.id)
+        .maybe_single()
+        .execute()
+    )
+    data = getattr(resp, "data", None)
+    if data:
+        return data
+
+    token = _ensure_unique_cadastro_token(supa)
+
+    insert = {
+        "org_id": proposta.org_id,
+        "lead_id": proposta.lead_id,
+        "proposta_id": proposta.id,
+        "tipo_cliente": "pf",  # por enquanto fixo; depois podemos inferir
+        "status": "pendente_dados",
+        "token_publico": token,
+        "created_source": payload.source or "public_accept",
+        "first_ip": payload.ip,
+        "first_user_agent": payload.user_agent,
+    }
+
+    resp_ins = (
+        supa.table("lead_cadastros")
+        .insert(insert)
+        .maybe_single()
+        .execute()
+    )
+    data_ins = getattr(resp_ins, "data", None)
+    if not data_ins:
+        raise RuntimeError("Falha ao criar lead_cadastros")
+
+    return data_ins
+
+
+def _build_cadastro_cliente_email_html(
+    proposta: LeadProposalRecord,
+    cadastro: Dict[str, Any],
+    link_cadastro: str,
+) -> str:
+    cliente_nome = (
+        proposta.payload.cliente.nome
+        if proposta.payload and proposta.payload.cliente
+        else "cliente"
+    )
+
+    titulo = proposta.titulo or "sua proposta de consórcio"
+
+    return f"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Próximo passo – dados para contratação</title>
+</head>
+<body style="margin:0;padding:0;background:#0b1120;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#020617;padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#020617;border-radius:16px;border:1px solid #1f2937;overflow:hidden;">
+          <tr>
+            <td style="padding:24px 24px 16px 24px;border-bottom:1px solid #1f2937;">
+              <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#6ee7b7;margin-bottom:4px;">
+                Conclusão de cadastro • ContemplaHub
+              </div>
+              <div style="font-size:20px;color:#e5e7eb;font-weight:600;">
+                Olá, {cliente_nome}!
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:16px 24px 8px 24px;">
+              <p style="font-size:14px;color:#d1d5db;line-height:1.5;margin:0 0 12px 0;">
+                Recebemos a confirmação da sua proposta&nbsp;
+                <strong style="color:#a5b4fc;">{titulo}</strong>.
+              </p>
+              <p style="font-size:14px;color:#9ca3af;line-height:1.6;margin:0 0 12px 0;">
+                Agora falta apenas <strong style="color:#fbbf24;">um passo</strong> para avançarmos
+                com a contratação do seu consórcio: preencher seus dados cadastrais e anexar os documentos.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:8px 24px 16px 24px;">
+              <div style="background:#020617;border-radius:12px;border:1px solid #1f2937;padding:12px 14px;">
+                <p style="font-size:12px;color:#6b7280;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.16em;">
+                  O que você vai precisar
+                </p>
+                <ul style="font-size:13px;color:#d1d5db;line-height:1.6;padding-left:18px;margin:0;">
+                  <li>Documento de identificação com foto (RG ou CNH);</li>
+                  <li>CPF;</li>
+                  <li>Comprovante de residência recente;</li>
+                  <li>Comprovante de renda atualizado;</li>
+                  <li>Dados bancários para pagamento das parcelas.</li>
+                </ul>
+                <p style="font-size:12px;color:#9ca3af;margin:10px 0 0 0;">
+                  Você poderá anexar os arquivos diretamente pela área segura do ContemplaHub.
+                </p>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding:12px 24px 24px 24px;">
+              <a href="{link_cadastro}"
+                 style="display:inline-block;background:#22c55e;color:#0b1120;font-weight:600;
+                        padding:10px 22px;border-radius:999px;font-size:14px;text-decoration:none;">
+                Começar meu cadastro agora
+              </a>
+              <p style="font-size:12px;color:#6b7280;margin-top:12px;">
+                Se o botão não funcionar, copie e cole este link no navegador:<br />
+                <span style="color:#9ca3af;font-size:11px;">{link_cadastro}</span>
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:14px 24px 18px 24px;border-top:1px solid #1f2937;">
+              <p style="font-size:11px;color:#6b7280;margin:0 0 4px 0;">
+                Este e-mail foi enviado automaticamente pelo ContemplaHub após a aprovação da sua proposta.
+              </p>
+              <p style="font-size:11px;color:#4b5563;margin:0;">
+                Autentika Seguros • Planeje hoje, conquiste sempre.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+# ========= FIM HELPERS NOVOS ==================================================
+
+
 class AcceptPropostaPayload(BaseModel):
     source: str | None = None
     ip: str | None = None
@@ -36,7 +218,6 @@ def notify_email_proposta_aprovada(
 ) -> None:
     """
     Notifica a organização (org.email_from) que o cliente marcou a proposta como APROVADA.
-    Envia texto + HTML bonitinho.
     """
 
     user_email: str | None = None
@@ -62,7 +243,6 @@ def notify_email_proposta_aprovada(
         print("WARN: nenhum e-mail de destino para notificar proposta aprovada (org.email_from vazio)")
         return
 
-    # 2) Dados básicos
     cliente_nome = (
         proposta.payload.cliente.nome
         if proposta.payload and proposta.payload.cliente
@@ -71,8 +251,7 @@ def notify_email_proposta_aprovada(
 
     subject = f"Proposta aprovada pelo cliente – {proposta.titulo or 'Sem título'}"
 
-    # ---------- TEXTO SIMPLES (fallback) ----------
-    text_body_lines = [
+    body_lines = [
         f"Olá{f', {user_name}' if user_name else ''}!",
         "",
         "Uma proposta foi marcada como APROVADA pelo cliente na página pública.",
@@ -91,12 +270,14 @@ def notify_email_proposta_aprovada(
         "- Orientar o cliente sobre os próximos passos",
         "- Atualizar o status no funil, se necessário.",
         "",
-        f"Abrir proposta: {FRONTEND_APP_URL}/app/leads/{proposta.lead_id}/propostas/{proposta.id}",
-        "",
         "Abraços,",
         "ContemplaHub / Autentika",
     ]
-    text_body = "\n".join(text_body_lines)
+
+    text_body = "\n".join(body_lines)
+
+    # Aqui não preciso de HTML, email interno pode seguir simples
+    send_system_email(to=user_email, subject=subject, text_body=text_body)
 
     # ---------- HTML BONITO ----------
     main_scenario = None
@@ -475,7 +656,64 @@ def api_accept_public_proposta(
             payload=payload,
         )
     except Exception as e:
-        print("WARN: falha ao enviar e-mail de proposta aprovada:", repr(e))
+        print("WARN: falha ao enviar e-mail de proposta aprovada (interno):", repr(e))
+
+    # 4) criar/garantir cadastro + mandar e-mail pro CLIENTE com link de cadastro
+    try:
+        cadastro = _ensure_cadastro_for_proposta(
+            supa=supa,
+            proposta=updated,
+            payload=payload,
+        )
+
+        # e-mail do cliente vindo do payload da proposta
+        cliente_email = (
+            updated.payload.cliente.email
+            if updated.payload and updated.payload.cliente
+            else None
+        )
+
+        if cliente_email:
+            cliente_nome = (
+                updated.payload.cliente.nome
+                if updated.payload and updated.payload.cliente
+                else "cliente"
+            )
+
+            # URL do front (usa FRONTEND_APP_URL lá do topo do arquivo)
+            link_cadastro = f"{FRONTEND_APP_URL.rstrip('/')}/cadastro/{cadastro['token_publico']}"
+
+            subject = "Próximo passo: dados para contratação do seu consórcio"
+
+            # corpo texto (fallback)
+            text_body = (
+                f"Olá, {cliente_nome}!\n\n"
+                "Recebemos a confirmação da sua proposta de consórcio.\n"
+                "Para avançarmos com a contratação, precisamos que você complete seus dados "
+                "e envie os documentos pela nossa área segura.\n\n"
+                f"Acesse o link:\n{link_cadastro}\n\n"
+                "Se tiver qualquer dúvida, é só responder este e-mail ou falar com seu consultor.\n\n"
+                "Autentika / ContemplaHub"
+            )
+
+            # corpo HTML bonitão
+            html_body = _build_cadastro_cliente_email_html(
+                proposta=updated,
+                cadastro=cadastro,
+                link_cadastro=link_cadastro,
+            )
+
+            send_system_email(
+                to=cliente_email,
+                subject=subject,
+                text_body=text_body,
+                html_body=html_body,
+            )
+        else:
+            print("INFO: proposta aprovada, mas sem e-mail de cliente para envio de cadastro")
+    except Exception as e:
+        print("WARN: falha ao criar cadastro ou enviar e-mail de onboarding ao cliente:", repr(e))
 
     return {"ok": True}
+
 
