@@ -217,7 +217,8 @@ def notify_email_proposta_aprovada(
     payload: AcceptPropostaPayload,
 ) -> None:
     """
-    Notifica a organização (org.email_from) que o cliente marcou a proposta como APROVADA.
+    Notifica a organização (org.email_from) que o cliente marcou a proposta como APROVADA,
+    com e-mail bonito (HTML) + texto de fallback.
     """
 
     user_email: str | None = None
@@ -251,6 +252,7 @@ def notify_email_proposta_aprovada(
 
     subject = f"Proposta aprovada pelo cliente – {proposta.titulo or 'Sem título'}"
 
+    # ---------- TEXTO (fallback) ----------
     body_lines = [
         f"Olá{f', {user_name}' if user_name else ''}!",
         "",
@@ -273,11 +275,7 @@ def notify_email_proposta_aprovada(
         "Abraços,",
         "ContemplaHub / Autentika",
     ]
-
     text_body = "\n".join(body_lines)
-
-    # Aqui não preciso de HTML, email interno pode seguir simples
-    send_system_email(to=user_email, subject=subject, text_body=text_body)
 
     # ---------- HTML BONITO ----------
     main_scenario = None
@@ -294,7 +292,10 @@ def notify_email_proposta_aprovada(
     parcela_str = ""
 
     if main_scenario and main_scenario.valor_carta is not None:
-        valor_carta_str = f"R$ {main_scenario.valor_carta:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        valor_carta_str = (
+            f"R$ {main_scenario.valor_carta:,.2f}"
+            .replace(",", "X").replace(".", ",").replace("X", ".")
+        )
 
     parcela_val = (
         main_scenario.parcela_reduzida
@@ -304,7 +305,10 @@ def notify_email_proposta_aprovada(
         else None
     )
     if parcela_val is not None:
-        parcela_str = f"R$ {parcela_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        parcela_str = (
+            f"R$ {parcela_val:,.2f}"
+            .replace(",", "X").replace(".", ",").replace("X", ".")
+        )
 
     html_body = f"""
 <!doctype html>
@@ -428,7 +432,7 @@ def notify_email_proposta_aprovada(
 </html>
     """.strip()
 
-    # 3) Disparar e-mail via Resend (texto + HTML)
+    # ---------- DISPARO ÚNICO (texto + HTML) ----------
     send_system_email(
         to=user_email,
         subject=subject,
