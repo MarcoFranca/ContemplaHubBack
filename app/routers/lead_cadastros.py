@@ -162,7 +162,7 @@ def api_patch_lead_cadastro_pf(
         print("ERRO ao atualizar lead_cadastros (PF):", repr(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao salvar cadastro.",
+            detail=f"Erro ao salvar cadastro: {e}",
         )
 
     data_upd = getattr(resp_upd, "data", None)
