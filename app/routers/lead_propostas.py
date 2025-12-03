@@ -1,9 +1,11 @@
 from __future__ import annotations
 from typing import Literal
+import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from supabase import Client
+
 
 from app.deps import get_supabase_admin
 from app.schemas.propostas import CreateLeadProposalInput, LeadProposalRecord
@@ -19,7 +21,7 @@ from app.services.lead_propostas_service import (
 )
 
 router = APIRouter(prefix="/lead-propostas", tags=["lead-propostas"])
-
+FRONTEND_APP_URL = os.getenv("FRONTEND_APP_URL", "https://app.contemplahub.com")
 
 class AcceptPropostaPayload(BaseModel):
     source: str | None = None
@@ -34,6 +36,7 @@ def notify_email_proposta_aprovada(
 ) -> None:
     """
     Notifica a organização (org.email_from) que o cliente marcou a proposta como APROVADA.
+    Envia texto + HTML bonitinho.
     """
 
     user_email: str | None = None
@@ -59,7 +62,7 @@ def notify_email_proposta_aprovada(
         print("WARN: nenhum e-mail de destino para notificar proposta aprovada (org.email_from vazio)")
         return
 
-    # 2) Montar assunto e corpo
+    # 2) Dados básicos
     cliente_nome = (
         proposta.payload.cliente.nome
         if proposta.payload and proposta.payload.cliente
@@ -68,7 +71,8 @@ def notify_email_proposta_aprovada(
 
     subject = f"Proposta aprovada pelo cliente – {proposta.titulo or 'Sem título'}"
 
-    body_lines = [
+    # ---------- TEXTO SIMPLES (fallback) ----------
+    text_body_lines = [
         f"Olá{f', {user_name}' if user_name else ''}!",
         "",
         "Uma proposta foi marcada como APROVADA pelo cliente na página pública.",
@@ -87,14 +91,169 @@ def notify_email_proposta_aprovada(
         "- Orientar o cliente sobre os próximos passos",
         "- Atualizar o status no funil, se necessário.",
         "",
+        f"Abrir proposta: {FRONTEND_APP_URL}/app/leads/{proposta.lead_id}/propostas/{proposta.id}",
+        "",
         "Abraços,",
         "ContemplaHub / Autentika",
     ]
+    text_body = "\n".join(text_body_lines)
 
-    body = "\n".join(body_lines)
+    # ---------- HTML BONITO ----------
+    main_scenario = None
+    try:
+        if proposta.payload and proposta.payload.propostas:
+            main_scenario = proposta.payload.propostas[0]
+    except Exception:
+        pass
 
-    # 3) Disparar e-mail via Resend
-    send_system_email(to=user_email, subject=subject, text_body=body)
+    lead_url = f"{FRONTEND_APP_URL}/app/leads/{proposta.lead_id}"
+    proposta_url = f"{FRONTEND_APP_URL}/app/leads/{proposta.lead_id}/propostas/{proposta.id}"
+
+    valor_carta_str = ""
+    parcela_str = ""
+
+    if main_scenario and main_scenario.valor_carta is not None:
+        valor_carta_str = f"R$ {main_scenario.valor_carta:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    parcela_val = (
+        main_scenario.parcela_reduzida
+        if main_scenario and main_scenario.parcela_reduzida is not None
+        else main_scenario.parcela_cheia
+        if main_scenario and main_scenario.parcela_cheia is not None
+        else None
+    )
+    if parcela_val is not None:
+        parcela_str = f"R$ {parcela_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    html_body = f"""
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>{subject}</title>
+  </head>
+  <body style="margin:0; padding:0; background-color:#020617; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#020617; padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:640px; background-color:#020617; color:#e5e7eb;">
+            <!-- Header -->
+            <tr>
+              <td style="padding:16px 24px 8px 24px; text-align:left;">
+                <div style="font-size:11px; letter-spacing:0.18em; text-transform:uppercase; color:#34d399;">
+                  ContemplaHub · Autentika
+                </div>
+                <div style="margin-top:4px; font-size:18px; font-weight:600; color:#f9fafb;">
+                  Proposta aprovada pelo cliente
+                </div>
+              </td>
+            </tr>
+
+            <!-- Card principal -->
+            <tr>
+              <td style="padding:8px 24px 24px 24px;">
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border-radius:16px; border:1px solid #10b98133; background:linear-gradient(135deg,#020617,#020617,#022c22);">
+                  <tr>
+                    <td style="padding:20px 20px 16px 20px;">
+                      <div style="font-size:14px; font-weight:600; color:#ecfdf5; margin-bottom:4px;">
+                        {proposta.titulo or 'Proposta de consórcio'}
+                      </div>
+                      <div style="font-size:12px; color:#9ca3af;">
+                        Cliente: <strong>{cliente_nome or '—'}</strong>
+                      </div>
+                      <div style="font-size:11px; color:#6b7280; margin-top:4px;">
+                        Status atual: <span style="color:#34d399; font-weight:500;">Aprovada pelo cliente</span>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- Linha de resumo -->
+                  <tr>
+                    <td style="padding:0 20px 16px 20px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                        <tr>
+                          <td style="width:33%; padding-right:8px;">
+                            <div style="font-size:11px; text-transform:uppercase; color:#9ca3af; letter-spacing:0.12em;">Valor da carta</div>
+                            <div style="margin-top:4px; font-size:14px; font-weight:600; color:#e5e7eb;">
+                              {valor_carta_str or '—'}
+                            </div>
+                          </td>
+                          <td style="width:33%; padding-right:8px;">
+                            <div style="font-size:11px; text-transform:uppercase; color:#9ca3af; letter-spacing:0.12em;">Parcela estimada</div>
+                            <div style="margin-top:4px; font-size:14px; font-weight:600; color:#a7f3d0;">
+                              {parcela_str or '—'}
+                            </div>
+                          </td>
+                          <td style="width:34%;">
+                            <div style="font-size:11px; text-transform:uppercase; color:#9ca3af; letter-spacing:0.12em;">Lead / Proposta</div>
+                            <div style="margin-top:4px; font-size:12px; color:#e5e7eb;">
+                              <span style="display:block;">Lead: {proposta.lead_id}</span>
+                              <span style="display:block;">Proposta: {proposta.id}</span>
+                            </div>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- CTA -->
+                  <tr>
+                    <td style="padding:0 20px 20px 20px;">
+                      <p style="margin:0 0 12px 0; font-size:12px; color:#d1d5db;">
+                        A proposta foi aprovada pelo cliente na página pública.
+                        Acesse o ContemplaHub para seguir com a contratação, conferir documentos
+                        e registrar os próximos passos no funil.
+                      </p>
+
+                      <table cellpadding="0" cellspacing="0" role="presentation">
+                        <tr>
+                          <td align="left" style="border-radius:999px; background-color:#10b981;">
+                            <a href="{proposta_url}"
+                               style="display:inline-block; padding:10px 18px; font-size:13px; font-weight:600; color:#020617; text-decoration:none; border-radius:999px;">
+                              Abrir proposta no ContemplaHub
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <p style="margin:12px 0 0 0; font-size:11px; color:#6b7280;">
+                        Se preferir, você também pode abrir direto pelo lead:
+                        <a href="{lead_url}" style="color:#34d399; text-decoration:none;">ver lead no ContemplaHub</a>.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Rodapé -->
+            <tr>
+              <td style="padding:8px 24px 0 24px;">
+                <p style="margin:0; font-size:11px; color:#6b7280;">
+                  Origem da ação: {payload.source or 'public_proposal_page'} ·
+                  IP: {payload.ip or '—'}
+                </p>
+                <p style="margin:4px 0 0 0; font-size:11px; color:#4b5563;">
+                  ContemplaHub · Autentika Consórcios
+                </p>
+              </td>
+            </tr>
+
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+    """.strip()
+
+    # 3) Disparar e-mail via Resend (texto + HTML)
+    send_system_email(
+        to=user_email,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
 
 
 class UpdateStatusBody(BaseModel):
@@ -277,12 +436,6 @@ def api_get_public_proposta(
             detail="Proposta não encontrada.",
         )
     return rec
-
-
-class AcceptPropostaPayload(BaseModel):
-    source: str | None = None
-    ip: str | None = None
-    user_agent: str | None = None
 
 
 @router.post("/p/{public_hash}/accept")
