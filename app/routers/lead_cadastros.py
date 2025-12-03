@@ -1,10 +1,9 @@
-# app/routers/lead_cadastros.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from supabase import Client
 
 from app.deps import get_supabase_admin
@@ -12,12 +11,15 @@ from app.deps import get_supabase_admin
 router = APIRouter(prefix="/lead-cadastros", tags=["lead-cadastros"])
 
 
+# --------------------------------------------------
+# Modelo de entrada para PF (o que o front está mandando)
+# --------------------------------------------------
 class LeadCadastroPFInput(BaseModel):
     nome_completo: str
     cpf: str
-    data_nascimento: Optional[str] = None
+    data_nascimento: Optional[str] = None   # yyyy-mm-dd
     estado_civil: Optional[str] = None
-    email: str
+    email: EmailStr
     telefone_celular: str
     renda_mensal: Optional[float] = None
     cep: Optional[str] = None
@@ -28,6 +30,9 @@ class LeadCadastroPFInput(BaseModel):
     observacoes: Optional[str] = None
 
 
+# --------------------------------------------------
+# GET público: carrega cadastro pelo token_publico
+# --------------------------------------------------
 @router.get("/p/{token}")
 def api_get_lead_cadastro_public(
     token: str,
@@ -38,7 +43,6 @@ def api_get_lead_cadastro_public(
 
     Usado pela página /cadastro/[token] no front.
     """
-
     try:
         resp = (
             supa.table("lead_cadastros")
@@ -79,36 +83,31 @@ def api_get_lead_cadastro_public(
     }
 
 
+# --------------------------------------------------
+# PATCH público: salva dados PF para um token
+# --------------------------------------------------
 @router.patch("/p/{token}/pf")
-def api_update_lead_cadastro_pf(
+def api_patch_lead_cadastro_pf(
     token: str,
     body: LeadCadastroPFInput,
     supa: Client = Depends(get_supabase_admin),
-):
+) -> Dict[str, Any]:
     """
-    Atualiza os dados PF vinculados a um lead_cadastros identificado pelo token_publico.
-
-    Fluxo:
-    - busca lead_cadastros pelo token;
-    - se não achar => 404;
-    - faz upsert em lead_cadastros_pf (um registro por cadastro_id);
-    - opcional: atualiza status do lead_cadastros para 'dados_recebidos'.
+    Salva os dados de Pessoa Física para um lead_cadastros identificado por token_publico.
     """
-
-    # 1) achar o cadastro base pelo token
+    # 1) Buscar o cadastro por token_publico
     try:
         resp = (
             supa.table("lead_cadastros")
-            .select("id, org_id, lead_id, proposta_id, tipo_cliente, status")
+            .select("*")
             .eq("token_publico", token)
-            .limit(1)
             .execute()
         )
     except Exception as e:
-        print("ERRO ao buscar lead_cadastros por token (PF):", repr(e))
+        print("ERRO ao buscar lead_cadastros (PF) por token:", repr(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao buscar cadastro (PF).",
+            detail="Erro ao buscar cadastro.",
         )
 
     data = getattr(resp, "data", None)
@@ -120,52 +119,51 @@ def api_update_lead_cadastro_pf(
         row = data
 
     if not row:
+        # <-- É ESSA MENSAGEM QUE VOCÊ ESTÁ VENDO HOJE
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cadastro não encontrado para este token.",
         )
 
-    cadastro_id = row["id"]
+    if row.get("tipo_cliente") != "pf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este cadastro não é de Pessoa Física.",
+        )
 
-    # 2) upsert na tabela de dados PF
-    upsert_data = {
-        "cadastro_id": cadastro_id,
-        "nome_completo": body.nome_completo,
-        "cpf": body.cpf,
-        "data_nascimento": body.data_nascimento,
-        "estado_civil": body.estado_civil,
-        "email": body.email,
-        "telefone_celular": body.telefone_celular,
-        "renda_mensal": body.renda_mensal,
-        "cep": body.cep,
-        "endereco": body.endereco,
-        "bairro": body.bairro,
-        "cidade": body.cidade,
-        "uf": body.uf,
-        "observacoes": body.observacoes,
+    # 2) Montar os dados para atualizar
+    # ATENÇÃO: ajuste "pf_dados" para o nome real da coluna JSONB que você criou
+    update_payload: Dict[str, Any] = {
+        "pf_dados": body.dict(),
+        "status": "pendente_documentos",  # ou outro status que você preferir
     }
 
     try:
-        # ⚠️ se o nome da tabela for outro, ajusta aqui
-        resp_upsert = (
-            supa.table("lead_cadastros_pf")
-            .upsert(upsert_data, on_conflict="cadastro_id")
+        resp_upd = (
+            supa.table("lead_cadastros")
+            .update(update_payload)
+            .eq("id", row["id"])
             .execute()
         )
-        print("DEBUG upsert lead_cadastros_pf:", getattr(resp_upsert, "data", None))
     except Exception as e:
-        print("ERRO ao upsert em lead_cadastros_pf:", repr(e))
+        print("ERRO ao atualizar lead_cadastros (PF):", repr(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao salvar dados PF.",
+            detail="Erro ao salvar cadastro.",
         )
 
-    # 3) opcional: atualizar status do cadastro principal
-    try:
-        supa.table("lead_cadastros").update(
-            {"status": "dados_recebidos"}
-        ).eq("id", cadastro_id).execute()
-    except Exception as e:
-        print("WARN: falha ao atualizar status de lead_cadastros:", repr(e))
+    data_upd = getattr(resp_upd, "data", None)
+    if isinstance(data_upd, list) and data_upd:
+        updated = data_upd[0]
+    elif isinstance(data_upd, dict) and data_upd:
+        updated = data_upd
+    else:
+        # se o Supabase não retornou nada, devolve pelo menos o básico
+        updated = {**row, **update_payload}
 
-    return {"ok": True}
+    # Resposta enxuta pro front
+    return {
+        "ok": True,
+        "id": updated.get("id"),
+        "status": updated.get("status"),
+    }
