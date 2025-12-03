@@ -145,7 +145,7 @@ def api_patch_lead_cadastro_pf(
     # 2) Montar os dados para atualizar
     # IMPORTANTE: ajuste o nome da coluna JSONB se for diferente de 'pf_dados'
     update_payload: Dict[str, Any] = {
-        "pf_dados": body.dict(),
+        # "pf_dados": body.dict(),
         "status": "pendente_documentos",  # ou outro status que você preferir
     }
 
