@@ -98,19 +98,28 @@ def _random_token(length: int = 10) -> str:
 
 
 def _ensure_unique_cadastro_token(supa: Client) -> str:
+    """
+    Gera um token que não exista em lead_cadastros.token_publico.
+    Sem usar maybe_single(), que dá problema em algumas versões do supabase-py.
+    """
     for _ in range(10):
         token = _random_token(10)
+
         resp = (
             supa.table("lead_cadastros")
             .select("id")
             .eq("token_publico", token)
-            .maybe_single()
             .execute()
         )
         data = getattr(resp, "data", None)
+
+        # supabase-py normalmente retorna lista
         if not data:
             return token
-    # fallback bruto
+        if isinstance(data, list) and len(data) == 0:
+            return token
+
+    # fallback bruto se, por algum motivo, todas colidirem
     return _random_token(16)
 
 
@@ -124,20 +133,27 @@ def _ensure_cadastro_for_proposta(
     Se já existir, devolve o registro. Se não, cria um novo.
     """
 
-    # tenta achar um existente
+    # 1) tentar achar um existente (sem maybe_single)
     resp = (
         supa.table("lead_cadastros")
         .select("*")
         .eq("org_id", proposta.org_id)
         .eq("lead_id", proposta.lead_id)
         .eq("proposta_id", proposta.id)
-        .maybe_single()
         .execute()
     )
     data = getattr(resp, "data", None)
-    if data:
-        return data
 
+    existing: Dict[str, Any] | None = None
+    if isinstance(data, list) and data:
+        existing = data[0]
+    elif isinstance(data, dict) and data:
+        existing = data
+
+    if existing:
+        return existing
+
+    # 2) não existe ainda → gerar token e inserir
     token = _ensure_unique_cadastro_token(supa)
 
     insert = {
@@ -155,12 +171,16 @@ def _ensure_cadastro_for_proposta(
     resp_ins = (
         supa.table("lead_cadastros")
         .insert(insert)
-        .maybe_single()
         .execute()
     )
+
     data_ins = getattr(resp_ins, "data", None)
+
     if not data_ins:
-        raise RuntimeError("Falha ao criar lead_cadastros")
+        raise RuntimeError("Falha ao criar lead_cadastros (sem data no insert)")
+
+    if isinstance(data_ins, list):
+        return data_ins[0]
 
     return data_ins
 
