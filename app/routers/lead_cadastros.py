@@ -260,3 +260,89 @@ def api_patch_lead_cadastro_pf(
         "id": updated.get("id"),
         "status": updated.get("status"),
     }
+
+
+# --------------------------------------------------
+# GET interno: carregar PF por proposta_id
+# --------------------------------------------------
+@router.get("/by-proposta/{proposta_id}/pf")
+def api_get_cadastro_pf_by_proposta(
+    proposta_id: str,
+    supa: Client = Depends(get_supabase_admin),
+) -> Dict[str, Any]:
+    """
+    Endpoint interno para CRM:
+    Busca o cadastro (lead_cadastros + lead_cadastros_pf) a partir da proposta_id.
+    Usado na tela interna de propostas.
+    """
+    print("GET /lead-cadastros/by-proposta/{proposta_id}/pf ->", repr(proposta_id))
+
+    # 1) Buscar cadastro principal
+    try:
+        resp_cad = (
+            supa.table("lead_cadastros")
+            .select("*")
+            .eq("proposta_id", proposta_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        print("ERRO ao buscar lead_cadastros por proposta_id:", repr(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao buscar cadastro pelo ID da proposta.",
+        )
+
+    cad_data = getattr(resp_cad, "data", None) or []
+    if not cad_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhum cadastro encontrado para esta proposta.",
+        )
+
+    cadastro = cad_data[0]
+    print("Cadastro encontrado por proposta_id:", cadastro)
+
+    if cadastro.get("tipo_cliente") != "pf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O cadastro associado a esta proposta não é de Pessoa Física.",
+        )
+
+    cadastro_id = cadastro["id"]
+
+    # 2) Buscar detalhes PF
+    try:
+        resp_pf = (
+            supa.table("lead_cadastros_pf")
+            .select("*")
+            .eq("cadastro_id", cadastro_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        print("ERRO ao buscar lead_cadastros_pf:", repr(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao buscar dados PF do cadastro.",
+        )
+
+    pf_data = getattr(resp_pf, "data", None) or []
+    pf_row = pf_data[0] if pf_data else None
+
+    print("lead_cadastros_pf encontrado:", pf_row)
+
+    return {
+        "cadastro": {
+            "id": cadastro.get("id"),
+            "org_id": cadastro.get("org_id"),
+            "lead_id": cadastro.get("lead_id"),
+            "proposta_id": cadastro.get("proposta_id"),
+            "tipo_cliente": cadastro.get("tipo_cliente"),
+            "status": cadastro.get("status"),
+            "created_at": cadastro.get("created_at"),
+            "updated_at": cadastro.get("updated_at"),
+        },
+        "pf": pf_row,  # pode ser None se ainda não tiver preenchido
+    }
