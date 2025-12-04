@@ -13,26 +13,59 @@ router = APIRouter(prefix="/lead-cadastros", tags=["lead-cadastros"])
 
 # --------------------------------------------------
 # MODELO: entrada PF vinda do formulário público
-# (campos que você está coletando no front)
 # --------------------------------------------------
 class LeadCadastroPFInput(BaseModel):
+    # DADOS PESSOAIS
     nome_completo: str
     cpf: str
     data_nascimento: Optional[str] = None   # yyyy-mm-dd
     estado_civil: Optional[str] = None
+
+    # CÔNJUGE
+    cpf_conjuge: Optional[str] = None
+    nome_conjuge: Optional[str] = None
+
+    # CONTATO
     email: str
+    telefone_fixo: Optional[str] = None
     telefone_celular: str
+
+    # DOCUMENTO IDENTIDADE
+    rg_numero: Optional[str] = None
+    rg_orgao_emissor: Optional[str] = None
+    rg_data_emissao: Optional[str] = None  # yyyy-mm-dd
+
+    # NASCIMENTO / FILIAÇÃO
+    cidade_nascimento: Optional[str] = None
+    nome_mae: Optional[str] = None
+
+    # PROFISSÃO / RENDA
+    profissao: Optional[str] = None
     renda_mensal: Optional[float] = None
+
+    # ENDEREÇO
     cep: Optional[str] = None
     endereco: Optional[str] = None
     bairro: Optional[str] = None
     cidade: Optional[str] = None
     uf: Optional[str] = None
+
+    # FORMA DE PAGAMENTO (parcelas)
+    # ajuste os valores conforme seu enum cadastro_forma_pagamento
+    forma_pagamento: Optional[str] = None  # 'boleto' | 'cartao_credito' | 'debito_automatico'
+
+    # CONTA PARA DEVOLUÇÃO
+    banco_devolucao: Optional[str] = None
+    agencia_devolucao: Optional[str] = None
+    conta_devolucao: Optional[str] = None
+
+    # CAMPO LIVRE
     observacoes: Optional[str] = None
 
 
 # --------------------------------------------------
 # HELPER ÚNICO: buscar cadastro por token_publico
+# (igual estava)
 # --------------------------------------------------
 def _load_cadastro_by_token(
     supa: Client,
@@ -63,18 +96,11 @@ def _load_cadastro_by_token(
     return row
 
 
-# --------------------------------------------------
-# GET público: carrega cadastro pelo token_publico
-# --------------------------------------------------
 @router.get("/p/{token}")
 def api_get_lead_cadastro_public(
     token: str,
     supa: Client = Depends(get_supabase_admin),
 ) -> Dict[str, Any]:
-    """
-    Endpoint público para carregar um lead_cadastros pelo token_publico.
-    Usado pela página /cadastro/[token] no front.
-    """
     print("GET /lead-cadastros/p/{token} -> token:", repr(token))
 
     try:
@@ -91,7 +117,6 @@ def api_get_lead_cadastro_public(
             detail="Cadastro não encontrado.",
         )
 
-    # Filtra só o que o front realmente precisa
     return {
         "id": row.get("id"),
         "org_id": row.get("org_id"),
@@ -103,26 +128,15 @@ def api_get_lead_cadastro_public(
     }
 
 
-# --------------------------------------------------
-# PATCH público: salva os dados PF para um token
-# --------------------------------------------------
 @router.patch("/p/{token}/pf")
 def api_patch_lead_cadastro_pf(
     token: str,
     body: LeadCadastroPFInput,
     supa: Client = Depends(get_supabase_admin),
 ) -> Dict[str, Any]:
-    """
-    Salva os dados de Pessoa Física para um lead_cadastros identificado por token_publico.
-    Fluxo:
-    - Busca lead_cadastros pelo token_publico
-    - Upsert em lead_cadastros_pf (cadastro_id = id do lead_cadastros)
-    - Atualiza status em lead_cadastros para 'pendente_documentos'
-    """
     print("PATCH /lead-cadastros/p/{token}/pf -> token:", repr(token))
     print("PATCH body:", body.dict())
 
-    # 1) Buscar o cadastro por token_publico usando o MESMO helper do GET
     try:
         row = _load_cadastro_by_token(supa, token)
     except Exception as e:
@@ -149,23 +163,45 @@ def api_patch_lead_cadastro_pf(
 
     cadastro_id = row["id"]
 
-    # 2) Montar payload para a tabela lead_cadastros_pf
-    #    (modelo normalizado do seu migration)
+    # 1) Montar payload para a tabela lead_cadastros_pf
     pf_payload: Dict[str, Any] = {
         "cadastro_id": cadastro_id,
         "nome_completo": body.nome_completo,
         "cpf": body.cpf,
-        "data_nascimento": body.data_nascimento,  # str yyyy-mm-dd ou None
+        "data_nascimento": body.data_nascimento,
         "estado_civil": body.estado_civil,
+        "nome_conjuge": body.nome_conjuge,
+        "cpf_conjuge": body.cpf_conjuge,
+        "nome_mae": body.nome_mae,
+        "cidade_nascimento": body.cidade_nascimento,
+        "nacionalidade": None,  # se quiser, adicionamos depois no form
+
         "email": body.email,
+        "telefone_fixo": body.telefone_fixo,
         "celular": body.telefone_celular,
+
         "cep": body.cep,
         "endereco": body.endereco,
         "bairro": body.bairro,
         "cidade": body.cidade,
         "uf": body.uf,
+
+        "rg_numero": body.rg_numero,
+        "rg_orgao_emissor": body.rg_orgao_emissor,
+        "rg_data_emissao": body.rg_data_emissao,
+
+        "profissao": body.profissao,
         "renda_mensal": body.renda_mensal,
-        # Observações vão pro extra_json, pra não perder essa info
+
+        "forma_pagamento": body.forma_pagamento,
+        "banco_pagamento": None,
+        "agencia_pagamento": None,
+        "conta_pagamento": None,
+
+        "banco_devolucao": body.banco_devolucao,
+        "agencia_devolucao": body.agencia_devolucao,
+        "conta_devolucao": body.conta_devolucao,
+
         "extra_json": {
             "observacoes": body.observacoes,
         },
@@ -173,7 +209,6 @@ def api_patch_lead_cadastro_pf(
 
     print("PATCH upsert lead_cadastros_pf payload:", pf_payload)
 
-    # 2.1) Upsert na tabela lead_cadastros_pf
     try:
         resp_pf = (
             supa.table("lead_cadastros_pf")
@@ -189,8 +224,7 @@ def api_patch_lead_cadastro_pf(
 
     print("PATCH lead_cadastros_pf upsert resp.data:", getattr(resp_pf, "data", None))
 
-    # 3) Atualizar o status do cadastro principal para 'pendente_documentos'
-    #    (certifique-se de que o enum cadastro_status já tem esse valor)
+    # 2) Atualizar status principal
     update_payload: Dict[str, Any] = {
         "status": "pendente_documentos",
     }
