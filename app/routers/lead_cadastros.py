@@ -270,11 +270,6 @@ def api_get_cadastro_pf_by_proposta(
     proposta_id: str,
     supa: Client = Depends(get_supabase_admin),
 ) -> Dict[str, Any]:
-    """
-    Endpoint interno para CRM:
-    Busca o cadastro (lead_cadastros + lead_cadastros_pf) a partir da proposta_id.
-    Usado na tela interna de propostas.
-    """
     print("GET /lead-cadastros/by-proposta/{proposta_id}/pf ->", repr(proposta_id))
 
     # 1) Buscar cadastro principal
@@ -303,6 +298,7 @@ def api_get_cadastro_pf_by_proposta(
 
     cadastro = cad_data[0]
     print("Cadastro encontrado por proposta_id:", cadastro)
+    print("token_publico nesse cadastro:", cadastro.get("token_publico"))
 
     if cadastro.get("tipo_cliente") != "pf":
         raise HTTPException(
@@ -341,8 +337,10 @@ def api_get_cadastro_pf_by_proposta(
             "proposta_id": cadastro.get("proposta_id"),
             "tipo_cliente": cadastro.get("tipo_cliente"),
             "status": cadastro.get("status"),
+            "token_publico": cadastro.get("token_publico"),  # <<< AQUI
             "created_at": cadastro.get("created_at"),
             "updated_at": cadastro.get("updated_at"),
         },
         "pf": pf_row,  # pode ser None se ainda não tiver preenchido
     }
+
