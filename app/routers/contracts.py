@@ -21,7 +21,7 @@ class ContractFromLeadIn(BaseModel):
     grupo_codigo: str
     produto: Literal["imobiliario", "auto", "pesados"] = "imobiliario"
 
-    # Valores (vem como string pra gente normalizar)
+    # Valores
     valor_carta: str
     prazo: Optional[int] = None
     forma_pagamento: Optional[str] = None
@@ -40,17 +40,13 @@ class ContractFromLeadIn(BaseModel):
 
 
 def _parse_money(raw: Optional[str]) -> Optional[float]:
-    """
-    Converte '250.000,00' -> 250000.0
-    """
     if not raw:
         return None
     v = raw.replace(".", "").replace(",", ".")
     try:
-        n = float(v)
+        return float(v)
     except ValueError:
         return None
-    return n
 
 
 @router.post("/from-lead")
@@ -59,10 +55,7 @@ def create_contract_from_lead(
     supa: Client = Depends(get_supabase_admin),
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
 ) -> Dict[str, Any]:
-    """
-    Cria COTA + CONTRATO a partir de um lead,
-    sem mover o lead de etapa ainda.
-    """
+
     if not x_org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,24 +72,14 @@ def create_contract_from_lead(
     )
     lead = getattr(lead_resp, "data", None)
     if not lead:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Lead não encontrado",
-        )
-
+        raise HTTPException(status_code=404, detail="Lead não encontrado")
     if lead["org_id"] != x_org_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Lead pertence a outra organização",
-        )
+        raise HTTPException(status_code=403, detail="Lead pertence a outra organização")
 
-    # 2) normalizar valor_carta
+    # 2) normalizar money
     valor_carta = _parse_money(body.valor_carta)
     if valor_carta is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Valor da carta inválido",
-        )
+        raise HTTPException(status_code=400, detail="Valor da carta inválido")
 
     # 3) criar COTA
     cota_payload = {
@@ -119,23 +102,21 @@ def create_contract_from_lead(
 
     cota_resp = (
         supa.table("cotas")
-        .insert(cota_payload)
-        .select("id")
-        .single()
+        .insert(cota_payload, returning="representation")
         .execute()
     )
-    cota = getattr(cota_resp, "data", None)
-    if not cota:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao criar cota",
-        )
 
-    # 4) criar CONTRATO com status inicial correto
+    cota_rows = getattr(cota_resp, "data", None)
+    if not cota_rows:
+        raise HTTPException(status_code=500, detail="Erro ao criar cota")
+
+    cota_id = cota_rows[0]["id"]
+
+    # 4) criar CONTRATO
     contrato_payload = {
         "org_id": x_org_id,
         "deal_id": None,
-        "cota_id": cota["id"],
+        "cota_id": cota_id,
         "numero": body.numero_contrato,
         "data_assinatura": body.data_assinatura,
         "status": "pendente_assinatura",
@@ -143,21 +124,21 @@ def create_contract_from_lead(
 
     contrato_resp = (
         supa.table("contratos")
-        .insert(contrato_payload)
-        .select("id, status")
-        .single()
+        .insert(contrato_payload, returning="representation")
         .execute()
     )
-    contrato = getattr(contrato_resp, "data", None)
-    if not contrato:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro ao criar contrato",
-        )
 
+    contrato_rows = getattr(contrato_resp, "data", None)
+    if not contrato_rows:
+        raise HTTPException(status_code=500, detail="Erro ao criar contrato")
+
+    contrato_id = contrato_rows[0]["id"]
+    contrato_status = contrato_rows[0]["status"]
+
+    # 🔥 FINAL — retornar estrutura para o front
     return {
         "ok": True,
-        "cota_id": cota["id"],
-        "contrato_id": contrato["id"],
-        "contrato_status": contrato["status"],
+        "cota_id": cota_id,
+        "contrato_id": contrato_id,
+        "status": contrato_status,
     }
