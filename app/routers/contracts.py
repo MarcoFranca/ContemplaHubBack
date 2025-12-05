@@ -142,3 +142,100 @@ def create_contract_from_lead(
         "contrato_id": contrato_id,
         "status": contrato_status,
     }
+
+
+# =============================
+# Modelo para atualização
+# =============================
+class ContractStatusUpdate(BaseModel):
+    status: str
+    observacao: str | None = None
+
+
+# =============================
+# PATCH /contracts/{id}/status
+# =============================
+
+@router.patch("/{contract_id}/status")
+def update_contract_status(
+    contract_id: str,
+    body: ContractStatusUpdate,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+
+    if not x_org_id:
+        raise HTTPException(400, "X-Org-Id obrigatório")
+
+    novo = body.status
+
+    # Estados válidos
+    transicoes_validas = {
+        "pendente_assinatura": ["pendente_pagamento", "cancelado"],
+        "pendente_pagamento": ["alocado", "cancelado"],
+        "alocado": ["cancelado"],
+    }
+
+    # 1) Busca contrato
+    c = (
+        supa.table("contratos")
+        .select("id, org_id, status, cota_id")
+        .eq("id", contract_id)
+        .single()
+        .execute()
+    )
+    contrato = getattr(c, "data", None)
+
+    if not contrato:
+        raise HTTPException(404, "Contrato não encontrado")
+
+    if contrato["org_id"] != x_org_id:
+        raise HTTPException(403, "Contrato não pertence à organização")
+
+    atual = contrato["status"]
+
+    # 2) Validar transição
+    if atual not in transicoes_validas or novo not in transicoes_validas[atual]:
+        raise HTTPException(
+            400,
+            f"Transição inválida: {atual} → {novo}",
+        )
+
+    # 3) Atualizar contrato
+    upd = (
+        supa.table("contratos")
+        .update({
+            "status": novo,
+        })
+        .eq("id", contract_id)
+        .execute()
+    )
+
+    # 4) Regras de impacto no lead
+    # --------------------------------
+    # pega o lead associado via cota
+    cota = (
+        supa.table("cotas")
+        .select("lead_id")
+        .eq("id", contrato["cota_id"])
+        .single()
+        .execute()
+    ).data
+
+    lead_id = cota["lead_id"]
+
+    # regra 1: contrato alocado → lead vai para ativo
+    if novo == "alocado":
+        supa.table("leads").update({"etapa": "ativo"}).eq("id", lead_id).execute()
+
+    # regra 2: contrato cancelado → lead perdido
+    if novo == "cancelado":
+        supa.table("leads").update({"etapa": "perdido"}).eq("id", lead_id).execute()
+
+    return {
+        "ok": True,
+        "contrato_id": contract_id,
+        "status_anterior": atual,
+        "status_novo": novo,
+        "lead_afetado": lead_id,
+    }
