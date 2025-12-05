@@ -7,10 +7,14 @@ from pydantic import BaseModel
 from supabase import Client
 
 from app.deps import get_supabase_admin
+from app.services.kanban_service import move_lead_stage
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 
 
+# ======================================================
+# INPUT DE CRIAÇÃO DO CONTRATO + COTA
+# ======================================================
 class ContractFromLeadIn(BaseModel):
     # Identificação
     lead_id: str
@@ -39,6 +43,9 @@ class ContractFromLeadIn(BaseModel):
     numero_contrato: Optional[str] = None
 
 
+# ======================================================
+# HELPERS
+# ======================================================
 def _parse_money(raw: Optional[str]) -> Optional[float]:
     if not raw:
         return None
@@ -49,6 +56,10 @@ def _parse_money(raw: Optional[str]) -> Optional[float]:
         return None
 
 
+# ======================================================
+# POST /contracts/from-lead
+# Cria COTA + CONTRATO (status pendente_assinatura)
+# ======================================================
 @router.post("/from-lead")
 def create_contract_from_lead(
     body: ContractFromLeadIn,
@@ -62,7 +73,7 @@ def create_contract_from_lead(
             detail="X-Org-Id header é obrigatório",
         )
 
-    # 1) validar lead pertence à org
+    # 1) Validar lead pertence à org
     lead_resp = (
         supa.table("leads")
         .select("id, org_id")
@@ -72,16 +83,16 @@ def create_contract_from_lead(
     )
     lead = getattr(lead_resp, "data", None)
     if not lead:
-        raise HTTPException(status_code=404, detail="Lead não encontrado")
+        raise HTTPException(404, "Lead não encontrado")
     if lead["org_id"] != x_org_id:
-        raise HTTPException(status_code=403, detail="Lead pertence a outra organização")
+        raise HTTPException(403, "Lead pertence a outra organização")
 
-    # 2) normalizar money
+    # 2) Normalizar valor carta
     valor_carta = _parse_money(body.valor_carta)
     if valor_carta is None:
-        raise HTTPException(status_code=400, detail="Valor da carta inválido")
+        raise HTTPException(400, "Valor da carta inválido")
 
-    # 3) criar COTA
+    # 3) Criar COTA
     cota_payload = {
         "org_id": x_org_id,
         "lead_id": body.lead_id,
@@ -105,14 +116,12 @@ def create_contract_from_lead(
         .insert(cota_payload, returning="representation")
         .execute()
     )
+    if not getattr(cota_resp, "data", None):
+        raise HTTPException(500, "Erro ao criar cota")
 
-    cota_rows = getattr(cota_resp, "data", None)
-    if not cota_rows:
-        raise HTTPException(status_code=500, detail="Erro ao criar cota")
+    cota_id = cota_resp.data[0]["id"]
 
-    cota_id = cota_rows[0]["id"]
-
-    # 4) criar CONTRATO
+    # 4) Criar CONTRATO
     contrato_payload = {
         "org_id": x_org_id,
         "deal_id": None,
@@ -127,115 +136,128 @@ def create_contract_from_lead(
         .insert(contrato_payload, returning="representation")
         .execute()
     )
+    if not getattr(contrato_resp, "data", None):
+        raise HTTPException(500, "Erro ao criar contrato")
 
-    contrato_rows = getattr(contrato_resp, "data", None)
-    if not contrato_rows:
-        raise HTTPException(status_code=500, detail="Erro ao criar contrato")
+    contrato_id = contrato_resp.data[0]["id"]
 
-    contrato_id = contrato_rows[0]["id"]
-    contrato_status = contrato_rows[0]["status"]
-
-    # 🔥 FINAL — retornar estrutura para o front
     return {
         "ok": True,
         "cota_id": cota_id,
         "contrato_id": contrato_id,
-        "status": contrato_status,
+        "status": contrato_resp.data[0]["status"],
     }
 
 
-# =============================
-# Modelo para atualização
-# =============================
-class ContractStatusUpdate(BaseModel):
-    status: str
-    observacao: str | None = None
+# ======================================================
+# MODELO PARA UPDATE DE STATUS
+# ======================================================
+class ContractStatusUpdateIn(BaseModel):
+    status: Literal[
+        "pendente_assinatura",
+        "pendente_pagamento",
+        "alocado",
+        "cancelado",
+    ]
+    observacao: Optional[str] = None
 
 
-# =============================
+# ======================================================
 # PATCH /contracts/{id}/status
-# =============================
-
+# Atualiza status + aplica regra automática no lead
+# ======================================================
 @router.patch("/{contract_id}/status")
 def update_contract_status(
     contract_id: str,
-    body: ContractStatusUpdate,
+    body: ContractStatusUpdateIn,
     supa: Client = Depends(get_supabase_admin),
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
 ):
-
     if not x_org_id:
         raise HTTPException(400, "X-Org-Id obrigatório")
 
-    novo = body.status
+    novo_status = body.status
 
-    # Estados válidos
+    # Transições válidas
     transicoes_validas = {
         "pendente_assinatura": ["pendente_pagamento", "cancelado"],
         "pendente_pagamento": ["alocado", "cancelado"],
         "alocado": ["cancelado"],
     }
 
-    # 1) Busca contrato
-    c = (
+    # 1) Carregar contrato
+    resp = (
         supa.table("contratos")
         .select("id, org_id, status, cota_id")
         .eq("id", contract_id)
         .single()
         .execute()
     )
-    contrato = getattr(c, "data", None)
+    contrato = getattr(resp, "data", None)
 
     if not contrato:
         raise HTTPException(404, "Contrato não encontrado")
 
     if contrato["org_id"] != x_org_id:
-        raise HTTPException(403, "Contrato não pertence à organização")
+        raise HTTPException(403, "Contrato pertence a outra organização")
 
-    atual = contrato["status"]
+    atual_status = contrato["status"]
 
-    # 2) Validar transição
-    if atual not in transicoes_validas or novo not in transicoes_validas[atual]:
+    # Validar transição
+    if atual_status not in transicoes_validas or novo_status not in transicoes_validas[atual_status]:
         raise HTTPException(
             400,
-            f"Transição inválida: {atual} → {novo}",
+            f"Transição inválida: {atual_status} → {novo_status}",
         )
 
-    # 3) Atualizar contrato
-    upd = (
+    # 2) Atualizar contrato
+    _ = (
         supa.table("contratos")
-        .update({
-            "status": novo,
-        })
+        .update({"status": novo_status})
         .eq("id", contract_id)
         .execute()
     )
 
-    # 4) Regras de impacto no lead
-    # --------------------------------
-    # pega o lead associado via cota
-    cota = (
+    # 3) Buscar lead da cota
+    cota_resp = (
         supa.table("cotas")
-        .select("lead_id")
+        .select("lead_id, org_id")
         .eq("id", contrato["cota_id"])
         .single()
         .execute()
     ).data
 
-    lead_id = cota["lead_id"]
+    if not cota_resp:
+        raise HTTPException(500, "Cota associada não encontrada")
 
-    # regra 1: contrato alocado → lead vai para ativo
-    if novo == "alocado":
-        supa.table("leads").update({"etapa": "ativo"}).eq("id", lead_id).execute()
+    lead_id = cota_resp["lead_id"]
 
-    # regra 2: contrato cancelado → lead perdido
-    if novo == "cancelado":
-        supa.table("leads").update({"etapa": "perdido"}).eq("id", lead_id).execute()
+    # 4) Regras automáticas de funil
+    lead_stage_target = None
+
+    if novo_status == "alocado":
+        lead_stage_target = "ativo"
+
+    elif novo_status == "cancelado":
+        lead_stage_target = "perdido"
+
+    if lead_stage_target:
+        result = move_lead_stage(
+            org_id=x_org_id,
+            lead_id=lead_id,
+            new_stage=lead_stage_target,  # type: ignore
+            supa=supa,
+            reason=f"Contrato {novo_status}",
+        )
+
+        if not result.get("ok"):
+            print("WARN: Falha ao mover lead automaticamente:", result)
 
     return {
         "ok": True,
         "contrato_id": contract_id,
-        "status_anterior": atual,
-        "status_novo": novo,
+        "status_anterior": atual_status,
+        "status_novo": novo_status,
         "lead_afetado": lead_id,
+        "lead_movido_para": lead_stage_target,
     }
