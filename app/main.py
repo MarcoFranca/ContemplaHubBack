@@ -9,6 +9,7 @@ from app.routers.health import router as health_router
 from app.routers.leads import router as leads_router
 from app.routers.kanban import router as kanban_router
 from app.routers.diagnostic import router as diagnostic_router
+from app.routers.contracts import router as contracts_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -44,7 +45,7 @@ app.include_router(diagnostic_router)
 app.include_router(health_router)
 app.include_router(leads_router)
 app.include_router(kanban_router)
-
+app.include_router(contracts_router)
 
 @app.on_event("startup")
 async def print_routes():
