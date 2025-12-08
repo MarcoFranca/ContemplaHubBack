@@ -157,6 +157,7 @@ class ContractStatusUpdateIn(BaseModel):
         "pendente_assinatura",
         "pendente_pagamento",
         "alocado",
+        "contemplado",
         "cancelado",
     ]
     observacao: Optional[str] = None
@@ -182,7 +183,17 @@ def update_contract_status(
     transicoes_validas = {
         "pendente_assinatura": ["pendente_pagamento", "cancelado"],
         "pendente_pagamento": ["alocado", "cancelado"],
-        "alocado": ["cancelado"],
+        "alocado": ["contemplado", "cancelado"],
+        "contemplado": ["cancelado"],
+    }
+
+    correcoes_validas = {
+        # Permite voltar um passo
+        "pendente_pagamento": ["pendente_assinatura"],
+        "alocado": ["pendente_pagamento", "pendente_assinatura"],
+        "contemplado": ["alocado", "pendente_pagamento"],
+        # Se cancelou errado, deixa restaurar
+        "cancelado": ["pendente_pagamento", "pendente_assinatura", "alocado"],
     }
 
     # 1) Carregar contrato
@@ -202,9 +213,23 @@ def update_contract_status(
         raise HTTPException(403, "Contrato pertence a outra organização")
 
     atual_status = contrato["status"]
+    novo_status = body.status
 
-    # Validar transição
-    if atual_status not in transicoes_validas or novo_status not in transicoes_validas[atual_status]:
+    # Se não mudou nada, não precisa nem bater no banco
+    if novo_status == atual_status:
+        return {
+            "ok": True,
+            "contrato_id": contract_id,
+            "status_anterior": atual_status,
+            "status_novo": novo_status,
+            "lead_afetado": None,
+            "lead_movido_para": None,
+        }
+
+    allowed_next = transicoes_validas.get(atual_status, [])
+    allowed_fix = correcoes_validas.get(atual_status, [])
+
+    if novo_status not in allowed_next and novo_status not in allowed_fix:
         raise HTTPException(
             400,
             f"Transição inválida: {atual_status} → {novo_status}",
