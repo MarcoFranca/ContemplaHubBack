@@ -11,6 +11,7 @@ requests~=2.32.3
 httpcore~=1.0.9
 httpx~=0.28.1
 cryptography~=42.0.7
+email-validator>=2.0.0
 anyio~=4.11.0
 h11~=0.16.0
 typing_extensions~=4.15.0
