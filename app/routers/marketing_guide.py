@@ -14,6 +14,13 @@ from app.services.marketing_guide_service import (
 router = APIRouter(prefix="/api/marketing/guide", tags=["marketing-guide"])
 
 
+def _get_ip(req: Request) -> str | None:
+    xff = req.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip() or None
+    return req.headers.get("x-real-ip")
+
+
 @router.post("/submit", response_model=GuideSubmitOut)
 async def submit(
     body: GuideSubmitIn,
@@ -21,20 +28,14 @@ async def submit(
     supa: Client = Depends(get_supabase_admin),
 ):
     """
-    Captura lead da landing (visitante, não usuário autenticado),
-    vincula ao owner da landing e grava consentimento.
+    Captura LEAD (visitante), resolve org/owner dinamicamente via landing_pages
+    e registra consentimento.
     """
     if not body.consentimento:
         raise HTTPException(status_code=400, detail="consent_required")
 
-    # captura IP/UA
-    xff = req.headers.get("x-forwarded-for", "")
-    ip = (xff.split(",")[0].strip() if xff else None) or req.headers.get("x-real-ip")
+    ip = _get_ip(req)
     ua = body.user_agent or req.headers.get("user-agent")
-
-    env_org_id = getattr(settings, "MARKETING_ORG_ID", None) or None
-    env_owner_id = getattr(settings, "MARKETING_OWNER_ID", None) or None
-    env_landing_id = getattr(settings, "MARKETING_LANDING_ID", None) or None
 
     try:
         lead_id = submit_guide_lead(
@@ -55,10 +56,11 @@ async def submit(
             referrer_url=body.referrer_url,
             user_agent=ua,
             ip=ip,
-            env_org_id=env_org_id,
-            env_owner_id=env_owner_id,
-            env_landing_id=env_landing_id,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"submit_failed: {str(e)}")
 
