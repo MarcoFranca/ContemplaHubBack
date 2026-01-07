@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.schemas.marketing_guide import GuideSubmitIn, GuideSubmitOut
 from app.services.marketing_guide_service import (
     submit_guide_lead,
-    generate_guide_signed_url,
+    generate_guide_signed_url, ensure_guide_pdf_exists,
 )
 
 router = APIRouter(prefix="/api/marketing/guide", tags=["marketing-guide"])
@@ -73,11 +73,6 @@ async def download(
     mode: str = "redirect",
     supa: Client = Depends(get_supabase_admin),
 ):
-    """
-    Gera URL assinada do PDF e:
-      - mode=redirect (padrão): redireciona para a URL
-      - mode=json: retorna {"signed_url": "..."}
-    """
     bucket = getattr(settings, "MARKETING_GUIDE_BUCKET", "marketing")
     path_template = getattr(
         settings,
@@ -86,6 +81,15 @@ async def download(
     )
 
     try:
+        # 1) garante que o PDF exista (gera e faz upload se necessário)
+        await ensure_guide_pdf_exists(
+            supa=supa,
+            lead_id=lead_id,
+            bucket=bucket,
+            path_template=path_template,
+        )
+
+        # 2) assina e redireciona
         signed_url = generate_guide_signed_url(
             supa=supa,
             lead_id=lead_id,

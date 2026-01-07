@@ -1,8 +1,11 @@
 # app/services/marketing_guide_service.py
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional, Tuple
+
 from supabase import Client
+from playwright.async_api import async_playwright
 
 
 def _safe_upsert_lead(
@@ -12,12 +15,6 @@ def _safe_upsert_lead(
     payload_full: Dict[str, Any],
     payload_min: Dict[str, Any],
 ) -> str:
-    """
-    Upsert simples por (org_id, telefone).
-    - Se existir, update.
-    - Se não existir, insert.
-    Fallback: se payload_full falhar por colunas inexistentes, tenta payload_min.
-    """
     existing = (
         supa.table("leads")
         .select("id, owner_id")
@@ -30,12 +27,10 @@ def _safe_upsert_lead(
     if existing:
         lead_id = existing[0]["id"]
 
-        # regra: não sobrescrever owner_id se já existir
         if existing[0].get("owner_id"):
             payload_full.pop("owner_id", None)
             payload_min.pop("owner_id", None)
 
-        # tenta update full, fallback min
         try:
             supa.table("leads").update(payload_full).eq("id", lead_id).execute()
         except Exception:
@@ -43,7 +38,6 @@ def _safe_upsert_lead(
 
         return lead_id
 
-    # insert
     try:
         inserted = supa.table("leads").insert(payload_full).execute().data or []
     except Exception:
@@ -60,10 +54,6 @@ def _safe_insert_consent(
     consent_full: Dict[str, Any],
     consent_min: Dict[str, Any],
 ) -> None:
-    """
-    Insere consent log (imutável). Fallback para payload mínimo caso schema não tenha
-    algumas colunas (ex.: org_id, ip, user_agent).
-    """
     try:
         supa.table("consent_logs").insert(consent_full).execute()
     except Exception:
@@ -76,17 +66,6 @@ def resolve_landing_context(
     landing_slug: Optional[str],
     landing_hash: Optional[str],
 ) -> Tuple[str, str, str]:
-    """
-    Resolve dinamicamente o contexto da landing a partir da tabela landing_pages.
-
-    Regras:
-    - Deve existir landing_hash (public_hash) OU landing_slug (slug).
-    - landing deve estar active = true.
-    - Retorna: (org_id, owner_user_id, landing_id)
-
-    Tabela esperada (conforme seu print):
-      landing_pages: id, org_id, owner_user_id, slug, public_hash, active
-    """
     if not landing_hash and not landing_slug:
         raise ValueError("landing_hash (public_hash) ou landing_slug (slug) é obrigatório.")
 
@@ -107,11 +86,7 @@ def resolve_landing_context(
         raise LookupError("Landing não encontrada ou inativa.")
 
     row = data[0]
-    org_id = row["org_id"]
-    owner_id = row["owner_user_id"]
-    landing_id = row["id"]
-
-    return org_id, owner_id, landing_id
+    return row["org_id"], row["owner_user_id"], row["id"]
 
 
 def submit_guide_lead(
@@ -128,19 +103,12 @@ def submit_guide_lead(
     user_agent: Optional[str],
     ip: Optional[str],
 ) -> str:
-    """
-    Cria/atualiza um LEAD (visitante da landing), vinculado ao dono da landing (owner_user_id)
-    e à organização (org_id). Também registra consentimento (LGPD).
-
-    Observação: visitante é LEAD, não é usuário autenticado.
-    """
     org_id, owner_id, landing_id = resolve_landing_context(
         supa=supa,
         landing_slug=landing_slug,
         landing_hash=landing_hash,
     )
 
-    # payload "full" (tenta gravar marketing)
     payload_full: Dict[str, Any] = {
         "org_id": org_id,
         "owner_id": owner_id,
@@ -159,7 +127,6 @@ def submit_guide_lead(
         "utm_content": utm.get("utm_content"),
     }
 
-    # payload mínimo (caso o schema não tenha campos de marketing extras)
     payload_min: Dict[str, Any] = {
         "org_id": org_id,
         "owner_id": owner_id,
@@ -179,7 +146,6 @@ def submit_guide_lead(
         payload_min=payload_min,
     )
 
-    # consent log (imutável)
     consent_full = {
         "org_id": org_id,
         "lead_id": lead_id,
@@ -199,6 +165,121 @@ def submit_guide_lead(
     return lead_id
 
 
+def _require_consent(supa: Client, lead_id: str) -> None:
+    consent = (
+        supa.table("consent_logs")
+        .select("id")
+        .eq("lead_id", lead_id)
+        .eq("consentimento", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not consent:
+        raise PermissionError("Lead sem consentimento para baixar o material.")
+
+
+def _get_lead_org_and_landing_hash(supa: Client, lead_id: str) -> tuple[str, str]:
+    """
+    Retorna (org_id, public_hash) a partir do lead.
+    Precisamos do public_hash para montar a URL do HTML print.
+    """
+    lead = (
+        supa.table("leads")
+        .select("org_id, landing_id")
+        .eq("id", lead_id)
+        .limit(1)
+        .execute()
+    ).data or []
+
+    if not lead:
+        raise LookupError("Lead não encontrado.")
+
+    org_id = lead[0]["org_id"]
+    landing_id = lead[0].get("landing_id")
+
+    if not landing_id:
+        # fallback: se por algum motivo o lead não salvou landing_id
+        raise LookupError("Lead sem landing_id para gerar o PDF.")
+
+    lp = (
+        supa.table("landing_pages")
+        .select("public_hash")
+        .eq("id", landing_id)
+        .limit(1)
+        .execute()
+    ).data or []
+
+    if not lp or not lp[0].get("public_hash"):
+        raise LookupError("Landing não encontrada para este lead.")
+
+    return org_id, lp[0]["public_hash"]
+
+
+async def _render_pdf_from_frontend(url: str) -> bytes:
+    """
+    Renderiza a URL HTML do guia e retorna bytes do PDF.
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(args=["--no-sandbox"])
+        page = await browser.new_page()
+        await page.goto(url, wait_until="networkidle", timeout=90_000)
+        pdf_bytes = await page.pdf(
+            format="A4",
+            print_background=True,
+            margin={"top": "14mm", "right": "14mm", "bottom": "14mm", "left": "14mm"},
+        )
+        await browser.close()
+        return pdf_bytes
+
+
+async def ensure_guide_pdf_exists(
+    supa: Client,
+    *,
+    lead_id: str,
+    bucket: str,
+    path_template: str,
+) -> tuple[str, str]:
+    """
+    Garante que o PDF exista no Storage. Se não existir, gera a partir do HTML print e faz upload.
+    Retorna (org_id, path).
+    """
+    _require_consent(supa, lead_id)
+
+    org_id, landing_hash = _get_lead_org_and_landing_hash(supa, lead_id)
+    path = path_template.format(org_id=org_id)
+
+    # tenta verificar existência via signed URL rápido (se não existir, a abertura falha)
+    # Supabase storage não tem "exists" universal no client; então tentamos gerar signed e,
+    # se der erro, geramos e upamos.
+    try:
+        # tentativa de signed url (pode falhar se arquivo não existir)
+        signed = supa.storage.from_(bucket).create_signed_url(path, 60)
+        url = signed.get("signedURL") or signed.get("signedUrl")
+        if url:
+            return org_id, path
+    except Exception:
+        pass
+
+    # não existe / falhou -> gerar
+    front_base = os.getenv("FRONTEND_BASE_URL")
+    if not front_base:
+        raise RuntimeError("FRONTEND_BASE_URL não definido no backend.")
+    front_base = front_base.rstrip("/")
+
+    html_url = f"{front_base}/guia-consorcio/print?lp={landing_hash}"
+
+    pdf_bytes = await _render_pdf_from_frontend(html_url)
+
+    # upload (upsert)
+    supa.storage.from_(bucket).upload(
+        path,
+        pdf_bytes,
+        file_options={"content-type": "application/pdf", "upsert": "true"},
+    )
+
+    return org_id, path
+
+
 def generate_guide_signed_url(
     supa: Client,
     *,
@@ -208,25 +289,10 @@ def generate_guide_signed_url(
     expires_in: int = 300,
 ) -> str:
     """
-    Gera signed URL somente se houver consentimento.
-    path_template suporta {org_id}.
-
-    Observação: org_id é derivado do lead para manter isolamento multi-tenant.
+    ASSINA URL do PDF (pressupõe que o arquivo já existe).
     """
-    # valida consentimento
-    consent = (
-        supa.table("consent_logs")
-        .select("id")
-        .eq("lead_id", lead_id)
-        .eq("consentimento", True)
-        .limit(1)
-        .execute()
-    ).data or []
+    _require_consent(supa, lead_id)
 
-    if not consent:
-        raise PermissionError("Lead sem consentimento para baixar o material.")
-
-    # busca org_id no lead
     lead = (
         supa.table("leads")
         .select("org_id")
@@ -242,7 +308,6 @@ def generate_guide_signed_url(
     path = path_template.format(org_id=org_id)
 
     signed = supa.storage.from_(bucket).create_signed_url(path, expires_in)
-
     url = signed.get("signedURL") or signed.get("signedUrl")
     if not url:
         raise RuntimeError("Falha ao gerar signed URL.")
