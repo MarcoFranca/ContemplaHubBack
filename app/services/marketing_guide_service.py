@@ -261,9 +261,9 @@ async def ensure_guide_pdf_exists(
         pass
 
     # não existe / falhou -> gerar
-    front_base = os.getenv("FRONTEND_BASE_URL")
+    front_base = os.getenv("FRONTEND_APP_URL")
     if not front_base:
-        raise RuntimeError("FRONTEND_BASE_URL não definido no backend.")
+        raise RuntimeError("FRONTEND_APP_URL não definido no backend.")
     front_base = front_base.rstrip("/")
 
     html_url = f"{front_base}/guia-consorcio/print?lp={landing_hash}"
