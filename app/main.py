@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routers import marketing_guide, marketing_guide_pdf
 from app.routers.lead_propostas import router as lead_propostas_router
 from app.routers.lead_cadastros import router as lead_cadastros_router
 from app.routers.health import router as health_router
@@ -48,6 +49,8 @@ app.include_router(leads_router)
 app.include_router(kanban_router)
 app.include_router(contracts_router)
 app.include_router(marketing_guide_router)
+app.include_router(marketing_guide.router)
+app.include_router(marketing_guide_pdf.router)
 
 @app.on_event("startup")
 async def print_routes():
