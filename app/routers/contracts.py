@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from supabase import Client
 
+from app.routers.carteira import ensure_carteira_cliente
 from app.deps import get_supabase_admin
 from app.services.kanban_service import move_lead_stage
 
@@ -59,6 +60,7 @@ def _parse_money(raw: Optional[str]) -> Optional[float]:
 # ======================================================
 # POST /contracts/from-lead
 # Cria COTA + CONTRATO (status pendente_assinatura)
+# e garante entrada na carteira
 # ======================================================
 @router.post("/from-lead")
 def create_contract_from_lead(
@@ -141,11 +143,22 @@ def create_contract_from_lead(
 
     contrato_id = contrato_resp.data[0]["id"]
 
+    # 5) Garantir entrada na carteira
+    carteira_result = ensure_carteira_cliente(
+        supa=supa,
+        org_id=x_org_id,
+        lead_id=body.lead_id,
+        origem_entrada="contrato",
+        observacoes="Entrada automática na carteira ao gerar contrato",
+    )
+
     return {
         "ok": True,
         "cota_id": cota_id,
         "contrato_id": contrato_id,
         "status": contrato_resp.data[0]["status"],
+        "carteira": carteira_result["carteira_cliente"],
+        "carteira_created": carteira_result["created"],
     }
 
 
@@ -250,12 +263,13 @@ def update_contract_status(
         .eq("id", contrato["cota_id"])
         .single()
         .execute()
-    ).data
+    )
+    cota = getattr(cota_resp, "data", None)
 
-    if not cota_resp:
+    if not cota:
         raise HTTPException(500, "Cota associada não encontrada")
 
-    lead_id = cota_resp["lead_id"]
+    lead_id = cota["lead_id"]
 
     # 4) Regras automáticas de funil
     lead_stage_target = None

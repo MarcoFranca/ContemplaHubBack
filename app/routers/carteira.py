@@ -1,316 +1,327 @@
-# app/routers/carteira.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from typing import Optional, Dict, Any, List
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, EmailStr
 from supabase import Client
 
 from app.deps import get_supabase_admin
-from app.security.auth import CurrentProfile, get_current_profile
+from app.services.kanban_service import move_lead_stage
 
-router = APIRouter(prefix="/v1/carteira", tags=["carteira"])
-
-# Status "ativos" de contrato (ajuste se quiser)
-ACTIVE_CONTRACT_STATUSES = ["pendente_assinatura", "pendente_pagamento", "alocado", "contemplado"]
+router = APIRouter(prefix="/carteira", tags=["carteira"])
 
 
-def _normalize_q(q: str | None) -> str | None:
-    if not q:
-        return None
-    qq = q.strip()
-    return qq if qq else None
-
-
-def _contract_status_filter(q, include_all: bool, status: str | None):
+# ======================================================
+# HELPERS
+# ======================================================
+def ensure_carteira_cliente(
+    *,
+    supa: Client,
+    org_id: str,
+    lead_id: str,
+    origem_entrada: str,
+    observacoes: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Se status veio explícito, usa ele.
-    Senão:
-      - include_all = false => só status ativos
-      - include_all = true  => não filtra
+    Garante que o lead exista em carteira_clientes.
+    Se já existir, não duplica.
     """
-    if status:
-        return q.eq("status", status)
-
-    if include_all:
-        return q
-
-    return q.in_("status", ACTIVE_CONTRACT_STATUSES)
-
-
-@router.get("/cartas")
-def list_carteira_cartas(
-    include_all: bool = Query(default=False, description="Se true, inclui contratos em qualquer status"),
-    status: str | None = Query(default=None, description="Filtra por status do contrato (ignora include_all)"),
-    produto: str | None = Query(default=None, description="Filtra por produto da cota"),
-    owner_user_id: str | None = Query(default=None, description="Somente para gestor/admin: filtrar por owner"),
-    q: str | None = Query(default=None, description="Busca por nome (MVP)"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=200),
-    sb: Client = Depends(get_supabase_admin),
-    me: CurrentProfile = Depends(get_current_profile),
-):
-    """
-    Visão flat: 1 linha por contrato/cota (cliente + cota + contrato).
-    Default: só contratos "ativos" (ACTIVE_CONTRACT_STATUSES).
-    """
-    qq = _normalize_q(q)
-    offset = (page - 1) * page_size
-
-    # 1) Carrega contratos (org + status filter)
-    qc = (
-        sb.table("contratos")
-        .select("id, lead_id, cota_id, status, data_assinatura, data_pagamento, data_alocacao, data_contemplacao, created_at")
-        .eq("org_id", me.org_id)
+    existing = (
+        supa.table("carteira_clientes")
+        .select("id, org_id, lead_id, status, origem_entrada")
+        .eq("org_id", org_id)
+        .eq("lead_id", lead_id)
+        .limit(1)
+        .execute()
     )
 
-    qc = _contract_status_filter(qc, include_all, status)
-
-    qc = qc.order("created_at", desc=True).range(offset, offset + page_size - 1)
-
-    contratos_res = qc.execute()
-    contratos = contratos_res.data or []
-
-    if not contratos:
+    rows = getattr(existing, "data", None) or []
+    if rows:
         return {
-            "page": page,
-            "page_size": page_size,
-            "items": [],
-            "meta": {"include_all": include_all, "status": status},
+            "ok": True,
+            "created": False,
+            "carteira_cliente": rows[0],
         }
 
-    lead_ids = list({c["lead_id"] for c in contratos if c.get("lead_id")})
-    cota_ids = list({c["cota_id"] for c in contratos if c.get("cota_id")})
+    payload = {
+        "org_id": org_id,
+        "lead_id": lead_id,
+        "status": "ativo",
+        "origem_entrada": origem_entrada,
+        "observacoes": observacoes,
+    }
 
-    # 2) Carrega leads (com permissão)
-    leads_map: dict[str, dict] = {}
-    if lead_ids:
-        ql = (
-            sb.table("leads")
-            .select("id, nome, telefone, email, owner_id")
-            .in_("id", lead_ids)
-            .eq("org_id", me.org_id)
-        )
+    created = (
+        supa.table("carteira_clientes")
+        .insert(payload, returning="representation")
+        .execute()
+    )
 
-        if not me.is_manager:
-            ql = ql.eq("owner_id", me.user_id)
-
-        if owner_user_id and me.is_manager:
-            ql = ql.eq("owner_id", owner_user_id)
-
-        if qq:
-            ql = ql.ilike("nome", f"%{qq}%")
-
-        leads_res = ql.execute()
-        for l in (leads_res.data or []):
-            leads_map[l["id"]] = l
-
-    # 3) Carrega cotas (filtra por produto se quiser)
-    cotas_map: dict[str, dict] = {}
-    if cota_ids:
-        qct = (
-            sb.table("cotas")
-            .select("id, lead_id, produto, numero_cota, grupo_codigo, valor_carta, valor_parcela, prazo, assembleia_dia, created_at")
-            .in_("id", cota_ids)
-            .eq("org_id", me.org_id)
-        )
-        if produto:
-            qct = qct.eq("produto", produto)
-
-        cotas_res = qct.execute()
-        for ct in (cotas_res.data or []):
-            cotas_map[ct["id"]] = ct
-
-    # 4) Monta items (remove contratos cujo lead não é visível pro usuário)
-    items: list[dict] = []
-    for c in contratos:
-        lead = leads_map.get(c.get("lead_id"))
-        if not lead:
-            continue
-
-        cota = cotas_map.get(c.get("cota_id"))
-        # Se filtrou por produto e não bateu, cota some => não mostra item
-        if produto and not cota:
-            continue
-
-        items.append(
-            {
-                "cliente": {
-                    "lead_id": lead["id"],
-                    "nome": lead.get("nome"),
-                    "telefone": lead.get("telefone"),
-                    "email": lead.get("email"),
-                    "owner_user_id": lead.get("owner_id"),
-                },
-                "cota": {
-                    "cota_id": cota.get("id") if cota else c.get("cota_id"),
-                    "produto": cota.get("produto") if cota else None,
-                    "numero_cota": cota.get("numero_cota") if cota else None,
-                    "grupo_codigo": cota.get("grupo_codigo") if cota else None,
-                    "valor_carta": cota.get("valor_carta") if cota else None,
-                    "valor_parcela": cota.get("valor_parcela") if cota else None,
-                    "prazo": cota.get("prazo") if cota else None,
-                    "assembleia_dia": cota.get("assembleia_dia") if cota else None,
-                },
-                "contrato": {
-                    "contrato_id": c["id"],
-                    "status": c.get("status"),
-                    "data_assinatura": c.get("data_assinatura"),
-                    "data_pagamento": c.get("data_pagamento"),
-                    "data_alocacao": c.get("data_alocacao"),
-                    "data_contemplacao": c.get("data_contemplacao"),
-                },
-            }
-        )
+    data = getattr(created, "data", None) or []
+    if not data:
+        raise HTTPException(500, "Erro ao inserir cliente na carteira")
 
     return {
-        "page": page,
-        "page_size": page_size,
-        "items": items,
-        "meta": {"include_all": include_all, "status": status},
+        "ok": True,
+        "created": True,
+        "carteira_cliente": data[0],
     }
 
 
-@router.get("/clientes")
-def list_carteira_clientes(
-    include_all: bool = Query(default=False, description="Se true, inclui contratos em qualquer status"),
-    status: str | None = Query(default=None, description="Filtra por status do contrato (ignora include_all)"),
-    produto: str | None = Query(default=None, description="Filtra por produto da cota"),
-    owner_user_id: str | None = Query(default=None),
-    q: str | None = Query(default=None, description="Busca por nome (MVP)"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=30, ge=1, le=200),
-    sb: Client = Depends(get_supabase_admin),
-    me: CurrentProfile = Depends(get_current_profile),
+def get_lead_or_404(*, supa: Client, lead_id: str) -> Dict[str, Any]:
+    resp = (
+        supa.table("leads")
+        .select("id, org_id, nome, telefone, email, etapa, owner_id")
+        .eq("id", lead_id)
+        .single()
+        .execute()
+    )
+    lead = getattr(resp, "data", None)
+    if not lead:
+        raise HTTPException(404, "Lead não encontrado")
+    return lead
+
+
+# ======================================================
+# MODELOS
+# ======================================================
+class CreateCarteiraClienteIn(BaseModel):
+    nome: str
+    telefone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    owner_id: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
+class NovaNegociacaoIn(BaseModel):
+    stage: str = "negociacao"
+    reason: Optional[str] = "Nova negociação iniciada pela carteira"
+
+
+# ======================================================
+# GET /carteira
+# Lista clientes da carteira
+# ======================================================
+@router.get("")
+def list_carteira(
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
 ):
-    """
-    Visão agrupada:
-      cliente + cartas[] (cotas ligadas aos contratos)
-    Default: só contratos "ativos".
-    """
-    qq = _normalize_q(q)
-    offset = (page - 1) * page_size
-
-    # 1) Primeiro, pega contratos do org com filtro
-    qc = (
-        sb.table("contratos")
-        .select("id, lead_id, cota_id, status, created_at")
-        .eq("org_id", me.org_id)
-    )
-    qc = _contract_status_filter(qc, include_all, status)
-
-    contratos_res = qc.execute()
-    contratos = contratos_res.data or []
-    if not contratos:
-        return {
-            "page": page,
-            "page_size": page_size,
-            "items": [],
-            "meta": {"include_all": include_all, "status": status},
-        }
-
-    lead_ids_all = list({c["lead_id"] for c in contratos if c.get("lead_id")})
-    cota_ids_all = list({c["cota_id"] for c in contratos if c.get("cota_id")})
-
-    # 2) Carrega leads (com permissão) + pagina por nome
-    ql = (
-        sb.table("leads")
-        .select("id, nome, telefone, email, owner_id")
-        .in_("id", lead_ids_all)
-        .eq("org_id", me.org_id)
-    )
-
-    if not me.is_manager:
-        ql = ql.eq("owner_id", me.user_id)
-
-    if owner_user_id and me.is_manager:
-        ql = ql.eq("owner_id", owner_user_id)
-
-    if qq:
-        ql = ql.ilike("nome", f"%{qq}%")
-
-    ql = ql.order("nome", desc=False).range(offset, offset + page_size - 1)
-
-    leads_res = ql.execute()
-    leads = leads_res.data or []
-    lead_ids_page = [l["id"] for l in leads]
-
-    if not lead_ids_page:
-        return {
-            "page": page,
-            "page_size": page_size,
-            "items": [],
-            "meta": {"include_all": include_all, "status": status},
-        }
-
-    # 3) Filtra contratos só desses leads paginados
-    contratos_page = [c for c in contratos if c.get("lead_id") in set(lead_ids_page)]
-    cota_ids_page = list({c["cota_id"] for c in contratos_page if c.get("cota_id")})
-
-    # 4) Carrega cotas dessas cotas (filtra produto)
-    cotas_map: dict[str, dict] = {}
-    if cota_ids_page:
-        qct = (
-            sb.table("cotas")
-            .select("id, lead_id, produto, numero_cota, grupo_codigo, valor_carta, valor_parcela, prazo, assembleia_dia, created_at")
-            .in_("id", cota_ids_page)
-            .eq("org_id", me.org_id)
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header é obrigatório",
         )
-        if produto:
-            qct = qct.eq("produto", produto)
 
-        cotas_res = qct.execute()
-        for ct in (cotas_res.data or []):
-            cotas_map[ct["id"]] = ct
+    # Base da carteira = carteira_clientes
+    resp = (
+        supa.table("carteira_clientes")
+        .select("""
+            id,
+            org_id,
+            lead_id,
+            status,
+            origem_entrada,
+            entered_at,
+            observacoes,
+            leads!inner (
+                id,
+                nome,
+                telefone,
+                email,
+                etapa
+            )
+        """)
+        .eq("org_id", x_org_id)
+        .order("entered_at", desc=True)
+        .execute()
+    )
 
-    # 5) Agrupa cotas por lead (a partir dos contratos)
-    cotas_by_lead: dict[str, list[dict]] = {}
-    for c in contratos_page:
-        cota_id = c.get("cota_id")
-        if not cota_id:
-            continue
-        cota = cotas_map.get(cota_id)
-        if produto and not cota:
-            continue
+    rows = getattr(resp, "data", None) or []
+
+    # Enriquecer com cota/contrato mais recente por lead
+    result: List[Dict[str, Any]] = []
+
+    for row in rows:
+        lead_id = row["lead_id"]
+
+        cotas_resp = (
+            supa.table("cotas")
+            .select("""
+                id,
+                lead_id,
+                administradora_id,
+                numero_cota,
+                grupo_codigo,
+                valor_carta,
+                valor_parcela,
+                prazo,
+                autorizacao_gestao,
+                produto
+            """)
+            .eq("org_id", x_org_id)
+            .eq("lead_id", lead_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        cotas = getattr(cotas_resp, "data", None) or []
+        cota = cotas[0] if cotas else None
+
+        contrato = None
+        administradora = None
+
         if cota:
-            cotas_by_lead.setdefault(c["lead_id"], []).append(cota)
+            contrato_resp = (
+                supa.table("contratos")
+                .select("""
+                    id,
+                    cota_id,
+                    numero,
+                    status,
+                    data_assinatura,
+                    data_pagamento,
+                    data_alocacao,
+                    data_contemplacao
+                """)
+                .eq("org_id", x_org_id)
+                .eq("cota_id", cota["id"])
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            contratos = getattr(contrato_resp, "data", None) or []
+            contrato = contratos[0] if contratos else None
 
-    # 6) Monta items
-    items: list[dict] = []
-    for l in leads:
-        cartas = cotas_by_lead.get(l["id"], [])
-        resumo = {
-            "qtd_cartas": len(cartas),
-            "qtd_ativas": len(cartas),  # aqui "ativo" = tem contrato no filtro
-            "valor_total_cartas": None,
-        }
-        items.append(
-            {
-                "cliente": {
-                    "lead_id": l["id"],
-                    "nome": l.get("nome"),
-                    "telefone": l.get("telefone"),
-                    "email": l.get("email"),
-                    "owner_user_id": l.get("owner_id"),
-                },
-                "cartas": [
-                    {
-                        "cota_id": c["id"],
-                        "produto": c.get("produto"),
-                        "numero_cota": c.get("numero_cota"),
-                        "grupo_codigo": c.get("grupo_codigo"),
-                        "valor_carta": c.get("valor_carta"),
-                        "valor_parcela": c.get("valor_parcela"),
-                        "prazo": c.get("prazo"),
-                        "assembleia_dia": c.get("assembleia_dia"),
-                    }
-                    for c in sorted(cartas, key=lambda x: (x.get("created_at") or ""), reverse=True)
-                ],
-                "resumo": resumo,
-            }
-        )
+            if cota.get("administradora_id"):
+                adm_resp = (
+                    supa.table("administradoras")
+                    .select("id, nome")
+                    .eq("org_id", x_org_id)
+                    .eq("id", cota["administradora_id"])
+                    .limit(1)
+                    .execute()
+                )
+                adms = getattr(adm_resp, "data", None) or []
+                administradora = adms[0] if adms else None
+
+        result.append({
+            "carteira_id": row["id"],
+            "lead_id": row["lead_id"],
+            "status_carteira": row["status"],
+            "origem_entrada": row["origem_entrada"],
+            "entered_at": row["entered_at"],
+            "observacoes": row.get("observacoes"),
+            "lead": row.get("leads"),
+            "cota": cota,
+            "contrato": contrato,
+            "administradora": administradora,
+        })
 
     return {
-        "page": page,
-        "page_size": page_size,
-        "items": items,
-        "meta": {"include_all": include_all, "status": status},
+        "ok": True,
+        "items": result,
+        "total": len(result),
+    }
+
+
+# ======================================================
+# POST /carteira/clientes
+# Cria lead + coloca na carteira
+# ======================================================
+@router.post("/clientes")
+def create_cliente_direto_na_carteira(
+    body: CreateCarteiraClienteIn,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header é obrigatório",
+        )
+
+    lead_payload = {
+        "org_id": x_org_id,
+        "nome": body.nome,
+        "telefone": body.telefone,
+        "email": body.email,
+        "owner_id": body.owner_id,
+        "etapa": "ativo",
+    }
+
+    lead_resp = (
+        supa.table("leads")
+        .insert(lead_payload, returning="representation")
+        .execute()
+    )
+
+    lead_rows = getattr(lead_resp, "data", None) or []
+    if not lead_rows:
+        raise HTTPException(500, "Erro ao criar lead para carteira")
+
+    lead = lead_rows[0]
+
+    carteira_result = ensure_carteira_cliente(
+        supa=supa,
+        org_id=x_org_id,
+        lead_id=lead["id"],
+        origem_entrada="manual",
+        observacoes=body.observacoes or "Cliente criado diretamente na carteira",
+    )
+
+    return {
+        "ok": True,
+        "lead": lead,
+        "carteira": carteira_result["carteira_cliente"],
+    }
+
+
+# ======================================================
+# POST /carteira/{lead_id}/nova-negociacao
+# Cliente volta ao kanban, mas permanece na carteira
+# ======================================================
+@router.post("/{lead_id}/nova-negociacao")
+def abrir_nova_negociacao(
+    lead_id: str,
+    body: NovaNegociacaoIn,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    if not x_org_id:
+        raise HTTPException(400, "X-Org-Id header é obrigatório")
+
+    lead = get_lead_or_404(supa=supa, lead_id=lead_id)
+
+    if lead["org_id"] != x_org_id:
+        raise HTTPException(403, "Lead pertence a outra organização")
+
+    # Garante que esteja na carteira
+    carteira_result = ensure_carteira_cliente(
+        supa=supa,
+        org_id=x_org_id,
+        lead_id=lead_id,
+        origem_entrada="manual",
+        observacoes="Reentrada em negociação pela carteira",
+    )
+
+    # Move lead de volta ao fluxo comercial
+    result = move_lead_stage(
+        org_id=x_org_id,
+        lead_id=lead_id,
+        new_stage=body.stage,  # ex.: negociacao
+        supa=supa,
+        reason=body.reason,
+    )
+
+    if not result.get("ok"):
+        raise HTTPException(500, result.get("message", "Erro ao mover lead para negociação"))
+
+    return {
+        "ok": True,
+        "lead_id": lead_id,
+        "carteira_preservada": True,
+        "carteira": carteira_result["carteira_cliente"],
+        "kanban": result,
     }
