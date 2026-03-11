@@ -14,6 +14,7 @@ from app.routers.contracts import router as contracts_router
 from app.routers.marketing_guide import router as marketing_guide_router
 from app.core.config import settings
 from app.routers.carteira import router as carteira_router
+from app.routers.lances import router as lances_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -53,6 +54,7 @@ app.include_router(marketing_guide_router)
 app.include_router(marketing_guide.router)
 app.include_router(marketing_guide_pdf.router)
 app.include_router(carteira_router)
+app.include_router(lances_router)
 
 @app.on_event("startup")
 async def print_routes():
