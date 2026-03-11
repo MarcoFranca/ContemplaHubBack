@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 CotaStatus = Literal["ativa", "contemplada", "cancelada"]
 StatusMes = Literal["pendente", "planejado", "feito", "sem_lance", "contemplada", "cancelada"]
-LanceTipo = Literal["livre", "embutido", "fixo"]
+LanceTipo = Literal["livre", "fixo"]
 LanceBaseCalculo = Literal["saldo_devedor", "valor_carta"]
 ContemplacaoMotivo = Literal["lance", "sorteio", "outro"]
 Produto = Literal["imobiliario", "auto"]

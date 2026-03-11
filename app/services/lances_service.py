@@ -6,8 +6,98 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 from supabase import Client
+from decimal import Decimal
+from math import isclose
 
 from app.security.auth import CurrentProfile
+
+
+def to_decimal(value) -> Decimal:
+    if value is None or value == "":
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def extract_pagamento_composicao(pagamento: dict | None) -> dict[str, Decimal]:
+    composicao = (pagamento or {}).get("composicao", {}) if isinstance(pagamento, dict) else {}
+
+    embutido = to_decimal(composicao.get("embutido"))
+    fgts = to_decimal(composicao.get("fgts"))
+    proprio = to_decimal(composicao.get("proprio"))
+    outro = to_decimal(composicao.get("outro"))
+
+    for nome, valor in {
+        "embutido": embutido,
+        "fgts": fgts,
+        "proprio": proprio,
+        "outro": outro,
+    }.items():
+        if valor < 0:
+            raise HTTPException(400, f"Valor inválido em pagamento.composicao.{nome}")
+
+    return {
+        "embutido": embutido,
+        "fgts": fgts,
+        "proprio": proprio,
+        "outro": outro,
+    }
+
+
+def validate_pagamento_composicao(
+    *,
+    cota: dict[str, Any],
+    pagamento: dict | None,
+    valor_total_lance: Any,
+) -> dict[str, Any]:
+    valor_lance = to_decimal(valor_total_lance)
+    if valor_lance <= 0:
+        raise HTTPException(400, "O valor total do lance deve ser maior que zero")
+
+    comp = extract_pagamento_composicao(pagamento)
+    soma = comp["embutido"] + comp["fgts"] + comp["proprio"] + comp["outro"]
+
+    if soma != valor_lance:
+        raise HTTPException(
+            400,
+            f"A soma da composição do pagamento ({soma}) deve ser igual ao valor total do lance ({valor_lance})"
+        )
+
+    if comp["embutido"] > 0:
+        if not cota.get("embutido_permitido"):
+            raise HTTPException(400, "Esta cota não permite uso de embutido")
+
+        if cota.get("embutido_max_percent") is not None and cota.get("valor_carta") is not None:
+            limite = to_decimal(cota["valor_carta"]) * (to_decimal(cota["embutido_max_percent"]) / Decimal("100"))
+            if comp["embutido"] > limite:
+                raise HTTPException(
+                    400,
+                    f"O valor de embutido ({comp['embutido']}) excede o limite permitido ({limite})"
+                )
+
+    if comp["fgts"] > 0 and not cota.get("fgts_permitido"):
+        raise HTTPException(400, "Esta cota não permite uso de FGTS")
+
+    return {
+        "composicao": {
+            "embutido": float(comp["embutido"]),
+            "fgts": float(comp["fgts"]),
+            "proprio": float(comp["proprio"]),
+            "outro": float(comp["outro"]),
+        },
+        "observacoes": (pagamento or {}).get("observacoes") if isinstance(pagamento, dict) else None,
+    }
+
+
+def to_jsonable(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {k: to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_jsonable(v) for v in value]
+    return value
 
 
 def normalize_competencia(dt: date) -> date:
@@ -524,27 +614,23 @@ def registrar_lance(
     cota = get_cota_or_404(sb=sb, org_id=profile.org_id, cota_id=cota_id)
     ensure_cota_ativa(cota)
 
-    if tipo == "embutido" and not cota.get("embutido_permitido"):
-        raise HTTPException(400, "Esta cota não permite lance embutido")
-
-    if tipo == "embutido" and cota.get("embutido_max_percent") is not None and percentual is not None:
-        if float(percentual) > float(cota["embutido_max_percent"]):
-            raise HTTPException(400, "Percentual acima do limite de lance embutido da cota")
-
-    if pagamento and pagamento.get("fonte") == "fgts" and not cota.get("fgts_permitido"):
-        raise HTTPException(400, "Esta cota não permite FGTS para o lance")
+    pagamento_normalizado = validate_pagamento_composicao(
+        cota=cota,
+        pagamento=pagamento,
+        valor_total_lance=valor,
+    )
 
     payload = {
         "org_id": profile.org_id,
         "cota_id": cota_id,
         "tipo": tipo,
-        "percentual": percentual,
-        "valor": valor,
+        "percentual": to_jsonable(percentual),
+        "valor": to_jsonable(valor),
         "origem": "executado",
         "created_by": profile.user_id,
         "assembleia_data": assembleia_data.isoformat(),
         "base_calculo": base_calculo,
-        "pagamento": pagamento,
+        "pagamento": to_jsonable(pagamento_normalizado),
         "resultado": resultado or "pendente",
     }
 
@@ -603,7 +689,7 @@ def contemplar_cota(
             "org_id": profile.org_id,
             "cota_id": cota_id,
             "motivo": motivo,
-            "lance_percentual": lance_percentual,
+            "lance_percentual": to_jsonable(lance_percentual),
             "data": data.isoformat(),
         }, returning="representation")
         .execute()
