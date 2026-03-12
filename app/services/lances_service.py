@@ -530,7 +530,8 @@ def list_cartas_operacao(
             "tem_pendencia_configuracao": regra.get("assembleia_prevista") is None,
             "debug_fixo": "teste_ok",
         })
-
+    print("DEBUG LANCES COTA", cota_id)
+    print("DEBUG LANCES FIXO", opcoes_lance_fixo)
     return {
         "items": items,
         "page": page,
