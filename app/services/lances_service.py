@@ -495,6 +495,11 @@ def list_cartas_operacao(
             cota=cota,
             competencia=competencia,
         )
+        opcoes_lance_fixo = get_opcoes_lance_fixo(
+            sb=sb,
+            org_id=profile.org_id,
+            cota_id=cota_id,
+        )
 
         items.append({
             "cota_id": cota_id,
@@ -520,6 +525,7 @@ def list_cartas_operacao(
             "assembleia_prevista": regra.get("assembleia_prevista"),
             "competencia": competencia,
             "status_mes": (controle or {}).get("status_mes", "pendente"),
+            "opcoes_lance_fixo": opcoes_lance_fixo,
             "tem_pendencia_configuracao": regra.get("assembleia_prevista") is None,
         })
 
