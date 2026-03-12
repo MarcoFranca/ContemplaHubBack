@@ -506,7 +506,8 @@ def list_cartas_operacao(
             "lead_id": cota.get("lead_id"),
             "cliente_nome": (cota.get("leads") or {}).get("nome") if cota.get("leads") else None,
             "administradora_id": cota.get("administradora_id"),
-            "administradora_nome": (cota.get("administradoras") or {}).get("nome") if cota.get("administradoras") else None,
+            "administradora_nome": (cota.get("administradoras") or {}).get("nome") if cota.get(
+                "administradoras") else None,
             "produto": cota["produto"],
             "grupo_codigo": cota["grupo_codigo"],
             "numero_cota": cota["numero_cota"],
@@ -527,6 +528,7 @@ def list_cartas_operacao(
             "status_mes": (controle or {}).get("status_mes", "pendente"),
             "opcoes_lance_fixo": opcoes_lance_fixo,
             "tem_pendencia_configuracao": regra.get("assembleia_prevista") is None,
+            "debug_fixo": "teste_ok",
         })
 
     return {

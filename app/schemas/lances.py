@@ -131,6 +131,7 @@ class LanceCartaListItem(BaseModel):
     status_mes: StatusMes
     tem_pendencia_configuracao: bool
     opcoes_lance_fixo: list[CotaLanceFixoOpcaoOut] = []
+    debug_fixo: Optional[str] = None
 
 
 class LanceCartaListResponse(BaseModel):
