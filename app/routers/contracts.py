@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from supabase import Client
 
 from app.routers.carteira import ensure_carteira_cliente
@@ -14,8 +14,15 @@ router = APIRouter(prefix="/contracts", tags=["contracts"])
 
 
 # ======================================================
-# INPUT DE CRIAÇÃO DO CONTRATO + COTA
+# INPUTS
 # ======================================================
+class LanceFixoOpcaoIn(BaseModel):
+    percentual: float = Field(gt=0, le=100)
+    ordem: int = Field(ge=1)
+    ativo: bool = True
+    observacoes: Optional[str] = None
+
+
 class ContractFromLeadIn(BaseModel):
     # Identificação
     lead_id: str
@@ -24,13 +31,14 @@ class ContractFromLeadIn(BaseModel):
     # Cota
     numero_cota: str
     grupo_codigo: str
-    produto: Literal["imobiliario", "auto", "pesados"] = "imobiliario"
+    produto: Literal["imobiliario", "auto"] = "imobiliario"
 
     # Valores
     valor_carta: str
     prazo: Optional[int] = None
     forma_pagamento: Optional[str] = None
     indice_correcao: Optional[str] = None
+    valor_parcela: Optional[str] = None
 
     # Flags
     parcela_reduzida: bool = False
@@ -42,6 +50,9 @@ class ContractFromLeadIn(BaseModel):
     data_adesao: Optional[str] = None   # yyyy-mm-dd
     data_assinatura: Optional[str] = None
     numero_contrato: Optional[str] = None
+
+    # Novas opções de lance fixo
+    opcoes_lance_fixo: List[LanceFixoOpcaoIn] = []
 
 
 # ======================================================
@@ -57,10 +68,36 @@ def _parse_money(raw: Optional[str]) -> Optional[float]:
         return None
 
 
+def _validate_opcoes_lance_fixo(opcoes: List[LanceFixoOpcaoIn]) -> None:
+    if not opcoes:
+        return
+
+    ordens = set()
+    percentuais = set()
+
+    for op in opcoes:
+        if op.ordem in ordens:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ordem duplicada nas opções de lance fixo",
+            )
+
+        pct_key = f"{op.percentual:.4f}"
+        if pct_key in percentuais:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Percentual duplicado nas opções de lance fixo",
+            )
+
+        ordens.add(op.ordem)
+        percentuais.add(pct_key)
+
+
 # ======================================================
 # POST /contracts/from-lead
 # Cria COTA + CONTRATO (status pendente_assinatura)
-# e garante entrada na carteira
+# garante entrada na carteira
+# salva opções de lance fixo, se houver
 # ======================================================
 @router.post("/from-lead")
 def create_contract_from_lead(
@@ -89,12 +126,17 @@ def create_contract_from_lead(
     if lead["org_id"] != x_org_id:
         raise HTTPException(403, "Lead pertence a outra organização")
 
-    # 2) Normalizar valor carta
+    # 2) Normalizar valores
     valor_carta = _parse_money(body.valor_carta)
     if valor_carta is None:
         raise HTTPException(400, "Valor da carta inválido")
 
-    # 3) Criar COTA
+    valor_parcela = _parse_money(body.valor_parcela)
+
+    # 3) Validar opções de lance fixo
+    _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
+
+    # 4) Criar COTA
     cota_payload = {
         "org_id": x_org_id,
         "lead_id": body.lead_id,
@@ -103,6 +145,7 @@ def create_contract_from_lead(
         "grupo_codigo": body.grupo_codigo,
         "produto": body.produto,
         "valor_carta": valor_carta,
+        "valor_parcela": valor_parcela,
         "prazo": body.prazo,
         "forma_pagamento": body.forma_pagamento,
         "indice_correcao": body.indice_correcao,
@@ -111,6 +154,7 @@ def create_contract_from_lead(
         "fgts_permitido": body.fgts_permitido,
         "autorizacao_gestao": body.autorizacao_gestao,
         "data_adesao": body.data_adesao,
+        "status": "ativa",
     }
 
     cota_resp = (
@@ -121,9 +165,33 @@ def create_contract_from_lead(
     if not getattr(cota_resp, "data", None):
         raise HTTPException(500, "Erro ao criar cota")
 
-    cota_id = cota_resp.data[0]["id"]
+    cota = cota_resp.data[0]
+    cota_id = cota["id"]
 
-    # 4) Criar CONTRATO
+    # 5) Salvar opções de lance fixo, se houver
+    if body.opcoes_lance_fixo:
+        fixo_rows = [
+            {
+                "org_id": x_org_id,
+                "cota_id": cota_id,
+                "percentual": op.percentual,
+                "ordem": op.ordem,
+                "ativo": op.ativo,
+                "observacoes": op.observacoes,
+            }
+            for op in body.opcoes_lance_fixo
+        ]
+
+        fixo_resp = (
+            supa.table("cota_lance_fixo_opcoes")
+            .insert(fixo_rows, returning="representation")
+            .execute()
+        )
+
+        if not getattr(fixo_resp, "data", None):
+            raise HTTPException(500, "Erro ao salvar opções de lance fixo")
+
+    # 6) Criar CONTRATO
     contrato_payload = {
         "org_id": x_org_id,
         "deal_id": None,
@@ -143,7 +211,7 @@ def create_contract_from_lead(
 
     contrato_id = contrato_resp.data[0]["id"]
 
-    # 5) Garantir entrada na carteira
+    # 7) Garantir entrada na carteira
     carteira_result = ensure_carteira_cliente(
         supa=supa,
         org_id=x_org_id,
@@ -159,6 +227,7 @@ def create_contract_from_lead(
         "status": contrato_resp.data[0]["status"],
         "carteira": carteira_result["carteira_cliente"],
         "carteira_created": carteira_result["created"],
+        "opcoes_lance_fixo_count": len(body.opcoes_lance_fixo),
     }
 
 
@@ -228,7 +297,6 @@ def update_contract_status(
     atual_status = contrato["status"]
     novo_status = body.status
 
-    # Se não mudou nada, não precisa nem bater no banco
     if novo_status == atual_status:
         return {
             "ok": True,
