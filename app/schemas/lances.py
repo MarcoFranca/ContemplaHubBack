@@ -130,6 +130,7 @@ class LanceCartaListItem(BaseModel):
     competencia: date
     status_mes: StatusMes
     tem_pendencia_configuracao: bool
+    opcoes_lance_fixo: list[CotaLanceFixoOpcaoOut] = []
 
 
 class LanceCartaListResponse(BaseModel):
@@ -148,7 +149,7 @@ class LancesCartaDetalheOut(BaseModel):
     historico_lances: list[dict[str, Any]]
     contemplacao: Optional[dict[str, Any]] = None
     diagnostico: Optional[dict[str, Any]] = None
-    opcoes_lance_fixo: list[dict[str, Any]] = []
+    opcoes_lance_fixo: list[CotaLanceFixoOpcaoOut] = []
 
 class SimpleOkResponse(BaseModel):
     ok: bool = True
