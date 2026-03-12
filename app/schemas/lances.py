@@ -16,6 +16,16 @@ ContemplacaoMotivo = Literal["lance", "sorteio", "outro"]
 Produto = Literal["imobiliario", "auto"]
 
 
+class CotaLanceFixoOpcaoOut(BaseModel):
+    id: UUID
+    cota_id: UUID
+    percentual: Decimal
+    ordem: int
+    ativo: bool
+    observacoes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
 class ControleMensalPayload(BaseModel):
     competencia: date
     status_mes: Literal["pendente", "planejado", "sem_lance"]
@@ -32,6 +42,7 @@ class RegistrarLancePayload(BaseModel):
     pagamento: Optional[dict[str, Any]] = None
     resultado: Optional[str] = None
     observacoes_competencia: Optional[str] = None
+    cota_lance_fixo_opcao_id: Optional[UUID] = None
 
 
 class AtualizarResultadoLancePayload(BaseModel):
@@ -137,7 +148,7 @@ class LancesCartaDetalheOut(BaseModel):
     historico_lances: list[dict[str, Any]]
     contemplacao: Optional[dict[str, Any]] = None
     diagnostico: Optional[dict[str, Any]] = None
-
+    opcoes_lance_fixo: list[dict[str, Any]] = []
 
 class SimpleOkResponse(BaseModel):
     ok: bool = True

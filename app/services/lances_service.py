@@ -593,7 +593,38 @@ def get_carta_detalhe(
         "historico_lances": get_historico_lances(sb=sb, org_id=profile.org_id, cota_id=cota_id),
         "contemplacao": get_contemplacao(sb=sb, org_id=profile.org_id, cota_id=cota_id),
         "diagnostico": get_latest_diagnostico(sb=sb, org_id=profile.org_id, lead_id=cota.get("lead_id")),
+        "opcoes_lance_fixo": get_opcoes_lance_fixo(
+            sb=sb,
+            org_id=profile.org_id,
+            cota_id=cota_id,
+        ),
     }
+
+
+def resolve_lance_fixo(
+    *,
+    sb: Client,
+    org_id: str,
+    cota_id: str,
+    cota_lance_fixo_opcao_id: str | None,
+) -> dict[str, Any]:
+    if not cota_lance_fixo_opcao_id:
+        raise HTTPException(400, "Selecione uma opção de lance fixo")
+
+    resp = (
+        sb.table("cota_lance_fixo_opcoes")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .eq("id", cota_lance_fixo_opcao_id)
+        .eq("ativo", True)
+        .limit(1)
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        raise HTTPException(400, "Opção de lance fixo inválida para esta cota")
+    return rows[0]
 
 
 def registrar_lance(
@@ -610,10 +641,21 @@ def registrar_lance(
     pagamento: dict[str, Any] | None,
     resultado: str | None,
     observacoes_competencia: str | None,
+    cota_lance_fixo_opcao_id: str | None = None,
 ) -> dict[str, Any]:
     cota = get_cota_or_404(sb=sb, org_id=profile.org_id, cota_id=cota_id)
     ensure_cota_ativa(cota)
+    opcao_fixo = None
+    percentual_final = percentual
 
+    if tipo == "fixo":
+        opcao_fixo = resolve_lance_fixo(
+            sb=sb,
+            org_id=profile.org_id,
+            cota_id=cota_id,
+            cota_lance_fixo_opcao_id=cota_lance_fixo_opcao_id,
+        )
+        percentual_final = opcao_fixo["percentual"]
     pagamento_normalizado = validate_pagamento_composicao(
         cota=cota,
         pagamento=pagamento,
@@ -624,7 +666,7 @@ def registrar_lance(
         "org_id": profile.org_id,
         "cota_id": cota_id,
         "tipo": tipo,
-        "percentual": to_jsonable(percentual),
+        "percentual": to_jsonable(percentual_final),
         "valor": to_jsonable(valor),
         "origem": "executado",
         "created_by": profile.user_id,
@@ -664,6 +706,20 @@ def registrar_lance(
     )
 
     return {"lance": lance, "controle_mes": controle}
+
+
+def get_opcoes_lance_fixo(*, sb: Client, org_id: str, cota_id: str) -> list[dict[str, Any]]:
+    resp = (
+        sb.table("cota_lance_fixo_opcoes")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .eq("ativo", True)
+        .order("ordem", desc=False)
+        .order("percentual", desc=True)
+        .execute()
+    )
+    return getattr(resp, "data", None) or []
 
 
 def contemplar_cota(

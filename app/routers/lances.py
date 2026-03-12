@@ -112,6 +112,7 @@ def post_registrar_lance(
         pagamento=payload.pagamento,
         resultado=payload.resultado,
         observacoes_competencia=payload.observacoes_competencia,
+        cota_lance_fixo_opcao_id=str(payload.cota_lance_fixo_opcao_id) if payload.cota_lance_fixo_opcao_id else None,
     )
 
 
