@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 from decimal import Decimal
+from datetime import date, datetime
 from typing import Literal, Optional, Any
 from uuid import UUID
 
@@ -16,6 +16,32 @@ ContemplacaoMotivo = Literal["lance", "sorteio", "outro"]
 Produto = Literal["imobiliario", "auto"]
 
 
+class CotaLanceFixoOpcaoUpdateIn(BaseModel):
+    id: Optional[UUID] = None
+    percentual: Decimal
+    ordem: int
+    ativo: bool = True
+    observacoes: Optional[str] = None
+
+
+class AtualizarCartaPayload(BaseModel):
+    grupo_codigo: str
+    numero_cota: str
+    produto: Produto
+    valor_carta: Optional[Decimal] = None
+    valor_parcela: Optional[Decimal] = None
+    prazo: Optional[int] = None
+    assembleia_dia: Optional[int] = Field(default=None, ge=1, le=31)
+    autorizacao_gestao: bool = False
+    embutido_permitido: bool = False
+    embutido_max_percent: Optional[Decimal] = None
+    fgts_permitido: bool = False
+    tipo_lance_preferencial: Optional[Literal["livre", "fixo"]] = None
+    estrategia: Optional[str] = None
+    objetivo: Optional[str] = None
+    opcoes_lance_fixo: list[CotaLanceFixoOpcaoUpdateIn] = []
+
+
 class CotaLanceFixoOpcaoOut(BaseModel):
     id: UUID
     cota_id: UUID
@@ -24,6 +50,32 @@ class CotaLanceFixoOpcaoOut(BaseModel):
     ativo: bool
     observacoes: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+class CotaLanceFixoOpcaoUpdateIn(BaseModel):
+    id: Optional[UUID] = None
+    percentual: Decimal
+    ordem: int
+    ativo: bool = True
+    observacoes: Optional[str] = None
+
+
+class AtualizarCartaPayload(BaseModel):
+    grupo_codigo: str
+    numero_cota: str
+    produto: Produto
+    valor_carta: Optional[Decimal] = None
+    valor_parcela: Optional[Decimal] = None
+    prazo: Optional[int] = None
+    assembleia_dia: Optional[int] = Field(default=None, ge=1, le=31)
+    autorizacao_gestao: bool = False
+    embutido_permitido: bool = False
+    embutido_max_percent: Optional[Decimal] = None
+    fgts_permitido: bool = False
+    tipo_lance_preferencial: Optional[Literal["livre", "fixo"]] = None
+    estrategia: Optional[str] = None
+    objetivo: Optional[str] = None
+    opcoes_lance_fixo: list[CotaLanceFixoOpcaoUpdateIn] = []
 
 
 class ControleMensalPayload(BaseModel):

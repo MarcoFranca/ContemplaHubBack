@@ -7,6 +7,7 @@ from supabase import Client
 
 from app.deps import get_supabase_admin
 from app.schemas.lances import (
+    AtualizarCartaPayload,
     AtualizarResultadoLancePayload,
     CancelarCotaPayload,
     ContemplarCotaPayload,
@@ -16,8 +17,10 @@ from app.schemas.lances import (
     RegistrarLancePayload,
     SimpleOkResponse,
 )
+
 from app.security.auth import CurrentProfile, get_current_profile
 from app.services.lances_service import (
+    atualizar_carta,
     cancelar_cota,
     contemplar_cota,
     get_carta_detalhe,
@@ -30,6 +33,22 @@ from app.services.lances_service import (
 )
 
 router = APIRouter(prefix="/lances", tags=["lances"])
+
+
+@router.patch("/cartas/{cota_id}", response_model=SimpleOkResponse)
+def patch_atualizar_carta(
+    cota_id: str,
+    payload: AtualizarCartaPayload,
+    sb: Client = Depends(get_supabase_admin),
+    profile: CurrentProfile = Depends(get_current_profile),
+):
+    atualizar_carta(
+        sb=sb,
+        profile=profile,
+        cota_id=cota_id,
+        payload=payload,
+    )
+    return {"ok": True}
 
 
 @router.get("/cartas", response_model=LanceCartaListResponse)
@@ -72,6 +91,22 @@ def get_detalhe_carta(
         cota_id=cota_id,
         competencia=competencia,
     )
+
+
+@router.patch("/cartas/{cota_id}", response_model=SimpleOkResponse)
+def patch_atualizar_carta(
+    cota_id: str,
+    payload: AtualizarCartaPayload,
+    sb: Client = Depends(get_supabase_admin),
+    profile: CurrentProfile = Depends(get_current_profile),
+):
+    atualizar_carta(
+        sb=sb,
+        profile=profile,
+        cota_id=cota_id,
+        payload=payload,
+    )
+    return {"ok": True}
 
 
 @router.post("/cartas/{cota_id}/controle-mensal", response_model=SimpleOkResponse)

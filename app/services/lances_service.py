@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from supabase import Client
 from decimal import Decimal
 from math import isclose
+from app.schemas.lances import AtualizarCartaPayload
 
 from app.security.auth import CurrentProfile
 
@@ -412,6 +413,111 @@ def upsert_controle_mensal(
     return existing or payload
 
 
+def sync_opcoes_lance_fixo(
+    *,
+    sb: Client,
+    org_id: str,
+    cota_id: str,
+    opcoes: list[dict[str, Any]],
+) -> None:
+    atuais_resp = (
+        sb.table("cota_lance_fixo_opcoes")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .execute()
+    )
+    atuais = getattr(atuais_resp, "data", None) or []
+    atuais_ids = {row["id"] for row in atuais}
+
+    recebidos_ids = {
+        str(op["id"])
+        for op in opcoes
+        if op.get("id")
+    }
+
+    ids_para_remover = list(atuais_ids - recebidos_ids)
+    if ids_para_remover:
+        (
+            sb.table("cota_lance_fixo_opcoes")
+            .delete()
+            .eq("org_id", org_id)
+            .eq("cota_id", cota_id)
+            .in_("id", ids_para_remover)
+            .execute()
+        )
+
+    for op in opcoes:
+        payload = {
+            "org_id": org_id,
+            "cota_id": cota_id,
+            "percentual": to_jsonable(op["percentual"]),
+            "ordem": int(op["ordem"]),
+            "ativo": bool(op.get("ativo", True)),
+            "observacoes": op.get("observacoes"),
+        }
+
+        if op.get("id"):
+            (
+                sb.table("cota_lance_fixo_opcoes")
+                .update(payload)
+                .eq("org_id", org_id)
+                .eq("cota_id", cota_id)
+                .eq("id", str(op["id"]))
+                .execute()
+            )
+        else:
+            (
+                sb.table("cota_lance_fixo_opcoes")
+                .insert(payload)
+                .execute()
+            )
+
+
+def atualizar_carta(
+    *,
+    sb: Client,
+    profile: CurrentProfile,
+    cota_id: str,
+    payload: AtualizarCartaPayload,
+) -> dict[str, Any]:
+    _cota = get_cota_or_404(sb=sb, org_id=profile.org_id, cota_id=cota_id)
+
+    update_payload = {
+        "grupo_codigo": payload.grupo_codigo,
+        "numero_cota": payload.numero_cota,
+        "produto": payload.produto,
+        "valor_carta": to_jsonable(payload.valor_carta),
+        "valor_parcela": to_jsonable(payload.valor_parcela),
+        "prazo": payload.prazo,
+        "assembleia_dia": payload.assembleia_dia,
+        "autorizacao_gestao": payload.autorizacao_gestao,
+        "embutido_permitido": payload.embutido_permitido,
+        "embutido_max_percent": to_jsonable(payload.embutido_max_percent),
+        "fgts_permitido": payload.fgts_permitido,
+        "tipo_lance_preferencial": payload.tipo_lance_preferencial,
+        "estrategia": payload.estrategia,
+        "objetivo": payload.objetivo,
+    }
+
+    (
+        sb.table("cotas")
+        .update(update_payload)
+        .eq("org_id", profile.org_id)
+        .eq("id", cota_id)
+        .execute()
+    )
+
+    sync_opcoes_lance_fixo(
+        sb=sb,
+        org_id=profile.org_id,
+        cota_id=cota_id,
+        opcoes=[op.model_dump() for op in payload.opcoes_lance_fixo],
+    )
+
+    return {"ok": True, "cota_id": cota_id}
+
+
 def list_cartas_operacao(
     *,
     sb: Client,
@@ -528,10 +634,8 @@ def list_cartas_operacao(
             "status_mes": (controle or {}).get("status_mes", "pendente"),
             "opcoes_lance_fixo": opcoes_lance_fixo,
             "tem_pendencia_configuracao": regra.get("assembleia_prevista") is None,
-            "debug_fixo": "teste_ok",
         })
-    print("DEBUG LANCES COTA", cota_id)
-    print("DEBUG LANCES FIXO", opcoes_lance_fixo)
+
     return {
         "items": items,
         "page": page,
