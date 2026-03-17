@@ -131,6 +131,156 @@ def fetch_parceiros_da_cota(supa: Client, org_id: str, cota_id: str) -> List[Dic
     return getattr(resp, "data", None) or []
 
 
+def get_delete_comissao_check(supa: Client, org_id: str, cota_id: str) -> Dict[str, Any]:
+    cota = fetch_cota_context(supa, org_id, cota_id)
+    config = fetch_config_by_cota(supa, org_id, cota_id)
+
+    contrato_resp = (
+        supa.table("contratos")
+        .select("id, numero, status")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    contratos = getattr(contrato_resp, "data", None) or []
+    contrato = contratos[0] if contratos else None
+
+    lanc_query = (
+        supa.table("comissao_lancamentos")
+        .select("id, status, repasse_status, beneficiario_tipo")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .execute()
+    )
+    lancamentos = getattr(lanc_query, "data", None) or []
+
+    total_lancamentos = len(lancamentos)
+    pagos = [x for x in lancamentos if x.get("status") == "pago"]
+    repasses_pagos = [
+        x for x in lancamentos
+        if x.get("beneficiario_tipo") == "parceiro" and x.get("repasse_status") == "pago"
+    ]
+
+    pode_excluir = len(pagos) == 0 and len(repasses_pagos) == 0
+
+    return {
+        "ok": True,
+        "cota": cota,
+        "config_exists": bool(config),
+        "contrato": contrato,
+        "resumo": {
+            "total_lancamentos": total_lancamentos,
+            "lancamentos_pagos": len(pagos),
+            "repasses_pagos": len(repasses_pagos),
+        },
+        "pode_excluir": pode_excluir,
+        "motivo_bloqueio": None if pode_excluir else "Há lançamentos pagos ou repasses pagos vinculados à comissão.",
+    }
+
+def delete_comissao_for_cota(supa: Client, org_id: str, cota_id: str, force: bool = False) -> Dict[str, Any]:
+    check = get_delete_comissao_check(supa, org_id, cota_id)
+
+    if not check["config_exists"]:
+        return {"ok": True, "deleted": False, "message": "Nenhuma comissão configurada para esta cota."}
+
+    if not check["pode_excluir"] and not force:
+        raise HTTPException(
+            400,
+            "Não é possível excluir a comissão porque há lançamentos pagos ou repasses pagos."
+        )
+
+    contrato_ids_resp = (
+        supa.table("contratos")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .execute()
+    )
+    contrato_ids = [x["id"] for x in (getattr(contrato_ids_resp, "data", None) or [])]
+
+    # 1) apaga lançamentos
+    (
+        supa.table("comissao_lancamentos")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .execute()
+    )
+
+    # 2) apaga parceiros da cota
+    (
+        supa.table("cota_comissao_parceiros")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .execute()
+    )
+
+    # 3) apaga config + regras
+    config = fetch_config_by_cota(supa, org_id, cota_id)
+    if config:
+        (
+            supa.table("cota_comissao_regras")
+            .delete()
+            .eq("org_id", org_id)
+            .eq("cota_comissao_config_id", config["id"])
+            .execute()
+        )
+
+        (
+            supa.table("cota_comissao_config")
+            .delete()
+            .eq("org_id", org_id)
+            .eq("id", config["id"])
+            .execute()
+        )
+
+    return {
+        "ok": True,
+        "deleted": True,
+        "cota_id": cota_id,
+        "contratos_relacionados": contrato_ids,
+    }
+
+
+def cancel_comissao_for_cota(supa: Client, org_id: str, cota_id: str) -> Dict[str, Any]:
+    config = fetch_config_by_cota(supa, org_id, cota_id)
+    if not config:
+        return {"ok": True, "updated": False, "message": "Nenhuma comissão configurada."}
+
+    now_iso = datetime.utcnow().isoformat()
+
+    (
+        supa.table("comissao_lancamentos")
+        .update({
+            "status": "cancelado",
+            "repasse_status": "cancelado",
+            "updated_at": now_iso,
+            "observacoes": "Cancelado manualmente pela operação.",
+        })
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .neq("status", "pago")
+        .execute()
+    )
+
+    (
+        supa.table("cota_comissao_config")
+        .update({
+            "ativo": False,
+            "updated_at": now_iso,
+            "observacoes": "Comissão cancelada manualmente.",
+        })
+        .eq("org_id", org_id)
+        .eq("id", config["id"])
+        .execute()
+    )
+
+    return {"ok": True, "updated": True, "cota_id": cota_id}
+
+
 def validate_partner_ids(supa: Client, org_id: str, payload: CotaComissaoConfigUpsertIn) -> None:
     for partner in payload.parceiros:
         get_org_record_or_404(supa, "parceiros_corretores", org_id, partner.parceiro_id, columns="id, ativo")

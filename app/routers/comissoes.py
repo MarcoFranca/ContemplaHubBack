@@ -17,17 +17,19 @@ from app.schemas.comissoes import (
     RepasseUpdateIn,
 )
 from app.services.comissao_service import (
+    cancel_comissao_for_cota,
+    delete_comissao_for_cota,
     fetch_config_by_cota,
     fetch_lancamentos,
     fetch_parceiros_da_cota,
     fetch_regras,
     generate_lancamentos_for_contrato,
+    get_delete_comissao_check,
     get_org_record_or_404,
     summarize_lancamentos,
     sync_eventos_contrato,
     upsert_config_for_cota,
 )
-
 router = APIRouter(prefix="/comissoes", tags=["comissoes"])
 
 
@@ -49,6 +51,37 @@ def list_parceiros(
         query = query.eq("ativo", ativos)
     resp = query.order("nome").execute()
     return {"ok": True, "items": getattr(resp, "data", None) or []}
+
+
+@router.get("/cotas/{cota_id}/delete-check")
+def check_delete_comissao_cota(
+    cota_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return get_delete_comissao_check(supa, org_id, cota_id)
+
+
+@router.delete("/cotas/{cota_id}")
+def delete_comissao_cota(
+    cota_id: str,
+    force: bool = Query(default=False),
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return delete_comissao_for_cota(supa, org_id, cota_id, force=force)
+
+
+@router.post("/cotas/{cota_id}/cancelar")
+def cancelar_comissao_cota(
+    cota_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return cancel_comissao_for_cota(supa, org_id, cota_id)
 
 
 @router.post("/parceiros")

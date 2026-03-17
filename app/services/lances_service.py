@@ -984,3 +984,73 @@ def list_regras_operadora(*, sb: Client, profile: CurrentProfile) -> list[dict[s
         })
 
     return items
+
+
+def delete_carta_operacao(*, sb: Client, profile: CurrentProfile, cota_id: str) -> dict[str, Any]:
+    cota = get_cota_or_404(sb=sb, org_id=profile.org_id, cota_id=cota_id)
+
+    # bloqueio se ainda existir comissão/lançamento
+    resp_lanc = (
+        sb.table("comissao_lancamentos")
+        .select("id")
+        .eq("org_id", profile.org_id)
+        .eq("cota_id", cota_id)
+        .limit(1)
+        .execute()
+    )
+    if getattr(resp_lanc, "data", None):
+        raise HTTPException(400, "A carta possui comissões lançadas. Exclua ou cancele a comissão antes de excluir a carta.")
+
+    # apagar config de comissão residual
+    (
+        sb.table("cota_comissao_parceiros")
+        .delete()
+        .eq("org_id", profile.org_id)
+        .eq("cota_id", cota_id)
+        .execute()
+    )
+
+    config_resp = (
+        sb.table("cota_comissao_config")
+        .select("id")
+        .eq("org_id", profile.org_id)
+        .eq("cota_id", cota_id)
+        .limit(1)
+        .execute()
+    )
+    config_rows = getattr(config_resp, "data", None) or []
+    if config_rows:
+        config_id = config_rows[0]["id"]
+        (
+            sb.table("cota_comissao_regras")
+            .delete()
+            .eq("org_id", profile.org_id)
+            .eq("cota_comissao_config_id", config_id)
+            .execute()
+        )
+        (
+            sb.table("cota_comissao_config")
+            .delete()
+            .eq("org_id", profile.org_id)
+            .eq("id", config_id)
+            .execute()
+        )
+
+    # apagar contratos ligados à cota, se ainda estiver em ambiente de teste
+    (
+        sb.table("contratos")
+        .delete()
+        .eq("org_id", profile.org_id)
+        .eq("cota_id", cota_id)
+        .execute()
+    )
+
+    (
+        sb.table("cotas")
+        .delete()
+        .eq("org_id", profile.org_id)
+        .eq("id", cota_id)
+        .execute()
+    )
+
+    return {"ok": True, "deleted": True, "cota_id": cota_id}
