@@ -152,6 +152,7 @@ def get_cota_or_404(*, sb: Client, org_id: str, cota_id: str) -> dict[str, Any]:
             valor_carta,
             valor_parcela,
             prazo,
+            data_adesao,
             embutido_permitido,
             embutido_max_percent,
             fgts_permitido,
@@ -622,6 +623,7 @@ def list_cartas_operacao(
             "valor_carta": cota.get("valor_carta"),
             "valor_parcela": cota.get("valor_parcela"),
             "prazo": cota.get("prazo"),
+            "data_adesao": cota.get("data_adesao"),
             "status": cota.get("status"),
             "autorizacao_gestao": bool(cota.get("autorizacao_gestao")),
             "embutido_permitido": bool(cota.get("embutido_permitido")),
@@ -642,7 +644,6 @@ def list_cartas_operacao(
         "items": items,
         "page": page,
         "page_size": page_size,
-        "data_adesao": cota.get("data_adesao"),
         "total": total,
     }
 
