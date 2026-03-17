@@ -252,7 +252,7 @@ def get_regra_assembleia(
         .select("*")
         .eq("org_id", org_id)
         .eq("administradora_id", administradora_id)
-        .is_("produto", "null")
+        .is_("produto", None)
         .limit(1)
         .execute()
     )
