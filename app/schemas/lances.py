@@ -68,6 +68,7 @@ class AtualizarCartaPayload(BaseModel):
     valor_parcela: Optional[Decimal] = None
     prazo: Optional[int] = None
     assembleia_dia: Optional[int] = Field(default=None, ge=1, le=31)
+    data_adesao: Optional[date] = None  # <- adicionar
     autorizacao_gestao: bool = False
     embutido_permitido: bool = False
     embutido_max_percent: Optional[Decimal] = None

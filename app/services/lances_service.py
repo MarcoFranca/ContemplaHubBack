@@ -491,6 +491,7 @@ def atualizar_carta(
         "valor_parcela": to_jsonable(payload.valor_parcela),
         "prazo": payload.prazo,
         "assembleia_dia": payload.assembleia_dia,
+        "data_adesao": payload.data_adesao.isoformat() if payload.data_adesao else None,
         "autorizacao_gestao": payload.autorizacao_gestao,
         "embutido_permitido": payload.embutido_permitido,
         "embutido_max_percent": to_jsonable(payload.embutido_max_percent),
@@ -546,6 +547,7 @@ def list_cartas_operacao(
             valor_carta,
             valor_parcela,
             prazo,
+            data_adesao,
             embutido_permitido,
             embutido_max_percent,
             fgts_permitido,
@@ -640,6 +642,7 @@ def list_cartas_operacao(
         "items": items,
         "page": page,
         "page_size": page_size,
+        "data_adesao": cota.get("data_adesao"),
         "total": total,
     }
 
