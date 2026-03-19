@@ -484,38 +484,72 @@ def atualizar_carta(
 ) -> dict[str, Any]:
     _cota = get_cota_or_404(sb=sb, org_id=profile.org_id, cota_id=cota_id)
 
-    update_payload = {
-        "grupo_codigo": payload.grupo_codigo,
-        "numero_cota": payload.numero_cota,
-        "produto": payload.produto,
-        "valor_carta": to_jsonable(payload.valor_carta),
-        "valor_parcela": to_jsonable(payload.valor_parcela),
-        "prazo": payload.prazo,
-        "assembleia_dia": payload.assembleia_dia,
-        "data_adesao": payload.data_adesao.isoformat() if payload.data_adesao else None,
-        "autorizacao_gestao": payload.autorizacao_gestao,
-        "embutido_permitido": payload.embutido_permitido,
-        "embutido_max_percent": to_jsonable(payload.embutido_max_percent),
-        "fgts_permitido": payload.fgts_permitido,
-        "tipo_lance_preferencial": payload.tipo_lance_preferencial,
-        "estrategia": payload.estrategia,
-        "objetivo": payload.objetivo,
-    }
+    fields = payload.model_fields_set
+    update_payload: dict[str, Any] = {}
 
-    (
-        sb.table("cotas")
-        .update(update_payload)
-        .eq("org_id", profile.org_id)
-        .eq("id", cota_id)
-        .execute()
-    )
+    if "grupo_codigo" in fields:
+        update_payload["grupo_codigo"] = payload.grupo_codigo
 
-    sync_opcoes_lance_fixo(
-        sb=sb,
-        org_id=profile.org_id,
-        cota_id=cota_id,
-        opcoes=[op.model_dump() for op in payload.opcoes_lance_fixo],
-    )
+    if "numero_cota" in fields:
+        update_payload["numero_cota"] = payload.numero_cota
+
+    if "produto" in fields:
+        update_payload["produto"] = payload.produto
+
+    if "valor_carta" in fields:
+        update_payload["valor_carta"] = to_jsonable(payload.valor_carta)
+
+    if "valor_parcela" in fields:
+        update_payload["valor_parcela"] = to_jsonable(payload.valor_parcela)
+
+    if "prazo" in fields:
+        update_payload["prazo"] = payload.prazo
+
+    if "assembleia_dia" in fields:
+        update_payload["assembleia_dia"] = payload.assembleia_dia
+
+    if "data_adesao" in fields:
+        update_payload["data_adesao"] = (
+            payload.data_adesao.isoformat() if payload.data_adesao else None
+        )
+
+    if "autorizacao_gestao" in fields:
+        update_payload["autorizacao_gestao"] = payload.autorizacao_gestao
+
+    if "embutido_permitido" in fields:
+        update_payload["embutido_permitido"] = payload.embutido_permitido
+
+    if "embutido_max_percent" in fields:
+        update_payload["embutido_max_percent"] = to_jsonable(payload.embutido_max_percent)
+
+    if "fgts_permitido" in fields:
+        update_payload["fgts_permitido"] = payload.fgts_permitido
+
+    if "tipo_lance_preferencial" in fields:
+        update_payload["tipo_lance_preferencial"] = payload.tipo_lance_preferencial
+
+    if "estrategia" in fields:
+        update_payload["estrategia"] = payload.estrategia
+
+    if "objetivo" in fields:
+        update_payload["objetivo"] = payload.objetivo
+
+    if update_payload:
+        (
+            sb.table("cotas")
+            .update(update_payload)
+            .eq("org_id", profile.org_id)
+            .eq("id", cota_id)
+            .execute()
+        )
+
+    if "opcoes_lance_fixo" in fields and payload.opcoes_lance_fixo is not None:
+        sync_opcoes_lance_fixo(
+            sb=sb,
+            org_id=profile.org_id,
+            cota_id=cota_id,
+            opcoes=[op.model_dump() for op in payload.opcoes_lance_fixo],
+        )
 
     return {"ok": True, "cota_id": cota_id}
 

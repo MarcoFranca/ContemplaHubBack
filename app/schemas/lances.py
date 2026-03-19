@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Literal, Optional, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 CotaStatus = Literal["ativa", "contemplada", "cancelada"]
@@ -25,21 +25,28 @@ class CotaLanceFixoOpcaoUpdateIn(BaseModel):
 
 
 class AtualizarCartaPayload(BaseModel):
-    grupo_codigo: str
-    numero_cota: str
-    produto: Produto
+    grupo_codigo: Optional[str] = None
+    numero_cota: Optional[str] = None
+    produto: Optional[Produto] = None
     valor_carta: Optional[Decimal] = None
     valor_parcela: Optional[Decimal] = None
     prazo: Optional[int] = None
     assembleia_dia: Optional[int] = Field(default=None, ge=1, le=31)
-    autorizacao_gestao: bool = False
-    embutido_permitido: bool = False
+    data_adesao: Optional[date] = None
+    autorizacao_gestao: Optional[bool] = None
+    embutido_permitido: Optional[bool] = None
     embutido_max_percent: Optional[Decimal] = None
-    fgts_permitido: bool = False
+    fgts_permitido: Optional[bool] = None
     tipo_lance_preferencial: Optional[Literal["livre", "fixo"]] = None
     estrategia: Optional[str] = None
     objetivo: Optional[str] = None
-    opcoes_lance_fixo: list[CotaLanceFixoOpcaoUpdateIn] = []
+    opcoes_lance_fixo: Optional[list[CotaLanceFixoOpcaoUpdateIn]] = None
+
+    @model_validator(mode="after")
+    def validate_non_empty_payload(self) -> "AtualizarCartaPayload":
+        if not self.model_fields_set:
+            raise ValueError("Informe ao menos um campo para atualização")
+        return self
 
 
 class CotaLanceFixoOpcaoOut(BaseModel):
@@ -50,33 +57,6 @@ class CotaLanceFixoOpcaoOut(BaseModel):
     ativo: bool
     observacoes: Optional[str] = None
     created_at: Optional[datetime] = None
-
-
-class CotaLanceFixoOpcaoUpdateIn(BaseModel):
-    id: Optional[UUID] = None
-    percentual: Decimal
-    ordem: int
-    ativo: bool = True
-    observacoes: Optional[str] = None
-
-
-class AtualizarCartaPayload(BaseModel):
-    grupo_codigo: str
-    numero_cota: str
-    produto: Produto
-    valor_carta: Optional[Decimal] = None
-    valor_parcela: Optional[Decimal] = None
-    prazo: Optional[int] = None
-    assembleia_dia: Optional[int] = Field(default=None, ge=1, le=31)
-    data_adesao: Optional[date] = None  # <- adicionar
-    autorizacao_gestao: bool = False
-    embutido_permitido: bool = False
-    embutido_max_percent: Optional[Decimal] = None
-    fgts_permitido: bool = False
-    tipo_lance_preferencial: Optional[Literal["livre", "fixo"]] = None
-    estrategia: Optional[str] = None
-    objetivo: Optional[str] = None
-    opcoes_lance_fixo: list[CotaLanceFixoOpcaoUpdateIn] = []
 
 
 class ControleMensalPayload(BaseModel):
