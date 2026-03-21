@@ -8,6 +8,7 @@ from supabase import Client
 
 from app.routers.carteira import ensure_carteira_cliente
 from app.deps import get_supabase_admin
+from app.services.contract_partner_sync_service import sync_contrato_parceiros_for_contract
 from app.services.kanban_service import move_lead_stage
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
@@ -218,6 +219,14 @@ def create_contract_from_lead(
         lead_id=body.lead_id,
         origem_entrada="contrato",
         observacoes="Entrada automática na carteira ao gerar contrato",
+    )
+
+    # NOVO: sincroniza parceiro(s) do contrato a partir da cota
+    partner_sync = sync_contrato_parceiros_for_contract(
+        supa,
+        org_id=x_org_id,
+        contract_id=contrato_id,
+        actor_id=None,
     )
 
     return {

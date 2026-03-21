@@ -6,6 +6,11 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from supabase import Client
 
+from app.services.contract_partner_sync_service import (
+    sync_contrato_parceiros_for_contract,
+    sync_contrato_parceiros_for_cota,
+)
+
 from app.deps import get_supabase_admin
 from app.schemas.comissoes import (
     ComissaoListFilters,
@@ -183,6 +188,36 @@ def sincronizar_eventos(
 ):
     org_id = require_org_id(x_org_id)
     return sync_eventos_contrato(supa, org_id, contrato_id)
+
+
+@router.post("/contratos/{contrato_id}/sincronizar-parceiros")
+def sincronizar_parceiros_contrato(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return sync_contrato_parceiros_for_contract(
+        supa,
+        org_id=org_id,
+        contract_id=contrato_id,
+        actor_id=None,
+    )
+
+
+@router.post("/cotas/{cota_id}/sincronizar-parceiros")
+def sincronizar_parceiros_cota(
+    cota_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return sync_contrato_parceiros_for_cota(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        actor_id=None,
+    )
 
 
 @router.get("/contratos/{contrato_id}")

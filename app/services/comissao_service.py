@@ -10,6 +10,11 @@ from fastapi import HTTPException
 from supabase import Client
 
 from app.schemas.comissoes import CotaComissaoConfigUpsertIn
+from app.services.contract_partner_sync_service import (
+    remove_synced_partner_links_for_cota,
+    sync_contrato_parceiros_for_contract,
+    sync_contrato_parceiros_for_cota,
+)
 
 MONEY_Q = Decimal("0.01")
 PCT_Q = Decimal("0.0001")
@@ -179,6 +184,7 @@ def get_delete_comissao_check(supa: Client, org_id: str, cota_id: str) -> Dict[s
         "motivo_bloqueio": None if pode_excluir else "Há lançamentos pagos ou repasses pagos vinculados à comissão.",
     }
 
+
 def delete_comissao_for_cota(supa: Client, org_id: str, cota_id: str, force: bool = False) -> Dict[str, Any]:
     check = get_delete_comissao_check(supa, org_id, cota_id)
 
@@ -200,7 +206,6 @@ def delete_comissao_for_cota(supa: Client, org_id: str, cota_id: str, force: boo
     )
     contrato_ids = [x["id"] for x in (getattr(contrato_ids_resp, "data", None) or [])]
 
-    # 1) apaga lançamentos
     (
         supa.table("comissao_lancamentos")
         .delete()
@@ -209,7 +214,6 @@ def delete_comissao_for_cota(supa: Client, org_id: str, cota_id: str, force: boo
         .execute()
     )
 
-    # 2) apaga parceiros da cota
     (
         supa.table("cota_comissao_parceiros")
         .delete()
@@ -218,7 +222,6 @@ def delete_comissao_for_cota(supa: Client, org_id: str, cota_id: str, force: boo
         .execute()
     )
 
-    # 3) apaga config + regras
     config = fetch_config_by_cota(supa, org_id, cota_id)
     if config:
         (
@@ -237,11 +240,21 @@ def delete_comissao_for_cota(supa: Client, org_id: str, cota_id: str, force: boo
             .execute()
         )
 
+    # NOVO: remove vínculos sincronizados parceiro<->contrato desta cota
+    partner_sync_cleanup = remove_synced_partner_links_for_cota(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        actor_id=None,
+        reason="cota_comissao_deleted",
+    )
+
     return {
         "ok": True,
         "deleted": True,
         "cota_id": cota_id,
         "contratos_relacionados": contrato_ids,
+        "partner_sync_cleanup": partner_sync_cleanup,
     }
 
 
@@ -532,7 +545,7 @@ def upsert_config_for_cota(supa: Client, org_id: str, cota_id: str, payload: Cot
     }
 
     if existing:
-        resp = (
+        (
             supa.table("cota_comissao_config")
             .update(config_payload)
             .eq("id", existing["id"])
@@ -589,12 +602,21 @@ def upsert_config_for_cota(supa: Client, org_id: str, cota_id: str, payload: Cot
     regras = fetch_regras(supa, org_id, config_id)
     parceiros = fetch_parceiros_da_cota(supa, org_id, cota_id)
 
+    # NOVO: sincroniza contrato_parceiros de todos os contratos da cota
+    partner_sync = sync_contrato_parceiros_for_cota(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        actor_id=None,
+    )
+
     return {
         "ok": True,
         "cota": cota,
         "config": config,
         "regras": regras,
         "parceiros": parceiros,
+        "partner_sync": partner_sync,
     }
 
 
@@ -635,6 +657,15 @@ def generate_lancamentos_for_contrato(supa: Client, org_id: str, contrato_id: st
 
     created = supa.table("comissao_lancamentos").insert(launches, returning="representation").execute()
     data = getattr(created, "data", None) or []
+
+    # NOVO: garante sincronização do vínculo parceiro<->contrato
+    partner_sync = sync_contrato_parceiros_for_contract(
+        supa,
+        org_id=org_id,
+        contract_id=contrato_id,
+        actor_id=None,
+    )
+
     return {
         "ok": True,
         "contrato": contrato,
@@ -643,6 +674,7 @@ def generate_lancamentos_for_contrato(supa: Client, org_id: str, contrato_id: st
         "gerados": len(data),
         "lancamentos": data,
         "resumo": summarize_lancamentos(data),
+        "partner_sync": partner_sync,
     }
 
 
