@@ -1,4 +1,3 @@
-# app/routers/partner_portal.py
 from __future__ import annotations
 
 from typing import Optional
@@ -69,10 +68,11 @@ def partner_contract_detail(
 def partner_commissions(
     status: Optional[str] = Query(default=None),
     repasse_status: Optional[str] = Query(default=None),
-    contrato_id: Optional[str] = Query(default=None),
-    competencia_de: Optional[str] = Query(default=None),
-    competencia_ate: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    q: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    sort_by: str = Query(default="competencia_prevista"),
+    sort_order: str = Query(default="desc"),
     supa: Client = Depends(get_supabase_admin),
     ctx: AuthContext = Depends(require_partner_user),
 ):
@@ -81,10 +81,11 @@ def partner_commissions(
         ctx=ctx,
         status=status,
         repasse_status=repasse_status,
-        contrato_id=contrato_id,
-        competencia_de=competencia_de,
-        competencia_ate=competencia_ate,
-        limit=limit,
+        q=q,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 
