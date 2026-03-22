@@ -696,6 +696,8 @@ def _commission_sort_value(item: dict, sort_by: str):
         return str(item.get("repasse_status") or "")
     if sort_by == "created_at":
         return str(item.get("created_at") or "")
+    if sort_by == "competencia_real":
+        return str(item.get("competencia_real") or "")
     return str(item.get("competencia_prevista") or "")
 
 
