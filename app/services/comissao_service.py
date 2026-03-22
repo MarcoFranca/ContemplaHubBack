@@ -701,3 +701,106 @@ def sync_eventos_contrato(supa: Client, org_id: str, contrato_id: str) -> Dict[s
     )
     rows = getattr(updated, "data", None) or []
     return {"ok": True, "updated": len(rows), "contemplacao_data": contemplacao.isoformat()}
+
+
+from fastapi import HTTPException
+
+
+def count_rows(
+    supa,
+    table: str,
+    org_id: str,
+    parceiro_id: str,
+    parceiro_column: str = "parceiro_id",
+) -> int:
+    resp = (
+        supa.table(table)
+        .select("id", count="exact")
+        .eq("org_id", org_id)
+        .eq(parceiro_column, parceiro_id)
+        .execute()
+    )
+    return int(getattr(resp, "count", 0) or 0)
+
+
+def get_partner_delete_check(
+    supa,
+    org_id: str,
+    parceiro_id: str,
+) -> dict:
+    parceiro = (
+        supa.table("parceiros_corretores")
+        .select("id,nome,ativo")
+        .eq("org_id", org_id)
+        .eq("id", parceiro_id)
+        .maybe_single()
+        .execute()
+    )
+    parceiro_data = getattr(parceiro, "data", None)
+    if not parceiro_data:
+        raise HTTPException(404, "Parceiro não encontrado")
+
+    partner_users_count = count_rows(supa, "partner_users", org_id, parceiro_id)
+    cotas_count = count_rows(supa, "cota_comissao_parceiros", org_id, parceiro_id)
+    contratos_count = count_rows(supa, "contrato_parceiros", org_id, parceiro_id)
+    comissoes_count = count_rows(supa, "comissao_lancamentos", org_id, parceiro_id)
+
+    reasons: list[str] = []
+
+    if partner_users_count > 0:
+        reasons.append("Existe acesso de parceiro vinculado.")
+    if cotas_count > 0:
+        reasons.append("Existem cartas/cotas vinculadas ao parceiro.")
+    if contratos_count > 0:
+        reasons.append("Existem contratos vinculados ao parceiro.")
+    if comissoes_count > 0:
+        reasons.append("Existem lançamentos de comissão vinculados ao parceiro.")
+
+    can_delete = len(reasons) == 0
+
+    return {
+        "ok": True,
+        "can_delete": can_delete,
+        "parceiro": parceiro_data,
+        "reasons": reasons,
+        "counts": {
+            "partner_users": partner_users_count,
+            "cotas": cotas_count,
+            "contratos": contratos_count,
+            "comissoes": comissoes_count,
+        },
+    }
+
+
+def delete_partner_if_allowed(
+    supa,
+    org_id: str,
+    parceiro_id: str,
+) -> dict:
+    check = get_partner_delete_check(supa=supa, org_id=org_id, parceiro_id=parceiro_id)
+
+    if not check["can_delete"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Não foi possível excluir o parceiro porque existem vínculos ativos.",
+                "reasons": check["reasons"],
+                "counts": check["counts"],
+            },
+        )
+
+    resp = (
+        supa.table("parceiros_corretores")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("id", parceiro_id)
+        .execute()
+    )
+
+    data = getattr(resp, "data", None) or []
+
+    return {
+        "ok": True,
+        "deleted": True,
+        "item": data[0] if data else {"id": parceiro_id},
+    }
