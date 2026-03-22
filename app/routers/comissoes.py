@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from supabase import Client
 
 from app.deps import get_supabase_admin
 from app.schemas.comissoes import (
+    ComissaoListFilters,
     CotaComissaoConfigUpsertIn,
     GerarLancamentosIn,
     LancamentoStatusUpdateIn,
@@ -23,6 +24,7 @@ from app.security.permissions import require_manager
 from app.services.comissao_service import (
     cancel_comissao_for_cota,
     delete_comissao_for_cota,
+    delete_partner_if_allowed,
     fetch_config_by_cota,
     fetch_lancamentos,
     fetch_parceiros_da_cota,
@@ -30,6 +32,7 @@ from app.services.comissao_service import (
     generate_lancamentos_for_contrato,
     get_delete_comissao_check,
     get_org_record_or_404,
+    get_partner_delete_check,
     summarize_lancamentos,
     sync_eventos_contrato,
     upsert_config_for_cota,
@@ -206,6 +209,32 @@ def parceiro_extrato(
         "items": lancamentos,
         "resumo": summarize_lancamentos(lancamentos),
     }
+
+
+@router.get("/parceiros/{parceiro_id}/delete-check")
+def parceiro_delete_check(
+    parceiro_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    return get_partner_delete_check(
+        supa=supa,
+        org_id=ctx.org_id,
+        parceiro_id=parceiro_id,
+    )
+
+
+@router.delete("/parceiros/{parceiro_id}")
+def delete_parceiro(
+    parceiro_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    return delete_partner_if_allowed(
+        supa=supa,
+        org_id=ctx.org_id,
+        parceiro_id=parceiro_id,
+    )
 
 
 @router.get("/cotas/{cota_id}")
