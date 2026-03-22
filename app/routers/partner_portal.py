@@ -33,7 +33,10 @@ def partner_me(
 def partner_contracts(
     status: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    sort_by: str = Query(default="created_at"),
+    sort_order: str = Query(default="desc"),
     supa: Client = Depends(get_supabase_admin),
     ctx: AuthContext = Depends(require_partner_user),
 ):
@@ -42,7 +45,10 @@ def partner_contracts(
         ctx=ctx,
         status=status,
         q=q,
-        limit=limit,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 

@@ -168,8 +168,10 @@ def get_partner_user_me(
             can_view_client_data,
             can_view_contracts,
             can_view_commissions,
-            invited_at,
-            activated_at,
+            invite_sent_at,
+            access_enabled_at,
+            disabled_at,
+            disabled_reason,
             last_login_at,
             created_at,
             updated_at
