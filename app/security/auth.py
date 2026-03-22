@@ -1,5 +1,6 @@
 # app/security/auth.py
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 from fastapi import Depends, Header, HTTPException, status
@@ -131,9 +132,6 @@ def get_current_partner(
     authorization: str | None = Header(default=None),
     sb: Client = Depends(get_supabase_admin),
 ) -> PartnerAccess:
-    """
-    Resolve autenticação de parceiro a partir de partner_users.
-    """
     token = _extract_bearer(authorization)
     user_id = _get_authenticated_user_id(token, sb)
 
@@ -163,6 +161,13 @@ def get_current_partner(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Parceiro sem acesso válido",
         )
+
+    try:
+        sb.table("partner_users").update(
+            {"last_login_at": datetime.utcnow().isoformat()}
+        ).eq("id", data["id"]).execute()
+    except Exception:
+        pass
 
     return PartnerAccess(
         partner_user_id=data["id"],

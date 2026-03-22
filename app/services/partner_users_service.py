@@ -1,4 +1,3 @@
-# app/services/partner_users_service.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -10,6 +9,7 @@ from supabase import Client
 from app.core.config import settings
 from app.security.auth import AuthContext
 from app.schemas.partner_users import (
+    PartnerAccessToggleIn,
     PartnerUserInviteIn,
     PartnerUserResendInviteIn,
     PartnerUserUpdateIn,
@@ -86,18 +86,10 @@ def insert_audit_log(
             }
         ).execute()
     except Exception:
-        # não derruba a operação por falha de auditoria
         pass
 
 
 def _extract_auth_user_from_invite_response(resp: Any) -> tuple[Optional[str], Optional[str]]:
-    """
-    Tenta extrair:
-    - auth user id
-    - email
-    de diferentes formatos de retorno do SDK.
-    """
-    # formatos diretos
     user = _safe_user(resp)
     if user:
         return getattr(user, "id", None), getattr(user, "email", None)
@@ -108,7 +100,6 @@ def _extract_auth_user_from_invite_response(resp: Any) -> tuple[Optional[str], O
         if isinstance(user_dict, dict):
             return user_dict.get("id"), user_dict.get("email")
 
-    # formatos de generate_link
     user_id = _dig(resp, "user", "id") or _dig(resp, "data", "user", "id")
     user_email = _dig(resp, "user", "email") or _dig(resp, "data", "user", "email")
 
@@ -121,14 +112,7 @@ def _send_supabase_invite(
     redirect_to: Optional[str],
     metadata: dict,
 ) -> tuple[Optional[str], Optional[str]]:
-    """
-    Fluxo preferencial:
-    1. invite_user_by_email() -> envia email
-    Fallback:
-    2. generate_link(type='invite') -> gera link de invite
-    """
     try:
-        # forma mais comum
         resp = supa.auth.admin.invite_user_by_email(
             email,
             {
@@ -138,7 +122,6 @@ def _send_supabase_invite(
         )
         return _extract_auth_user_from_invite_response(resp)
     except TypeError:
-        # fallback para outra assinatura
         try:
             resp = supa.auth.admin.invite_user_by_email(
                 email=email,
@@ -154,7 +137,6 @@ def _send_supabase_invite(
         raise HTTPException(400, f"Erro ao enviar convite do parceiro: {str(e)}")
 
     try:
-        # fallback administrativo: gera link do tipo invite
         resp = supa.auth.admin.generate_link(
             {
                 "type": "invite",
@@ -181,6 +163,44 @@ def _send_supabase_invite(
             raise HTTPException(400, f"Erro ao gerar link de convite do parceiro: {str(e)}")
     except Exception as e:
         raise HTTPException(400, f"Erro ao gerar link de convite do parceiro: {str(e)}")
+
+
+def _build_partner_user_payload(
+    org_id: str,
+    parceiro: dict,
+    email: str,
+    nome: Optional[str],
+    telefone: Optional[str],
+    ativo: bool,
+    can_view_client_data: bool,
+    can_view_contracts: bool,
+    can_view_commissions: bool,
+    auth_user_id: Optional[str] = None,
+) -> dict:
+    now_iso = utcnow_iso()
+
+    payload = {
+        "org_id": org_id,
+        "parceiro_id": parceiro["id"],
+        "auth_user_id": auth_user_id,
+        "email": email,
+        "nome": nome or parceiro.get("nome"),
+        "telefone": telefone or parceiro.get("telefone"),
+        "ativo": ativo,
+        "can_view_client_data": can_view_client_data,
+        "can_view_contracts": can_view_contracts,
+        "can_view_commissions": can_view_commissions,
+        "updated_at": now_iso,
+    }
+
+    if ativo:
+        payload["access_enabled_at"] = now_iso
+        payload["disabled_at"] = None
+        payload["disabled_reason"] = None
+    else:
+        payload["disabled_at"] = now_iso
+
+    return payload
 
 
 def list_partner_users(
@@ -244,16 +264,16 @@ def get_partner_user_detail(
     return {"ok": True, "item": data}
 
 
-def invite_partner_user(
+def ensure_partner_user_access(
     supa: Client,
     ctx: AuthContext,
     body: PartnerUserInviteIn,
 ) -> dict:
     if not ctx.is_manager:
-        raise HTTPException(403, "Apenas admin/gestor pode convidar parceiro")
+        raise HTTPException(403, "Apenas admin/gestor pode criar acesso de parceiro")
 
     org_id = ctx.org_id
-    email = normalize_email(body.email)
+    email = normalize_email(str(body.email))
 
     parceiro = get_org_record_or_404(
         supa,
@@ -298,29 +318,35 @@ def invite_partner_user(
         "nome": body.nome or parceiro.get("nome"),
     }
 
-    auth_user_id, auth_email = _send_supabase_invite(
-        supa=supa,
-        email=email,
-        redirect_to=settings.PARTNER_INVITE_REDIRECT_TO,
-        metadata=metadata,
+    auth_user_id: Optional[str] = None
+    auth_email: Optional[str] = None
+    invite_sent_at: Optional[str] = None
+
+    if body.ativo:
+        auth_user_id, auth_email = _send_supabase_invite(
+            supa=supa,
+            email=email,
+            redirect_to=settings.PARTNER_INVITE_REDIRECT_TO,
+            metadata=metadata,
+        )
+        invite_sent_at = utcnow_iso()
+
+    payload = _build_partner_user_payload(
+        org_id=org_id,
+        parceiro=parceiro,
+        email=auth_email or email,
+        nome=body.nome,
+        telefone=body.telefone,
+        ativo=body.ativo,
+        can_view_client_data=body.can_view_client_data,
+        can_view_contracts=body.can_view_contracts,
+        can_view_commissions=body.can_view_commissions,
+        auth_user_id=auth_user_id,
     )
 
-    now_iso = utcnow_iso()
-
-    payload = {
-        "org_id": org_id,
-        "parceiro_id": body.parceiro_id,
-        "auth_user_id": auth_user_id,
-        "email": auth_email or email,
-        "nome": body.nome or parceiro.get("nome"),
-        "telefone": body.telefone or parceiro.get("telefone"),
-        "ativo": True,
-        "can_view_client_data": body.can_view_client_data,
-        "can_view_contracts": body.can_view_contracts,
-        "can_view_commissions": body.can_view_commissions,
-        "invited_at": now_iso,
-        "updated_at": now_iso,
-    }
+    if invite_sent_at:
+        payload["invited_at"] = invite_sent_at
+        payload["invite_sent_at"] = invite_sent_at
 
     if existing_same_partner:
         resp = (
@@ -331,21 +357,20 @@ def invite_partner_user(
             .execute()
         )
         data = _safe_data(resp) or []
-        item = data[0] if data else None
-        action = "partner_user_reinvited_existing_row"
+        item = data[0] if data else existing_same_partner
+        action = "partner_user_upserted_existing"
     else:
-        payload["created_at"] = now_iso
+        payload["created_at"] = utcnow_iso()
         resp = supa.table("partner_users").insert(payload, returning="representation").execute()
         data = _safe_data(resp) or []
         item = data[0] if data else None
-        action = "partner_user_invited"
+        action = "partner_user_created"
 
     if not item:
         raise HTTPException(500, "Falha ao salvar acesso do parceiro")
 
-    # opcional: atualizar email/telefone do cadastro-base do parceiro
     partner_update_payload = {
-        "updated_at": now_iso,
+        "updated_at": utcnow_iso(),
     }
     if body.telefone:
         partner_update_payload["telefone"] = body.telefone
@@ -375,7 +400,7 @@ def invite_partner_user(
         diff={
             "parceiro_id": body.parceiro_id,
             "email": email,
-            "auth_user_id": auth_user_id,
+            "ativo": body.ativo,
             "can_view_client_data": body.can_view_client_data,
             "can_view_contracts": body.can_view_contracts,
             "can_view_commissions": body.can_view_commissions,
@@ -383,6 +408,14 @@ def invite_partner_user(
     )
 
     return {"ok": True, "item": item}
+
+
+def invite_partner_user(
+    supa: Client,
+    ctx: AuthContext,
+    body: PartnerUserInviteIn,
+) -> dict:
+    return ensure_partner_user_access(supa=supa, ctx=ctx, body=body)
 
 
 def resend_partner_invite(
@@ -431,7 +464,12 @@ def resend_partner_invite(
     now_iso = utcnow_iso()
     update_payload = {
         "invited_at": now_iso,
+        "invite_sent_at": now_iso,
         "updated_at": now_iso,
+        "ativo": True,
+        "access_enabled_at": now_iso,
+        "disabled_at": None,
+        "disabled_reason": None,
     }
     if auth_user_id:
         update_payload["auth_user_id"] = auth_user_id
@@ -457,7 +495,6 @@ def resend_partner_invite(
         action="partner_user_invite_resent",
         diff={
             "email": item["email"],
-            "auth_user_id": auth_user_id,
             "redirect_to": body.redirect_to or settings.PARTNER_INVITE_REDIRECT_TO,
         },
     )
@@ -489,6 +526,14 @@ def update_partner_user(
     payload = body.model_dump(exclude_none=True)
     payload["updated_at"] = utcnow_iso()
 
+    if "ativo" in payload:
+        if payload["ativo"] is True:
+            payload["access_enabled_at"] = utcnow_iso()
+            payload["disabled_at"] = None
+            payload["disabled_reason"] = None
+        else:
+            payload["disabled_at"] = utcnow_iso()
+
     resp = (
         supa.table("partner_users")
         .update(payload)
@@ -513,3 +558,122 @@ def update_partner_user(
     )
 
     return {"ok": True, "item": item}
+
+
+def sync_partner_access_status(
+    supa: Client,
+    ctx: AuthContext,
+    parceiro_id: str,
+    ativo: bool,
+    disabled_reason: Optional[str] = None,
+) -> dict:
+    if not ctx.is_manager:
+        raise HTTPException(403, "Apenas admin/gestor pode alterar status do parceiro")
+
+    parceiro = get_org_record_or_404(
+        supa,
+        "parceiros_corretores",
+        ctx.org_id,
+        parceiro_id,
+        columns="id, nome, ativo",
+    )
+
+    now_iso = utcnow_iso()
+
+    partner_payload = {
+        "ativo": ativo,
+        "updated_at": now_iso,
+    }
+
+    partner_resp = (
+        supa.table("parceiros_corretores")
+        .update(partner_payload)
+        .eq("org_id", ctx.org_id)
+        .eq("id", parceiro_id)
+        .execute()
+    )
+    partner_data = _safe_data(partner_resp) or []
+    partner_item = partner_data[0] if partner_data else parceiro
+
+    access_resp = (
+        supa.table("partner_users")
+        .select("*")
+        .eq("org_id", ctx.org_id)
+        .eq("parceiro_id", parceiro_id)
+        .maybe_single()
+        .execute()
+    )
+    access_item = _safe_data(access_resp)
+
+    updated_access = None
+    if access_item:
+        access_payload = {
+            "ativo": ativo,
+            "updated_at": now_iso,
+        }
+
+        if ativo:
+            access_payload["access_enabled_at"] = now_iso
+            access_payload["disabled_at"] = None
+            access_payload["disabled_reason"] = None
+        else:
+            access_payload["disabled_at"] = now_iso
+            access_payload["disabled_reason"] = disabled_reason
+
+        resp = (
+            supa.table("partner_users")
+            .update(access_payload)
+            .eq("org_id", ctx.org_id)
+            .eq("id", access_item["id"])
+            .execute()
+        )
+        data = _safe_data(resp) or []
+        updated_access = data[0] if data else access_item
+
+    insert_audit_log(
+        supa=supa,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        entity="parceiro",
+        entity_id=parceiro_id,
+        action="parceiro_status_updated",
+        diff={
+            "ativo": ativo,
+            "disabled_reason": disabled_reason,
+        },
+    )
+
+    return {
+        "ok": True,
+        "partner": partner_item,
+        "partner_user": updated_access,
+    }
+
+
+def toggle_partner_user_access(
+    supa: Client,
+    ctx: AuthContext,
+    partner_user_id: str,
+    body: PartnerAccessToggleIn,
+) -> dict:
+    current_resp = (
+        supa.table("partner_users")
+        .select("*")
+        .eq("org_id", ctx.org_id)
+        .eq("id", partner_user_id)
+        .maybe_single()
+        .execute()
+    )
+    current = _safe_data(current_resp)
+    if not current:
+        raise HTTPException(404, "Acesso do parceiro não encontrado")
+
+    return update_partner_user(
+        supa=supa,
+        ctx=ctx,
+        partner_user_id=partner_user_id,
+        body=PartnerUserUpdateIn(
+            ativo=body.ativo,
+            disabled_reason=body.disabled_reason,
+        ),
+    )

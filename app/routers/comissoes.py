@@ -1,26 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from supabase import Client
 
-from app.services.contract_partner_sync_service import (
-    sync_contrato_parceiros_for_contract,
-    sync_contrato_parceiros_for_cota,
-)
-
 from app.deps import get_supabase_admin
 from app.schemas.comissoes import (
-    ComissaoListFilters,
     CotaComissaoConfigUpsertIn,
     GerarLancamentosIn,
     LancamentoStatusUpdateIn,
     ParceiroCreateIn,
+    ParceiroCreateWithAccessIn,
+    ParceiroToggleIn,
     ParceiroUpdateIn,
     RepasseUpdateIn,
 )
+from app.schemas.partner_users import PartnerUserInviteIn
+from app.security.auth import AuthContext
+from app.security.permissions import require_manager
 from app.services.comissao_service import (
     cancel_comissao_for_cota,
     delete_comissao_for_cota,
@@ -35,6 +34,15 @@ from app.services.comissao_service import (
     sync_eventos_contrato,
     upsert_config_for_cota,
 )
+from app.services.contract_partner_sync_service import (
+    sync_contrato_parceiros_for_contract,
+    sync_contrato_parceiros_for_cota,
+)
+from app.services.partner_users_service import (
+    ensure_partner_user_access,
+    sync_partner_access_status,
+)
+
 router = APIRouter(prefix="/comissoes", tags=["comissoes"])
 
 
@@ -44,18 +52,6 @@ def require_org_id(x_org_id: Optional[str]) -> str:
     return x_org_id
 
 
-@router.get("/parceiros")
-def list_parceiros(
-    ativos: Optional[bool] = None,
-    supa: Client = Depends(get_supabase_admin),
-    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
-):
-    org_id = require_org_id(x_org_id)
-    query = supa.table("parceiros_corretores").select("*").eq("org_id", org_id)
-    if ativos is not None:
-        query = query.eq("ativo", ativos)
-    resp = query.order("nome").execute()
-    return {"ok": True, "items": getattr(resp, "data", None) or []}
 
 
 @router.get("/cotas/{cota_id}/delete-check")
@@ -89,19 +85,71 @@ def cancelar_comissao_cota(
     return cancel_comissao_for_cota(supa, org_id, cota_id)
 
 
+@router.get("/parceiros")
+def list_parceiros(
+    ativos: Optional[bool] = None,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    query = supa.table("parceiros_corretores").select("*").eq("org_id", ctx.org_id)
+    if ativos is not None:
+        query = query.eq("ativo", ativos)
+    resp = query.order("nome").execute()
+    return {"ok": True, "items": getattr(resp, "data", None) or []}
+
+
 @router.post("/parceiros")
 def create_parceiro(
-    body: ParceiroCreateIn,
+    body: ParceiroCreateWithAccessIn,
     supa: Client = Depends(get_supabase_admin),
-    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+    ctx: AuthContext = Depends(require_manager),
 ):
-    org_id = require_org_id(x_org_id)
-    payload = {**body.model_dump(), "org_id": org_id}
+    now_iso = datetime.utcnow().isoformat()
+
+    payload = {
+        "org_id": ctx.org_id,
+        "nome": body.nome,
+        "cpf_cnpj": body.cpf_cnpj,
+        "telefone": body.telefone,
+        "email": body.email,
+        "pix_tipo": body.pix_tipo,
+        "pix_chave": body.pix_chave,
+        "ativo": body.ativo,
+        "observacoes": body.observacoes,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
     resp = supa.table("parceiros_corretores").insert(payload, returning="representation").execute()
     data = getattr(resp, "data", None) or []
     if not data:
         raise HTTPException(500, "Erro ao criar parceiro")
-    return {"ok": True, "item": data[0]}
+
+    parceiro = data[0]
+    partner_user = None
+
+    if body.acesso and body.acesso.criar_acesso:
+        access_result = ensure_partner_user_access(
+            supa=supa,
+            ctx=ctx,
+            body=PartnerUserInviteIn(
+                parceiro_id=parceiro["id"],
+                email=body.acesso.email_acesso,
+                nome=body.acesso.nome_acesso or body.nome,
+                telefone=body.acesso.telefone_acesso or body.telefone,
+                ativo=body.acesso.ativo,
+                can_view_client_data=body.acesso.can_view_client_data,
+                can_view_contracts=body.acesso.can_view_contracts,
+                can_view_commissions=body.acesso.can_view_commissions,
+            ),
+        )
+        partner_user = access_result["item"]
+
+    return {
+        "ok": True,
+        "item": parceiro,
+        "partner_user": partner_user,
+    }
 
 
 @router.patch("/parceiros/{parceiro_id}")
@@ -109,32 +157,49 @@ def update_parceiro(
     parceiro_id: str,
     body: ParceiroUpdateIn,
     supa: Client = Depends(get_supabase_admin),
-    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+    ctx: AuthContext = Depends(require_manager),
 ):
-    org_id = require_org_id(x_org_id)
-    get_org_record_or_404(supa, "parceiros_corretores", org_id, parceiro_id)
+    get_org_record_or_404(supa, "parceiros_corretores", ctx.org_id, parceiro_id)
+
     payload = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     payload["updated_at"] = datetime.utcnow().isoformat()
+
     resp = (
         supa.table("parceiros_corretores")
         .update(payload)
-        .eq("org_id", org_id)
+        .eq("org_id", ctx.org_id)
         .eq("id", parceiro_id)
         .execute()
     )
     data = getattr(resp, "data", None) or []
+
     return {"ok": True, "item": data[0] if data else None}
+
+
+@router.patch("/parceiros/{parceiro_id}/toggle")
+def toggle_parceiro(
+    parceiro_id: str,
+    body: ParceiroToggleIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    return sync_partner_access_status(
+        supa=supa,
+        ctx=ctx,
+        parceiro_id=parceiro_id,
+        ativo=body.ativo,
+        disabled_reason=body.disabled_reason,
+    )
 
 
 @router.get("/parceiros/{parceiro_id}/extrato")
 def parceiro_extrato(
     parceiro_id: str,
     supa: Client = Depends(get_supabase_admin),
-    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+    ctx: AuthContext = Depends(require_manager),
 ):
-    org_id = require_org_id(x_org_id)
-    parceiro = get_org_record_or_404(supa, "parceiros_corretores", org_id, parceiro_id)
-    lancamentos = fetch_lancamentos(supa, org_id, parceiro_id=parceiro_id)
+    parceiro = get_org_record_or_404(supa, "parceiros_corretores", ctx.org_id, parceiro_id)
+    lancamentos = fetch_lancamentos(supa, ctx.org_id, parceiro_id=parceiro_id)
     return {
         "ok": True,
         "parceiro": parceiro,

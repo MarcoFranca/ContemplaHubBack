@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 ComissaoModo = Literal["avista", "parcelado"]
@@ -42,6 +42,33 @@ class ParceiroUpdateIn(BaseModel):
     pix_chave: Optional[str] = None
     ativo: Optional[bool] = None
     observacoes: Optional[str] = None
+
+
+class ParceiroAccessIn(BaseModel):
+    criar_acesso: bool = False
+    email_acesso: Optional[EmailStr] = None
+    nome_acesso: Optional[str] = Field(default=None, min_length=2)
+    telefone_acesso: Optional[str] = None
+    ativo: bool = True
+
+    can_view_client_data: bool = False
+    can_view_contracts: bool = True
+    can_view_commissions: bool = True
+
+    @model_validator(mode="after")
+    def validate_email_if_create_access(self) -> "ParceiroAccessIn":
+        if self.criar_acesso and not self.email_acesso:
+            raise ValueError("email_acesso é obrigatório quando criar_acesso=true")
+        return self
+
+
+class ParceiroCreateWithAccessIn(ParceiroCreateIn):
+    acesso: Optional[ParceiroAccessIn] = None
+
+
+class ParceiroToggleIn(BaseModel):
+    ativo: bool
+    disabled_reason: Optional[str] = None
 
 
 class ComissaoRegraIn(BaseModel):

@@ -1,4 +1,3 @@
-# app/routers/partner_users.py
 from __future__ import annotations
 
 from typing import Optional
@@ -8,6 +7,7 @@ from supabase import Client
 
 from app.deps import get_supabase_admin
 from app.schemas.partner_users import (
+    PartnerAccessToggleIn,
     PartnerUserInviteIn,
     PartnerUserResendInviteIn,
     PartnerUserUpdateIn,
@@ -19,6 +19,7 @@ from app.services.partner_users_service import (
     invite_partner_user,
     list_partner_users,
     resend_partner_invite,
+    toggle_partner_user_access,
     update_partner_user,
 )
 
@@ -83,6 +84,21 @@ def patch_partner_access(
     ctx: AuthContext = Depends(require_manager),
 ):
     return update_partner_user(
+        supa=supa,
+        ctx=ctx,
+        partner_user_id=partner_user_id,
+        body=body,
+    )
+
+
+@router.patch("/{partner_user_id}/toggle")
+def toggle_partner_access(
+    partner_user_id: str,
+    body: PartnerAccessToggleIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    return toggle_partner_user_access(
         supa=supa,
         ctx=ctx,
         partner_user_id=partner_user_id,
