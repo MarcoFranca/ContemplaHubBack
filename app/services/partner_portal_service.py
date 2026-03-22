@@ -1,4 +1,3 @@
-# app/services/partner_portal_service.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -418,113 +417,95 @@ def _contract_sort_value(item: dict, sort_by: str):
     return str(contrato.get("created_at") or "")
 
 
-def list_partner_commissions(
+def list_partner_contracts(
     supa: Client,
     *,
     ctx: AuthContext,
     status: Optional[str] = None,
-    repasse_status: Optional[str] = None,
     q: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
-    sort_by: str = "competencia_prevista",
+    sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> dict:
     ensure_partner_ctx(ctx)
 
-    if not ctx.can_view_commissions:
-        raise HTTPException(403, "Parceiro sem permissão para visualizar comissões")
+    if not ctx.can_view_contracts:
+        raise HTTPException(403, "Parceiro sem permissão para visualizar contratos")
 
-    query = (
-        supa.table("comissao_lancamentos")
-        .select(
-            """
-            id,
-            org_id,
-            contrato_id,
-            cota_id,
-            parceiro_id,
-            beneficiario_tipo,
-            tipo_evento,
-            ordem,
-            competencia_prevista,
-            competencia_real,
-            percentual_base,
-            valor_base,
-            valor_bruto,
-            imposto_pct,
-            valor_imposto,
-            valor_liquido,
-            status,
-            pago_em,
-            repasse_status,
-            repasse_previsto_em,
-            repasse_pago_em,
-            repasse_observacoes,
-            observacoes,
-            created_at,
-            updated_at
-            """
-        )
-        .eq("org_id", ctx.org_id)
-        .eq("parceiro_id", ctx.parceiro_id)
-        .eq("beneficiario_tipo", "parceiro")
+    links = _fetch_partner_contract_links(
+        supa,
+        org_id=ctx.org_id,
+        parceiro_id=ctx.parceiro_id,
+    )
+    contract_ids = [row["contrato_id"] for row in links if row.get("contrato_id")]
+
+    contracts = _fetch_contracts_by_ids(
+        supa,
+        org_id=ctx.org_id,
+        contract_ids=contract_ids,
+        status=status,
+    )
+    links_map = {row["contrato_id"]: row for row in links}
+
+    cota_ids = [row["cota_id"] for row in contracts if row.get("cota_id")]
+    cotas = _fetch_cotas_by_ids(supa, org_id=ctx.org_id, cota_ids=cota_ids)
+    cotas_map = _to_map(cotas, "id")
+
+    lead_ids = [row["lead_id"] for row in cotas if row.get("lead_id")]
+    leads = _fetch_leads_by_ids(supa, org_id=ctx.org_id, lead_ids=lead_ids)
+    leads_map = _to_map(leads, "id")
+
+    commission_summary = _fetch_partner_commission_summary_by_contract(
+        supa,
+        org_id=ctx.org_id,
+        parceiro_id=ctx.parceiro_id,
+        contract_ids=[row["id"] for row in contracts],
     )
 
-    if status:
-        query = query.eq("status", status)
-
-    if repasse_status:
-        query = query.eq("repasse_status", repasse_status)
-
-    resp = query.execute()
-    items = _safe_data(resp) or []
-
-    # Busca local para evitar querys frágeis no PostgREST
+    items: List[dict] = []
     needle = (q or "").strip().lower()
-    if needle:
-        filtered: List[dict] = []
-        for row in items:
+
+    for contrato in contracts:
+        cota = cotas_map.get(contrato.get("cota_id"))
+        lead = leads_map.get(cota.get("lead_id")) if cota else None
+        cliente = _serialize_cliente_for_partner(lead, ctx.can_view_client_data)
+
+        item = {
+            "link": links_map.get(contrato["id"]),
+            "contrato": contrato,
+            "cota": cota,
+            "cliente": cliente,
+            "commission_summary": commission_summary.get(
+                contrato["id"],
+                {
+                    "total_lancamentos": 0,
+                    "valor_bruto_total": 0.0,
+                    "valor_liquido_total": 0.0,
+                    "pendentes": 0,
+                    "pagos": 0,
+                    "repasses_pendentes": 0,
+                    "repasse_pago": 0,
+                },
+            ),
+        }
+
+        if needle:
             haystack = " ".join(
                 [
-                    str(row.get("contrato_id") or ""),
-                    str(row.get("cota_id") or ""),
-                    str(row.get("tipo_evento") or ""),
-                    str(row.get("status") or ""),
-                    str(row.get("repasse_status") or ""),
-                    str(row.get("observacoes") or ""),
-                    str(row.get("repasse_observacoes") or ""),
+                    str(contrato.get("numero") or ""),
+                    str(cota.get("numero_cota") if cota else ""),
+                    str(cota.get("grupo_codigo") if cota else ""),
+                    str((lead or {}).get("nome") or ""),
                 ]
             ).lower()
+            if needle not in haystack:
+                continue
 
-            if needle in haystack:
-                filtered.append(row)
+        items.append(item)
 
-        items = filtered
-
-    items = _sort_items(items, sort_by, sort_order, _commission_sort_value)
+    items = _sort_items(items, sort_by, sort_order, _contract_sort_value)
     paged_items, meta = _paginate(items, page, page_size)
-
-    total_bruto = 0.0
-    total_liquido = 0.0
-    pagos = 0
-    pendentes = 0
-    repasse_pendente = 0
-    repasse_pago = 0
-
-    for row in items:
-        total_bruto += float(row.get("valor_bruto") or 0)
-        total_liquido += float(row.get("valor_liquido") or 0)
-
-        if row.get("status") == "pago":
-            pagos += 1
-        else:
-            pendentes += 1
-
-        if row.get("repasse_status") == "pendente":
-            repasse_pendente += 1
-        elif row.get("repasse_status") == "pago":
-            repasse_pago += 1
 
     insert_audit_log(
         supa,
@@ -532,10 +513,9 @@ def list_partner_commissions(
         actor_id=ctx.user_id,
         entity="partner_portal",
         entity_id=ctx.partner_user_id,
-        action="partner_commissions_list_viewed",
+        action="partner_contracts_list_viewed",
         diff={
             "status": status,
-            "repasse_status": repasse_status,
             "q": q,
             "page": page,
             "page_size": page_size,
@@ -550,15 +530,6 @@ def list_partner_commissions(
         "ok": True,
         "items": paged_items,
         "meta": meta,
-        "resumo": {
-            "total_lancamentos": len(items),
-            "valor_bruto_total": total_bruto,
-            "valor_liquido_total": total_liquido,
-            "pagos": pagos,
-            "pendentes": pendentes,
-            "repasse_pendente": repasse_pendente,
-            "repasse_pago": repasse_pago,
-        },
     }
 
 
@@ -707,11 +678,9 @@ def list_partner_commissions(
     ctx: AuthContext,
     status: Optional[str] = None,
     repasse_status: Optional[str] = None,
-    contrato_id: Optional[str] = None,
-    competencia_de: Optional[str] = None,
-    competencia_ate: Optional[str] = None,
+    q: Optional[str] = None,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 20,
     sort_by: str = "competencia_prevista",
     sort_order: str = "desc",
 ) -> dict:
@@ -753,21 +722,38 @@ def list_partner_commissions(
         )
         .eq("org_id", ctx.org_id)
         .eq("parceiro_id", ctx.parceiro_id)
+        .eq("beneficiario_tipo", "parceiro")
     )
 
     if status:
         query = query.eq("status", status)
+
     if repasse_status:
         query = query.eq("repasse_status", repasse_status)
-    if contrato_id:
-        query = query.eq("contrato_id", contrato_id)
-    if competencia_de:
-        query = query.gte("competencia_prevista", competencia_de)
-    if competencia_ate:
-        query = query.lte("competencia_prevista", competencia_ate)
 
     resp = query.execute()
     items = _safe_data(resp) or []
+
+    needle = (q or "").strip().lower()
+    if needle:
+        filtered: List[dict] = []
+        for row in items:
+            haystack = " ".join(
+                [
+                    str(row.get("contrato_id") or ""),
+                    str(row.get("cota_id") or ""),
+                    str(row.get("tipo_evento") or ""),
+                    str(row.get("status") or ""),
+                    str(row.get("repasse_status") or ""),
+                    str(row.get("observacoes") or ""),
+                    str(row.get("repasse_observacoes") or ""),
+                ]
+            ).lower()
+
+            if needle in haystack:
+                filtered.append(row)
+
+        items = filtered
 
     items = _sort_items(items, sort_by, sort_order, _commission_sort_value)
     paged_items, meta = _paginate(items, page, page_size)
@@ -776,14 +762,22 @@ def list_partner_commissions(
     total_liquido = 0.0
     pagos = 0
     pendentes = 0
+    repasse_pendente = 0
+    repasse_pago = 0
 
     for row in items:
         total_bruto += float(row.get("valor_bruto") or 0)
         total_liquido += float(row.get("valor_liquido") or 0)
+
         if row.get("status") == "pago":
             pagos += 1
         else:
             pendentes += 1
+
+        if row.get("repasse_status") == "pendente":
+            repasse_pendente += 1
+        elif row.get("repasse_status") == "pago":
+            repasse_pago += 1
 
     insert_audit_log(
         supa,
@@ -795,9 +789,7 @@ def list_partner_commissions(
         diff={
             "status": status,
             "repasse_status": repasse_status,
-            "contrato_id": contrato_id,
-            "competencia_de": competencia_de,
-            "competencia_ate": competencia_ate,
+            "q": q,
             "page": page,
             "page_size": page_size,
             "sort_by": sort_by,
@@ -817,6 +809,8 @@ def list_partner_commissions(
             "valor_liquido_total": total_liquido,
             "pagos": pagos,
             "pendentes": pendentes,
+            "repasse_pendente": repasse_pendente,
+            "repasse_pago": repasse_pago,
         },
     }
 
