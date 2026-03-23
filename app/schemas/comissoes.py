@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Literal, Optional, Any
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
@@ -20,6 +20,23 @@ BeneficiarioTipo = Literal["empresa", "parceiro"]
 ComissaoStatus = Literal["previsto", "disponivel", "pago", "cancelado"]
 RepasseStatus = Literal["nao_aplicavel", "pendente", "pago", "cancelado"]
 PixTipo = Literal["cpf", "cnpj", "email", "telefone", "aleatoria"]
+
+
+
+
+class CompetenciasContratoOut(BaseModel):
+    ok: bool
+    contrato: dict[str, Any]
+    items: list[dict[str, Any]]
+    total: int
+
+
+class ResumoFinanceiroContratoOut(BaseModel):
+    ok: bool
+    contrato: dict[str, Any]
+    totais: dict[str, Any]
+    quantidades: dict[str, Any]
+    items: list[dict[str, Any]]
 
 
 class ParceiroCreateIn(BaseModel):
@@ -42,6 +59,18 @@ class ParceiroUpdateIn(BaseModel):
     pix_chave: Optional[str] = None
     ativo: Optional[bool] = None
     observacoes: Optional[str] = None
+
+
+class ProcessarPagamentoComissaoOut(BaseModel):
+    ok: bool
+    competencia: dict
+    processamento: dict
+
+
+class ReprocessarComissoesContratoOut(BaseModel):
+    ok: bool
+    contrato: dict
+    competencias_processadas: list[dict]
 
 
 class ParceiroAccessIn(BaseModel):
@@ -151,3 +180,20 @@ class ComissaoListFilters(BaseModel):
     repasse_status: Optional[RepasseStatus] = None
     competencia_de: Optional[date] = None
     competencia_ate: Optional[date] = None
+
+
+class MarcarRepassePagoIn(BaseModel):
+    pago_em: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
+class MarcarRepassePagoOut(BaseModel):
+    ok: bool
+    item: dict[str, Any]
+
+
+class TimelineContratoOut(BaseModel):
+    ok: bool
+    contrato: dict[str, Any]
+    items: list[dict[str, Any]]
+    total: int

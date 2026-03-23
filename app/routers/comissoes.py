@@ -12,11 +12,20 @@ from app.schemas.comissoes import (
     CotaComissaoConfigUpsertIn,
     GerarLancamentosIn,
     LancamentoStatusUpdateIn,
-    ParceiroCreateIn,
     ParceiroCreateWithAccessIn,
     ParceiroToggleIn,
     ParceiroUpdateIn,
     RepasseUpdateIn,
+)
+
+from app.schemas.comissoes import MarcarRepassePagoIn
+from app.services.comissao_repasse_service import marcar_repasse_pago
+from app.services.comissao_competencia_service import timeline_contrato
+from app.services.comissao_competencia_service import (
+    listar_competencias_contrato,
+    processar_pagamento_para_comissao,
+    reprocessar_comissoes_contrato,
+    resumo_financeiro_contrato,
 )
 from app.schemas.partner_users import PartnerUserInviteIn
 from app.security.auth import AuthContext
@@ -55,6 +64,36 @@ def require_org_id(x_org_id: Optional[str]) -> str:
     return x_org_id
 
 
+@router.post("/pagamentos/{pagamento_id}/processar")
+def processar_pagamento_comissao(
+    pagamento_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return processar_pagamento_para_comissao(
+        supa,
+        org_id=org_id,
+        pagamento_id=pagamento_id,
+        actor_id=ctx.user_id,
+    )
+
+
+@router.post("/contratos/{contrato_id}/reprocessar-competencias")
+def reprocessar_competencias_contrato(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return reprocessar_comissoes_contrato(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        actor_id=ctx.user_id,
+    )
 
 
 @router.get("/cotas/{cota_id}/delete-check")
@@ -414,3 +453,66 @@ def atualizar_repasse(
     )
     data = getattr(resp, "data", None) or []
     return {"ok": True, "previous": lanc, "item": data[0] if data else None}
+
+
+@router.get("/contratos/{contrato_id}/competencias")
+def get_competencias_contrato(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return listar_competencias_contrato(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+    )
+
+
+@router.get("/contratos/{contrato_id}/resumo-financeiro")
+def get_resumo_financeiro_contrato(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return resumo_financeiro_contrato(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+    )
+
+@router.post("/lancamentos/{lancamento_id}/marcar-repasse-pago")
+def post_marcar_repasse_pago(
+    lancamento_id: str,
+    body: MarcarRepassePagoIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return marcar_repasse_pago(
+        supa,
+        org_id=org_id,
+        lancamento_id=lancamento_id,
+        actor_id=ctx.user_id,
+        pago_em=body.pago_em,
+        observacoes=body.observacoes,
+    )
+
+
+@router.get("/contratos/{contrato_id}/timeline")
+def get_timeline_contrato(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return timeline_contrato(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+    )
