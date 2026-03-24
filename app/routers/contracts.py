@@ -13,10 +13,35 @@ from app.services.kanban_service import move_lead_stage
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 
+CONTRACT_STATUS_VALUES = (
+    "pendente_assinatura",
+    "pendente_pagamento",
+    "alocado",
+    "contemplado",
+    "cancelado",
+)
 
-# ======================================================
-# INPUTS
-# ======================================================
+COTA_SITUACAO_VALUES = (
+    "ativa",
+    "contemplada",
+    "cancelada",
+)
+
+TRANSICOES_VALIDAS = {
+    "pendente_assinatura": ["pendente_pagamento", "cancelado"],
+    "pendente_pagamento": ["alocado", "cancelado"],
+    "alocado": ["contemplado", "cancelado"],
+    "contemplado": ["cancelado"],
+}
+
+CORRECOES_VALIDAS = {
+    "pendente_pagamento": ["pendente_assinatura"],
+    "alocado": ["pendente_pagamento", "pendente_assinatura"],
+    "contemplado": ["alocado", "pendente_pagamento"],
+    "cancelado": ["pendente_pagamento", "pendente_assinatura", "alocado"],
+}
+
+
 class LanceFixoOpcaoIn(BaseModel):
     percentual: float = Field(gt=0, le=100)
     ordem: int = Field(ge=1)
@@ -24,41 +49,55 @@ class LanceFixoOpcaoIn(BaseModel):
     observacoes: Optional[str] = None
 
 
-class ContractFromLeadIn(BaseModel):
-    # Identificação
-    lead_id: str
+class ContractBaseIn(BaseModel):
     administradora_id: str
-
-    # Cota
     numero_cota: str
     grupo_codigo: str
     produto: Literal["imobiliario", "auto"] = "imobiliario"
-
-    # Valores
     valor_carta: str
     prazo: Optional[int] = None
     forma_pagamento: Optional[str] = None
     indice_correcao: Optional[str] = None
     valor_parcela: Optional[str] = None
-
-    # Flags
     parcela_reduzida: bool = False
     fgts_permitido: bool = False
     embutido_permitido: bool = False
     autorizacao_gestao: bool = False
-
-    # Datas / contrato
-    data_adesao: Optional[str] = None   # yyyy-mm-dd
+    data_adesao: Optional[str] = None
     data_assinatura: Optional[str] = None
     numero_contrato: Optional[str] = None
-
-    # Novas opções de lance fixo
     opcoes_lance_fixo: List[LanceFixoOpcaoIn] = []
 
 
-# ======================================================
-# HELPERS
-# ======================================================
+class ContractFromLeadIn(ContractBaseIn):
+    lead_id: str
+
+
+class RegisterExistingContractIn(ContractBaseIn):
+    lead_id: str
+    contract_status: Literal[
+        "pendente_assinatura",
+        "pendente_pagamento",
+        "alocado",
+        "contemplado",
+        "cancelado",
+    ] = "alocado"
+    cota_situacao: Literal["ativa", "contemplada", "cancelada"] = "ativa"
+    parceiro_id: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
+class ContractStatusUpdateIn(BaseModel):
+    status: Literal[
+        "pendente_assinatura",
+        "pendente_pagamento",
+        "alocado",
+        "contemplado",
+        "cancelado",
+    ]
+    observacao: Optional[str] = None
+
+
 def _parse_money(raw: Optional[str]) -> Optional[float]:
     if not raw:
         return None
@@ -94,53 +133,46 @@ def _validate_opcoes_lance_fixo(opcoes: List[LanceFixoOpcaoIn]) -> None:
         percentuais.add(pct_key)
 
 
-# ======================================================
-# POST /contracts/from-lead
-# Cria COTA + CONTRATO (status pendente_assinatura)
-# garante entrada na carteira
-# salva opções de lance fixo, se houver
-# ======================================================
-@router.post("/from-lead")
-def create_contract_from_lead(
-    body: ContractFromLeadIn,
-    supa: Client = Depends(get_supabase_admin),
-    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
-) -> Dict[str, Any]:
-
+def _ensure_org_header(x_org_id: Optional[str]) -> str:
     if not x_org_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="X-Org-Id header é obrigatório",
         )
+    return x_org_id
 
-    # 1) Validar lead pertence à org
+
+def _get_lead_or_404(supa: Client, *, lead_id: str) -> Dict[str, Any]:
     lead_resp = (
         supa.table("leads")
         .select("id, org_id")
-        .eq("id", body.lead_id)
+        .eq("id", lead_id)
         .single()
         .execute()
     )
     lead = getattr(lead_resp, "data", None)
     if not lead:
         raise HTTPException(404, "Lead não encontrado")
-    if lead["org_id"] != x_org_id:
-        raise HTTPException(403, "Lead pertence a outra organização")
+    return lead
 
-    # 2) Normalizar valores
+
+def _ensure_lead_in_org(supa: Client, *, lead_id: str, org_id: str) -> Dict[str, Any]:
+    lead = _get_lead_or_404(supa, lead_id=lead_id)
+    if lead["org_id"] != org_id:
+        raise HTTPException(403, "Lead pertence a outra organização")
+    return lead
+
+
+def _build_cota_payload(body: ContractBaseIn, *, org_id: str, lead_id: str, situacao: str) -> Dict[str, Any]:
     valor_carta = _parse_money(body.valor_carta)
     if valor_carta is None:
         raise HTTPException(400, "Valor da carta inválido")
 
     valor_parcela = _parse_money(body.valor_parcela)
 
-    # 3) Validar opções de lance fixo
-    _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
-
-    # 4) Criar COTA
-    cota_payload = {
-        "org_id": x_org_id,
-        "lead_id": body.lead_id,
+    return {
+        "org_id": org_id,
+        "lead_id": lead_id,
         "administradora_id": body.administradora_id,
         "numero_cota": body.numero_cota,
         "grupo_codigo": body.grupo_codigo,
@@ -155,109 +187,282 @@ def create_contract_from_lead(
         "fgts_permitido": body.fgts_permitido,
         "autorizacao_gestao": body.autorizacao_gestao,
         "data_adesao": body.data_adesao,
-        "status": "ativa",
+        # compat com banco real/supabase e schema Drizzle
+        "situacao": situacao,
     }
 
+
+def _create_cota(supa: Client, *, payload: Dict[str, Any]) -> Dict[str, Any]:
     cota_resp = (
         supa.table("cotas")
-        .insert(cota_payload, returning="representation")
+        .insert(payload, returning="representation")
         .execute()
     )
     if not getattr(cota_resp, "data", None):
         raise HTTPException(500, "Erro ao criar cota")
+    return cota_resp.data[0]
 
-    cota = cota_resp.data[0]
-    cota_id = cota["id"]
 
-    # 5) Salvar opções de lance fixo, se houver
-    if body.opcoes_lance_fixo:
-        fixo_rows = [
-            {
-                "org_id": x_org_id,
-                "cota_id": cota_id,
-                "percentual": op.percentual,
-                "ordem": op.ordem,
-                "ativo": op.ativo,
-                "observacoes": op.observacoes,
-            }
-            for op in body.opcoes_lance_fixo
-        ]
+def _save_opcoes_lance_fixo(
+    supa: Client,
+    *,
+    org_id: str,
+    cota_id: str,
+    opcoes: List[LanceFixoOpcaoIn],
+) -> None:
+    if not opcoes:
+        return
 
-        fixo_resp = (
-            supa.table("cota_lance_fixo_opcoes")
-            .insert(fixo_rows, returning="representation")
-            .execute()
-        )
+    fixo_rows = [
+        {
+            "org_id": org_id,
+            "cota_id": cota_id,
+            "percentual": op.percentual,
+            "ordem": op.ordem,
+            "ativo": op.ativo,
+            "observacoes": op.observacoes,
+        }
+        for op in opcoes
+    ]
 
-        if not getattr(fixo_resp, "data", None):
-            raise HTTPException(500, "Erro ao salvar opções de lance fixo")
+    fixo_resp = (
+        supa.table("cota_lance_fixo_opcoes")
+        .insert(fixo_rows, returning="representation")
+        .execute()
+    )
 
-    # 6) Criar CONTRATO
-    contrato_payload = {
-        "org_id": x_org_id,
+    if not getattr(fixo_resp, "data", None):
+        raise HTTPException(500, "Erro ao salvar opções de lance fixo")
+
+
+def _build_contract_payload(
+    *,
+    org_id: str,
+    cota_id: str,
+    numero: Optional[str],
+    data_assinatura: Optional[str],
+    status_value: str,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "org_id": org_id,
         "deal_id": None,
         "cota_id": cota_id,
-        "numero": body.numero_contrato,
-        "data_assinatura": body.data_assinatura,
-        "status": "pendente_assinatura",
+        "numero": numero,
+        "data_assinatura": data_assinatura,
+        "status": status_value,
     }
 
+    if status_value == "pendente_pagamento":
+        payload["data_pagamento"] = None
+    elif status_value == "alocado":
+        payload["data_alocacao"] = body_date_or_none(data_assinatura)
+    elif status_value == "contemplado":
+        payload["data_alocacao"] = body_date_or_none(data_assinatura)
+        payload["data_contemplacao"] = body_date_or_none(data_assinatura)
+
+    return payload
+
+
+def body_date_or_none(raw: Optional[str]) -> Optional[str]:
+    return raw or None
+
+
+def _create_contract(supa: Client, *, payload: Dict[str, Any]) -> Dict[str, Any]:
     contrato_resp = (
         supa.table("contratos")
-        .insert(contrato_payload, returning="representation")
+        .insert(payload, returning="representation")
         .execute()
     )
     if not getattr(contrato_resp, "data", None):
         raise HTTPException(500, "Erro ao criar contrato")
+    return contrato_resp.data[0]
 
-    contrato_id = contrato_resp.data[0]["id"]
 
-    # 7) Garantir entrada na carteira
+def _maybe_link_parceiro_to_contract(
+    supa: Client,
+    *,
+    org_id: str,
+    contract_id: str,
+    parceiro_id: Optional[str],
+) -> int:
+    if not parceiro_id:
+        return 0
+
+    payload = {
+        "org_id": org_id,
+        "contrato_id": contract_id,
+        "parceiro_id": parceiro_id,
+        "origem": "manual_contract_register",
+        "principal": True,
+        "observacoes": "Vínculo criado no cadastro inicial do contrato existente",
+    }
+
+    resp = (
+        supa.table("contrato_parceiros")
+        .insert(payload, returning="representation")
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    return len(rows)
+
+
+def _finalize_contract_creation(
+    supa: Client,
+    *,
+    org_id: str,
+    lead_id: str,
+    contrato_id: str,
+    opcoes_lance_fixo_count: int,
+    partner_links_created: int = 0,
+    sync_partner_links: bool = True,
+    carteira_observacoes: str,
+) -> Dict[str, Any]:
     carteira_result = ensure_carteira_cliente(
         supa=supa,
-        org_id=x_org_id,
-        lead_id=body.lead_id,
+        org_id=org_id,
+        lead_id=lead_id,
         origem_entrada="contrato",
-        observacoes="Entrada automática na carteira ao gerar contrato",
+        observacoes=carteira_observacoes,
     )
 
-    # NOVO: sincroniza parceiro(s) do contrato a partir da cota
-    partner_sync = sync_contrato_parceiros_for_contract(
-        supa,
-        org_id=x_org_id,
-        contract_id=contrato_id,
-        actor_id=None,
-    )
+    partner_sync = None
+    if sync_partner_links:
+        partner_sync = sync_contrato_parceiros_for_contract(
+            supa,
+            org_id=org_id,
+            contract_id=contrato_id,
+            actor_id=None,
+        )
 
     return {
         "ok": True,
-        "cota_id": cota_id,
         "contrato_id": contrato_id,
-        "status": contrato_resp.data[0]["status"],
         "carteira": carteira_result["carteira_cliente"],
         "carteira_created": carteira_result["created"],
-        "opcoes_lance_fixo_count": len(body.opcoes_lance_fixo),
+        "opcoes_lance_fixo_count": opcoes_lance_fixo_count,
+        "partner_links_created": partner_links_created,
+        "partner_sync": partner_sync,
     }
 
 
-# ======================================================
-# MODELO PARA UPDATE DE STATUS
-# ======================================================
-class ContractStatusUpdateIn(BaseModel):
-    status: Literal[
-        "pendente_assinatura",
-        "pendente_pagamento",
-        "alocado",
-        "contemplado",
-        "cancelado",
-    ]
-    observacao: Optional[str] = None
+@router.post("/from-lead")
+def create_contract_from_lead(
+    body: ContractFromLeadIn,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+) -> Dict[str, Any]:
+    org_id = _ensure_org_header(x_org_id)
+    _ensure_lead_in_org(supa, lead_id=body.lead_id, org_id=org_id)
+    _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
+
+    cota_payload = _build_cota_payload(
+        body,
+        org_id=org_id,
+        lead_id=body.lead_id,
+        situacao="ativa",
+    )
+    cota = _create_cota(supa, payload=cota_payload)
+    cota_id = cota["id"]
+
+    _save_opcoes_lance_fixo(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        opcoes=body.opcoes_lance_fixo,
+    )
+
+    contrato = _create_contract(
+        supa,
+        payload=_build_contract_payload(
+            org_id=org_id,
+            cota_id=cota_id,
+            numero=body.numero_contrato,
+            data_assinatura=body.data_assinatura,
+            status_value="pendente_assinatura",
+        ),
+    )
+
+    result = _finalize_contract_creation(
+        supa,
+        org_id=org_id,
+        lead_id=body.lead_id,
+        contrato_id=contrato["id"],
+        opcoes_lance_fixo_count=len(body.opcoes_lance_fixo),
+        sync_partner_links=True,
+        carteira_observacoes="Entrada automática na carteira ao gerar contrato",
+    )
+
+    return {
+        **result,
+        "cota_id": cota_id,
+        "status": contrato["status"],
+        "cota_situacao": cota.get("situacao"),
+    }
 
 
-# ======================================================
-# PATCH /contracts/{id}/status
-# Atualiza status + aplica regra automática no lead
-# ======================================================
+@router.post("/register-existing")
+def register_existing_contract(
+    body: RegisterExistingContractIn,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+) -> Dict[str, Any]:
+    org_id = _ensure_org_header(x_org_id)
+    _ensure_lead_in_org(supa, lead_id=body.lead_id, org_id=org_id)
+    _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
+
+    cota_payload = _build_cota_payload(
+        body,
+        org_id=org_id,
+        lead_id=body.lead_id,
+        situacao=body.cota_situacao,
+    )
+    cota = _create_cota(supa, payload=cota_payload)
+    cota_id = cota["id"]
+
+    _save_opcoes_lance_fixo(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        opcoes=body.opcoes_lance_fixo,
+    )
+
+    contrato = _create_contract(
+        supa,
+        payload=_build_contract_payload(
+            org_id=org_id,
+            cota_id=cota_id,
+            numero=body.numero_contrato,
+            data_assinatura=body.data_assinatura,
+            status_value=body.contract_status,
+        ),
+    )
+
+    partner_links_created = _maybe_link_parceiro_to_contract(
+        supa,
+        org_id=org_id,
+        contract_id=contrato["id"],
+        parceiro_id=body.parceiro_id,
+    )
+
+    result = _finalize_contract_creation(
+        supa,
+        org_id=org_id,
+        lead_id=body.lead_id,
+        contrato_id=contrato["id"],
+        opcoes_lance_fixo_count=len(body.opcoes_lance_fixo),
+        partner_links_created=partner_links_created,
+        sync_partner_links=True,
+        carteira_observacoes=body.observacoes or "Entrada automática na carteira ao cadastrar contrato já existente",
+    )
+
+    return {
+        **result,
+        "cota_id": cota_id,
+        "status": contrato["status"],
+        "cota_situacao": cota.get("situacao"),
+    }
+
+
 @router.patch("/{contract_id}/status")
 def update_contract_status(
     contract_id: str,
@@ -265,29 +470,8 @@ def update_contract_status(
     supa: Client = Depends(get_supabase_admin),
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
 ):
-    if not x_org_id:
-        raise HTTPException(400, "X-Org-Id obrigatório")
+    org_id = _ensure_org_header(x_org_id)
 
-    novo_status = body.status
-
-    # Transições válidas
-    transicoes_validas = {
-        "pendente_assinatura": ["pendente_pagamento", "cancelado"],
-        "pendente_pagamento": ["alocado", "cancelado"],
-        "alocado": ["contemplado", "cancelado"],
-        "contemplado": ["cancelado"],
-    }
-
-    correcoes_validas = {
-        # Permite voltar um passo
-        "pendente_pagamento": ["pendente_assinatura"],
-        "alocado": ["pendente_pagamento", "pendente_assinatura"],
-        "contemplado": ["alocado", "pendente_pagamento"],
-        # Se cancelou errado, deixa restaurar
-        "cancelado": ["pendente_pagamento", "pendente_assinatura", "alocado"],
-    }
-
-    # 1) Carregar contrato
     resp = (
         supa.table("contratos")
         .select("id, org_id, status, cota_id")
@@ -300,7 +484,7 @@ def update_contract_status(
     if not contrato:
         raise HTTPException(404, "Contrato não encontrado")
 
-    if contrato["org_id"] != x_org_id:
+    if contrato["org_id"] != org_id:
         raise HTTPException(403, "Contrato pertence a outra organização")
 
     atual_status = contrato["status"]
@@ -316,16 +500,12 @@ def update_contract_status(
             "lead_movido_para": None,
         }
 
-    allowed_next = transicoes_validas.get(atual_status, [])
-    allowed_fix = correcoes_validas.get(atual_status, [])
+    allowed_next = TRANSICOES_VALIDAS.get(atual_status, [])
+    allowed_fix = CORRECOES_VALIDAS.get(atual_status, [])
 
     if novo_status not in allowed_next and novo_status not in allowed_fix:
-        raise HTTPException(
-            400,
-            f"Transição inválida: {atual_status} → {novo_status}",
-        )
+        raise HTTPException(400, f"Transição inválida: {atual_status} → {novo_status}")
 
-    # 2) Atualizar contrato
     _ = (
         supa.table("contratos")
         .update({"status": novo_status})
@@ -333,7 +513,6 @@ def update_contract_status(
         .execute()
     )
 
-    # 3) Buscar lead da cota
     cota_resp = (
         supa.table("cotas")
         .select("lead_id, org_id")
@@ -347,25 +526,21 @@ def update_contract_status(
         raise HTTPException(500, "Cota associada não encontrada")
 
     lead_id = cota["lead_id"]
-
-    # 4) Regras automáticas de funil
     lead_stage_target = None
 
     if novo_status == "alocado":
         lead_stage_target = "ativo"
-
     elif novo_status == "cancelado":
         lead_stage_target = "perdido"
 
     if lead_stage_target:
         result = move_lead_stage(
-            org_id=x_org_id,
+            org_id=org_id,
             lead_id=lead_id,
-            new_stage=lead_stage_target,  # type: ignore
+            new_stage=lead_stage_target,  # type: ignore[arg-type]
             supa=supa,
             reason=f"Contrato {novo_status}",
         )
-
         if not result.get("ok"):
             print("WARN: Falha ao mover lead automaticamente:", result)
 
