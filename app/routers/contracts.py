@@ -163,7 +163,13 @@ def _ensure_lead_in_org(supa: Client, *, lead_id: str, org_id: str) -> Dict[str,
     return lead
 
 
-def _build_cota_payload(body: ContractBaseIn, *, org_id: str, lead_id: str, situacao: str) -> Dict[str, Any]:
+def _build_cota_payload(
+    body: ContractBaseIn,
+    *,
+    org_id: str,
+    lead_id: str,
+    cota_status: str,
+) -> Dict[str, Any]:
     valor_carta = _parse_money(body.valor_carta)
     if valor_carta is None:
         raise HTTPException(400, "Valor da carta inválido")
@@ -187,8 +193,8 @@ def _build_cota_payload(body: ContractBaseIn, *, org_id: str, lead_id: str, situ
         "fgts_permitido": body.fgts_permitido,
         "autorizacao_gestao": body.autorizacao_gestao,
         "data_adesao": body.data_adesao,
-        # compat com banco real/supabase e schema Drizzle
-        "situacao": situacao,
+        # banco real usa status para a situação da cota
+        "status": cota_status,
     }
 
 
@@ -359,7 +365,7 @@ def create_contract_from_lead(
         body,
         org_id=org_id,
         lead_id=body.lead_id,
-        situacao="ativa",
+        cota_status="ativa",
     )
     cota = _create_cota(supa, payload=cota_payload)
     cota_id = cota["id"]
@@ -396,7 +402,7 @@ def create_contract_from_lead(
         **result,
         "cota_id": cota_id,
         "status": contrato["status"],
-        "cota_situacao": cota.get("situacao"),
+        "cota_situacao": cota.get("status"),
     }
 
 
@@ -414,7 +420,7 @@ def register_existing_contract(
         body,
         org_id=org_id,
         lead_id=body.lead_id,
-        situacao=body.cota_situacao,
+        cota_status=body.cota_situacao,
     )
     cota = _create_cota(supa, payload=cota_payload)
     cota_id = cota["id"]
@@ -459,7 +465,7 @@ def register_existing_contract(
         **result,
         "cota_id": cota_id,
         "status": contrato["status"],
-        "cota_situacao": cota.get("situacao"),
+        "cota_situacao": cota.get("status"),
     }
 
 
