@@ -10,6 +10,17 @@ from app.routers.carteira import ensure_carteira_cliente
 from app.deps import get_supabase_admin
 from app.services.contract_partner_sync_service import sync_contrato_parceiros_for_contract
 from app.services.kanban_service import move_lead_stage
+from decimal import Decimal
+
+from app.schemas.comissoes import (
+    CotaComissaoConfigUpsertIn,
+    CotaComissaoParceiroIn,
+    ComissaoRegraIn,
+)
+from app.services.comissao_service import (
+    upsert_config_for_cota,
+    generate_lancamentos_for_contrato,
+)
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 
@@ -67,6 +78,17 @@ class ContractBaseIn(BaseModel):
     data_assinatura: Optional[str] = None
     numero_contrato: Optional[str] = None
     opcoes_lance_fixo: List[LanceFixoOpcaoIn] = []
+
+    # NOVO — comissão da carta
+    percentual_comissao: Decimal = Field(gt=0, le=100)
+    imposto_retido_pct: Decimal = Field(default=Decimal("10.0"), ge=0, le=100)
+
+    # NOVO — repasse do parceiro sobre a comissão
+    repasse_percentual_comissao: Optional[Decimal] = Field(
+        default=None, gt=0, le=100
+    )
+
+    comissao_observacoes: Optional[str] = None
 
 
 class ContractFromLeadIn(ContractBaseIn):
@@ -312,6 +334,87 @@ def _maybe_link_parceiro_to_contract(
     return len(rows)
 
 
+def _setup_comissao_for_contract(
+    supa: Client,
+    *,
+    org_id: str,
+    cota_id: str,
+    contrato_id: str,
+    percentual_comissao: Decimal,
+    parceiro_id: Optional[str],
+    repasse_percentual_comissao: Optional[Decimal],
+    imposto_retido_pct: Decimal,
+    comissao_observacoes: Optional[str],
+) -> Dict[str, Any]:
+    if parceiro_id and repasse_percentual_comissao is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Quando houver parceiro, informe o percentual de repasse da comissão.",
+        )
+
+    if not parceiro_id and repasse_percentual_comissao is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Repasse só pode existir quando houver parceiro.",
+        )
+
+    parceiros = []
+    if parceiro_id and repasse_percentual_comissao is not None:
+        percentual_parceiro = (
+            percentual_comissao * repasse_percentual_comissao
+        ) / Decimal("100")
+
+        parceiros.append(
+            CotaComissaoParceiroIn(
+                parceiro_id=parceiro_id,
+                percentual_parceiro=percentual_parceiro,
+                imposto_retido_pct=imposto_retido_pct,
+                ativo=True,
+                observacoes=comissao_observacoes,
+            )
+        )
+
+    config_payload = CotaComissaoConfigUpsertIn(
+        percentual_total=percentual_comissao,
+        base_calculo="valor_carta",
+        modo="avista",
+        imposto_padrao_pct=imposto_retido_pct,
+        primeira_competencia_regra="mes_adesao",
+        furo_meses_override=None,
+        ativo=True,
+        observacoes=comissao_observacoes,
+        regras=[
+            ComissaoRegraIn(
+                ordem=1,
+                tipo_evento="adesao",
+                offset_meses=0,
+                percentual_comissao=percentual_comissao,
+                descricao="Comissão gerada no cadastro inicial da carta/contrato",
+            )
+        ],
+        parceiros=parceiros,
+    )
+
+    config_result = upsert_config_for_cota(
+        supa=supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        payload=config_payload,
+    )
+
+    lancamentos_result = generate_lancamentos_for_contrato(
+        supa=supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        sobrescrever=True,
+    )
+
+    return {
+        "config": config_result,
+        "lancamentos": lancamentos_result,
+    }
+
+
 def _finalize_contract_creation(
     supa: Client,
     *,
@@ -388,6 +491,18 @@ def create_contract_from_lead(
         ),
     )
 
+    comissao_result = _setup_comissao_for_contract(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        contrato_id=contrato["id"],
+        percentual_comissao=body.percentual_comissao,
+        parceiro_id=None,
+        repasse_percentual_comissao=None,
+        imposto_retido_pct=body.imposto_retido_pct,
+        comissao_observacoes=body.comissao_observacoes,
+    )
+
     result = _finalize_contract_creation(
         supa,
         org_id=org_id,
@@ -401,6 +516,7 @@ def create_contract_from_lead(
     return {
         **result,
         "cota_id": cota_id,
+        "comissao": comissao_result,
         "status": contrato["status"],
         "cota_situacao": cota.get("status"),
     }
@@ -443,6 +559,18 @@ def register_existing_contract(
         ),
     )
 
+    comissao_result = _setup_comissao_for_contract(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        contrato_id=contrato["id"],
+        percentual_comissao=body.percentual_comissao,
+        parceiro_id=body.parceiro_id,
+        repasse_percentual_comissao=body.repasse_percentual_comissao,
+        imposto_retido_pct=body.imposto_retido_pct,
+        comissao_observacoes=body.comissao_observacoes,
+    )
+
     partner_links_created = _maybe_link_parceiro_to_contract(
         supa,
         org_id=org_id,
@@ -464,6 +592,7 @@ def register_existing_contract(
     return {
         **result,
         "cota_id": cota_id,
+        "comissao": comissao_result,
         "status": contrato["status"],
         "cota_situacao": cota.get("status"),
     }
