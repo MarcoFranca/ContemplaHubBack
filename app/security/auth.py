@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import Depends, Header, HTTPException, status
 from supabase import Client
 
+from app.core.supabase_safe import execute_with_retry
 from app.deps import get_supabase_admin
 
 
@@ -106,12 +107,11 @@ def get_current_profile(
     token = _extract_bearer(authorization)
     user_id = _get_authenticated_user_id(token, sb)
 
-    prof = (
+    prof = execute_with_retry(
         sb.table("profiles")
         .select("user_id, org_id, role")
         .eq("user_id", user_id)
         .single()
-        .execute()
     )
 
     data = getattr(prof, "data", None)
@@ -135,7 +135,7 @@ def get_current_partner(
     token = _extract_bearer(authorization)
     user_id = _get_authenticated_user_id(token, sb)
 
-    partner = (
+    partner = execute_with_retry(
         sb.table("partner_users")
         .select(
             """
@@ -152,7 +152,6 @@ def get_current_partner(
         .eq("auth_user_id", user_id)
         .eq("ativo", True)
         .single()
-        .execute()
     )
 
     data = getattr(partner, "data", None)
@@ -163,9 +162,11 @@ def get_current_partner(
         )
 
     try:
-        sb.table("partner_users").update(
-            {"last_login_at": datetime.utcnow().isoformat()}
-        ).eq("id", data["id"]).execute()
+        execute_with_retry(
+            sb.table("partner_users")
+            .update({"last_login_at": datetime.utcnow().isoformat()})
+            .eq("id", data["id"])
+        )
     except Exception:
         pass
 
@@ -197,13 +198,11 @@ def get_auth_context(
     token = _extract_bearer(authorization)
     user_id = _get_authenticated_user_id(token, sb)
 
-    # 1) tenta interno
-    prof = (
+    prof = execute_with_retry(
         sb.table("profiles")
         .select("user_id, org_id, role")
         .eq("user_id", user_id)
         .maybe_single()
-        .execute()
     )
     prof_data = getattr(prof, "data", None)
 
@@ -220,8 +219,7 @@ def get_auth_context(
             can_view_commissions=True,
         )
 
-    # 2) tenta parceiro
-    partner = (
+    partner = execute_with_retry(
         sb.table("partner_users")
         .select(
             """
@@ -238,7 +236,6 @@ def get_auth_context(
         .eq("auth_user_id", user_id)
         .eq("ativo", True)
         .maybe_single()
-        .execute()
     )
     partner_data = getattr(partner, "data", None)
 

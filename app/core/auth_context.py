@@ -1,97 +1,148 @@
-from typing import Optional, Literal
+# app/core/auth_context.py
 from dataclasses import dataclass
+from typing import Literal
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, Header, HTTPException, status
+from supabase import Client
 
-from app.core.supabase_client import get_supabase_admin
-from app.core.config import settings
-
-security = HTTPBearer()
+from app.core.supabase_safe import execute_with_retry
+from app.deps import get_supabase_admin
 
 
 ActorType = Literal["internal", "partner"]
 
 
-@dataclass
+@dataclass(frozen=True)
 class AuthContext:
     user_id: str
     org_id: str
     actor_type: ActorType
-    partner_id: Optional[str] = None
+    role: str | None = None
+    parceiro_id: str | None = None
+    partner_user_id: str | None = None
+    can_view_client_data: bool = False
+    can_view_contracts: bool = False
+    can_view_commissions: bool = False
+
+    @property
+    def is_internal(self) -> bool:
+        return self.actor_type == "internal"
+
+    @property
+    def is_partner(self) -> bool:
+        return self.actor_type == "partner"
+
+    @property
+    def is_manager(self) -> bool:
+        return self.is_internal and (self.role in ("admin", "gestor"))
 
 
-async def get_auth_context(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+def _extract_bearer(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header",
+        )
+
+    parts = authorization.split(" ")
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Authorization header",
+        )
+
+    return parts[1]
+
+
+def _get_authenticated_user_id(token: str, sb: Client) -> str:
+    try:
+        user = sb.auth.get_user(token).user
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    if not user or not user.id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    return user.id
+
+
+def get_auth_context(
+    authorization: str | None = Header(default=None),
+    sb: Client = Depends(get_supabase_admin),
 ) -> AuthContext:
     """
-    Resolve se o usuário é:
+    Resolve o contexto do usuário autenticado:
     - interno (profiles)
     - parceiro (partner_users)
 
-    SEMPRE retorna org_id validado
+    Ordem:
+    1. tenta profiles
+    2. tenta partner_users
     """
+    token = _extract_bearer(authorization)
+    user_id = _get_authenticated_user_id(token, sb)
 
-    token = credentials.credentials
-    supabase = get_supabase_admin()
-
-    # 🔐 valida token
-    user = supabase.auth.get_user(token)
-    if not user or not user.user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido",
-        )
-
-    user_id = user.user.id
-
-    # --------------------------------------------------
-    # 1. Tenta resolver como usuário interno (profiles)
-    # --------------------------------------------------
-    profile = (
-        supabase.table("profiles")
-        .select("id, org_id, role")
-        .eq("id", user_id)
+    prof = execute_with_retry(
+        sb.table("profiles")
+        .select("user_id, org_id, role")
+        .eq("user_id", user_id)
         .maybe_single()
-        .execute()
     )
+    prof_data = getattr(prof, "data", None)
 
-    if profile.data:
+    if prof_data and prof_data.get("org_id"):
         return AuthContext(
-            user_id=user_id,
-            org_id=profile.data["org_id"],
+            user_id=prof_data["user_id"],
+            org_id=prof_data["org_id"],
             actor_type="internal",
+            role=(prof_data.get("role") or "vendedor"),
+            parceiro_id=None,
+            partner_user_id=None,
+            can_view_client_data=True,
+            can_view_contracts=True,
+            can_view_commissions=True,
         )
 
-    # --------------------------------------------------
-    # 2. Tenta resolver como parceiro
-    # --------------------------------------------------
-    partner = (
-        supabase.table("partner_users")
-        .select("id, org_id, partner_id, status")
-        .eq("id", user_id)
+    partner = execute_with_retry(
+        sb.table("partner_users")
+        .select(
+            """
+            id,
+            auth_user_id,
+            org_id,
+            parceiro_id,
+            ativo,
+            can_view_client_data,
+            can_view_contracts,
+            can_view_commissions
+            """
+        )
+        .eq("auth_user_id", user_id)
+        .eq("ativo", True)
         .maybe_single()
-        .execute()
     )
+    partner_data = getattr(partner, "data", None)
 
-    if partner.data:
-        if partner.data["status"] != "active":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Parceiro inativo",
-            )
-
+    if partner_data and partner_data.get("org_id") and partner_data.get("parceiro_id"):
         return AuthContext(
-            user_id=user_id,
-            org_id=partner.data["org_id"],
+            user_id=partner_data["auth_user_id"],
+            org_id=partner_data["org_id"],
             actor_type="partner",
-            partner_id=partner.data["partner_id"],
+            role=None,
+            parceiro_id=partner_data["parceiro_id"],
+            partner_user_id=partner_data["id"],
+            can_view_client_data=bool(partner_data.get("can_view_client_data", False)),
+            can_view_contracts=bool(partner_data.get("can_view_contracts", False)),
+            can_view_commissions=bool(partner_data.get("can_view_commissions", False)),
         )
 
-    # --------------------------------------------------
-    # fallback inválido
-    # --------------------------------------------------
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Usuário não autorizado neste sistema",
+        detail="Usuário sem acesso válido ao sistema",
     )
