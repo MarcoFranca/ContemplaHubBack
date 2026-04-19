@@ -9,6 +9,7 @@ from supabase import Client
 from app.routers.carteira import ensure_carteira_cliente
 from app.deps import get_supabase_admin
 from app.services.contract_partner_sync_service import sync_contrato_parceiros_for_contract
+from app.services.cota_finance_service import normalize_cota_financial_payload
 from app.services.kanban_service import move_lead_stage
 from decimal import Decimal
 
@@ -70,6 +71,17 @@ class ContractBaseIn(BaseModel):
     forma_pagamento: Optional[str] = None
     indice_correcao: Optional[str] = None
     valor_parcela: Optional[str] = None
+    fundo_reserva_percentual: Optional[str] = None
+    fundo_reserva_valor_mensal: Optional[str] = None
+    seguro_prestamista_ativo: bool = False
+    seguro_prestamista_percentual: Optional[str] = None
+    seguro_prestamista_valor_mensal: Optional[str] = None
+    taxa_admin_antecipada_ativo: bool = False
+    taxa_admin_antecipada_percentual: Optional[str] = None
+    taxa_admin_antecipada_forma_pagamento: Optional[Literal["avista", "parcelado"]] = None
+    taxa_admin_antecipada_parcelas: Optional[int] = None
+    taxa_admin_antecipada_valor_total: Optional[str] = None
+    taxa_admin_antecipada_valor_parcela: Optional[str] = None
     parcela_reduzida: bool = False
     fgts_permitido: bool = False
     embutido_permitido: bool = False
@@ -198,7 +210,7 @@ def _build_cota_payload(
 
     valor_parcela = _parse_money(body.valor_parcela)
 
-    return {
+    return normalize_cota_financial_payload({
         "org_id": org_id,
         "lead_id": lead_id,
         "administradora_id": body.administradora_id,
@@ -207,6 +219,17 @@ def _build_cota_payload(
         "produto": body.produto,
         "valor_carta": valor_carta,
         "valor_parcela": valor_parcela,
+        "fundo_reserva_percentual": body.fundo_reserva_percentual,
+        "fundo_reserva_valor_mensal": body.fundo_reserva_valor_mensal,
+        "seguro_prestamista_ativo": body.seguro_prestamista_ativo,
+        "seguro_prestamista_percentual": body.seguro_prestamista_percentual,
+        "seguro_prestamista_valor_mensal": body.seguro_prestamista_valor_mensal,
+        "taxa_admin_antecipada_ativo": body.taxa_admin_antecipada_ativo,
+        "taxa_admin_antecipada_percentual": body.taxa_admin_antecipada_percentual,
+        "taxa_admin_antecipada_forma_pagamento": body.taxa_admin_antecipada_forma_pagamento,
+        "taxa_admin_antecipada_parcelas": body.taxa_admin_antecipada_parcelas,
+        "taxa_admin_antecipada_valor_total": body.taxa_admin_antecipada_valor_total,
+        "taxa_admin_antecipada_valor_parcela": body.taxa_admin_antecipada_valor_parcela,
         "prazo": body.prazo,
         "forma_pagamento": body.forma_pagamento,
         "indice_correcao": body.indice_correcao,
@@ -217,7 +240,7 @@ def _build_cota_payload(
         "data_adesao": body.data_adesao,
         # banco real usa status para a situação da cota
         "status": cota_status,
-    }
+    })
 
 
 def _create_cota(supa: Client, *, payload: Dict[str, Any]) -> Dict[str, Any]:

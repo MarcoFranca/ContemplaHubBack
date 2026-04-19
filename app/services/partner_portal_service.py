@@ -326,6 +326,17 @@ def _fetch_cotas_by_ids(
             numero_cota,
             grupo_codigo,
             valor_parcela,
+            fundo_reserva_percentual,
+            fundo_reserva_valor_mensal,
+            seguro_prestamista_ativo,
+            seguro_prestamista_percentual,
+            seguro_prestamista_valor_mensal,
+            taxa_admin_antecipada_ativo,
+            taxa_admin_antecipada_percentual,
+            taxa_admin_antecipada_forma_pagamento,
+            taxa_admin_antecipada_parcelas,
+            taxa_admin_antecipada_valor_total,
+            taxa_admin_antecipada_valor_parcela,
             prazo,
             status
             """

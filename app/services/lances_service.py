@@ -9,6 +9,7 @@ from supabase import Client
 from decimal import Decimal
 from math import isclose
 from app.schemas.lances import AtualizarCartaPayload
+from app.services.cota_finance_service import normalize_cota_financial_payload
 
 from app.security.auth import CurrentProfile
 
@@ -151,6 +152,17 @@ def get_cota_or_404(*, sb: Client, org_id: str, cota_id: str) -> dict[str, Any]:
             produto,
             valor_carta,
             valor_parcela,
+            fundo_reserva_percentual,
+            fundo_reserva_valor_mensal,
+            seguro_prestamista_ativo,
+            seguro_prestamista_percentual,
+            seguro_prestamista_valor_mensal,
+            taxa_admin_antecipada_ativo,
+            taxa_admin_antecipada_percentual,
+            taxa_admin_antecipada_forma_pagamento,
+            taxa_admin_antecipada_parcelas,
+            taxa_admin_antecipada_valor_total,
+            taxa_admin_antecipada_valor_parcela,
             prazo,
             data_adesao,
             embutido_permitido,
@@ -502,6 +514,39 @@ def atualizar_carta(
     if "valor_parcela" in fields:
         update_payload["valor_parcela"] = to_jsonable(payload.valor_parcela)
 
+    if "fundo_reserva_percentual" in fields:
+        update_payload["fundo_reserva_percentual"] = to_jsonable(payload.fundo_reserva_percentual)
+
+    if "fundo_reserva_valor_mensal" in fields:
+        update_payload["fundo_reserva_valor_mensal"] = to_jsonable(payload.fundo_reserva_valor_mensal)
+
+    if "seguro_prestamista_ativo" in fields:
+        update_payload["seguro_prestamista_ativo"] = payload.seguro_prestamista_ativo
+
+    if "seguro_prestamista_percentual" in fields:
+        update_payload["seguro_prestamista_percentual"] = to_jsonable(payload.seguro_prestamista_percentual)
+
+    if "seguro_prestamista_valor_mensal" in fields:
+        update_payload["seguro_prestamista_valor_mensal"] = to_jsonable(payload.seguro_prestamista_valor_mensal)
+
+    if "taxa_admin_antecipada_ativo" in fields:
+        update_payload["taxa_admin_antecipada_ativo"] = payload.taxa_admin_antecipada_ativo
+
+    if "taxa_admin_antecipada_percentual" in fields:
+        update_payload["taxa_admin_antecipada_percentual"] = to_jsonable(payload.taxa_admin_antecipada_percentual)
+
+    if "taxa_admin_antecipada_forma_pagamento" in fields:
+        update_payload["taxa_admin_antecipada_forma_pagamento"] = payload.taxa_admin_antecipada_forma_pagamento
+
+    if "taxa_admin_antecipada_parcelas" in fields:
+        update_payload["taxa_admin_antecipada_parcelas"] = payload.taxa_admin_antecipada_parcelas
+
+    if "taxa_admin_antecipada_valor_total" in fields:
+        update_payload["taxa_admin_antecipada_valor_total"] = to_jsonable(payload.taxa_admin_antecipada_valor_total)
+
+    if "taxa_admin_antecipada_valor_parcela" in fields:
+        update_payload["taxa_admin_antecipada_valor_parcela"] = to_jsonable(payload.taxa_admin_antecipada_valor_parcela)
+
     if "prazo" in fields:
         update_payload["prazo"] = payload.prazo
 
@@ -533,6 +578,9 @@ def atualizar_carta(
 
     if "objetivo" in fields:
         update_payload["objetivo"] = payload.objetivo
+
+    if update_payload:
+        update_payload = normalize_cota_financial_payload(update_payload, current_cota=_cota)
 
     if update_payload:
         (
@@ -581,6 +629,17 @@ def list_cartas_operacao(
             produto,
             valor_carta,
             valor_parcela,
+            fundo_reserva_percentual,
+            fundo_reserva_valor_mensal,
+            seguro_prestamista_ativo,
+            seguro_prestamista_percentual,
+            seguro_prestamista_valor_mensal,
+            taxa_admin_antecipada_ativo,
+            taxa_admin_antecipada_percentual,
+            taxa_admin_antecipada_forma_pagamento,
+            taxa_admin_antecipada_parcelas,
+            taxa_admin_antecipada_valor_total,
+            taxa_admin_antecipada_valor_parcela,
             prazo,
             data_adesao,
             embutido_permitido,
@@ -656,6 +715,17 @@ def list_cartas_operacao(
             "numero_cota": cota["numero_cota"],
             "valor_carta": cota.get("valor_carta"),
             "valor_parcela": cota.get("valor_parcela"),
+            "fundo_reserva_percentual": cota.get("fundo_reserva_percentual"),
+            "fundo_reserva_valor_mensal": cota.get("fundo_reserva_valor_mensal"),
+            "seguro_prestamista_ativo": bool(cota.get("seguro_prestamista_ativo")),
+            "seguro_prestamista_percentual": cota.get("seguro_prestamista_percentual"),
+            "seguro_prestamista_valor_mensal": cota.get("seguro_prestamista_valor_mensal"),
+            "taxa_admin_antecipada_ativo": bool(cota.get("taxa_admin_antecipada_ativo")),
+            "taxa_admin_antecipada_percentual": cota.get("taxa_admin_antecipada_percentual"),
+            "taxa_admin_antecipada_forma_pagamento": cota.get("taxa_admin_antecipada_forma_pagamento"),
+            "taxa_admin_antecipada_parcelas": cota.get("taxa_admin_antecipada_parcelas"),
+            "taxa_admin_antecipada_valor_total": cota.get("taxa_admin_antecipada_valor_total"),
+            "taxa_admin_antecipada_valor_parcela": cota.get("taxa_admin_antecipada_valor_parcela"),
             "prazo": cota.get("prazo"),
             "data_adesao": cota.get("data_adesao"),
             "status": cota.get("status"),

@@ -30,6 +30,17 @@ class AtualizarCartaPayload(BaseModel):
     produto: Optional[Produto] = None
     valor_carta: Optional[Decimal] = None
     valor_parcela: Optional[Decimal] = None
+    fundo_reserva_percentual: Optional[Decimal] = None
+    fundo_reserva_valor_mensal: Optional[Decimal] = None
+    seguro_prestamista_ativo: Optional[bool] = None
+    seguro_prestamista_percentual: Optional[Decimal] = None
+    seguro_prestamista_valor_mensal: Optional[Decimal] = None
+    taxa_admin_antecipada_ativo: Optional[bool] = None
+    taxa_admin_antecipada_percentual: Optional[Decimal] = None
+    taxa_admin_antecipada_forma_pagamento: Optional[Literal["avista", "parcelado"]] = None
+    taxa_admin_antecipada_parcelas: Optional[int] = Field(default=None, ge=1)
+    taxa_admin_antecipada_valor_total: Optional[Decimal] = None
+    taxa_admin_antecipada_valor_parcela: Optional[Decimal] = None
     prazo: Optional[int] = None
     assembleia_dia: Optional[int] = Field(default=None, ge=1, le=31)
     data_adesao: Optional[date] = None
@@ -149,6 +160,17 @@ class LanceCartaListItem(BaseModel):
     numero_cota: str
     valor_carta: Optional[Decimal] = None
     valor_parcela: Optional[Decimal] = None
+    fundo_reserva_percentual: Optional[Decimal] = None
+    fundo_reserva_valor_mensal: Optional[Decimal] = None
+    seguro_prestamista_ativo: bool = False
+    seguro_prestamista_percentual: Optional[Decimal] = None
+    seguro_prestamista_valor_mensal: Optional[Decimal] = None
+    taxa_admin_antecipada_ativo: bool = False
+    taxa_admin_antecipada_percentual: Optional[Decimal] = None
+    taxa_admin_antecipada_forma_pagamento: Optional[str] = None
+    taxa_admin_antecipada_parcelas: Optional[int] = None
+    taxa_admin_antecipada_valor_total: Optional[Decimal] = None
+    taxa_admin_antecipada_valor_parcela: Optional[Decimal] = None
     prazo: Optional[int] = None
     status: str
     autorizacao_gestao: bool
