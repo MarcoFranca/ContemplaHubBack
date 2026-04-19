@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr
 from supabase import Client
 
 from app.deps import get_supabase_admin
+from app.services.lead_address_service import apply_lead_address_rules
 from app.services.kanban_service import move_lead_stage
 
 router = APIRouter(prefix="/carteira", tags=["carteira"])
@@ -72,7 +73,11 @@ def ensure_carteira_cliente(
 def get_lead_or_404(*, supa: Client, lead_id: str) -> Dict[str, Any]:
     resp = (
         supa.table("leads")
-        .select("id, org_id, nome, telefone, email, etapa, owner_id")
+        .select(
+            "id, org_id, nome, telefone, email, etapa, owner_id, "
+            "cep, logradouro, numero, complemento, bairro, cidade, estado, "
+            "latitude, longitude, address_updated_at"
+        )
         .eq("id", lead_id)
         .single()
         .execute()
@@ -92,6 +97,15 @@ class CreateCarteiraClienteIn(BaseModel):
     email: Optional[EmailStr] = None
     owner_id: Optional[str] = None
     observacoes: Optional[str] = None
+    cep: Optional[str] = None
+    logradouro: Optional[str] = None
+    numero: Optional[str] = None
+    complemento: Optional[str] = None
+    bairro: Optional[str] = None
+    cidade: Optional[str] = None
+    estado: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class NovaNegociacaoIn(BaseModel):
@@ -130,7 +144,17 @@ def list_carteira(
                 nome,
                 telefone,
                 email,
-                etapa
+                etapa,
+                cep,
+                logradouro,
+                numero,
+                complemento,
+                bairro,
+                cidade,
+                estado,
+                latitude,
+                longitude,
+                address_updated_at
             )
         """)
         .eq("org_id", x_org_id)
@@ -242,14 +266,25 @@ def create_cliente_direto_na_carteira(
             detail="X-Org-Id header é obrigatório",
         )
 
-    lead_payload = {
-        "org_id": x_org_id,
-        "nome": body.nome,
-        "telefone": body.telefone,
-        "email": body.email,
-        "owner_id": body.owner_id,
-        "etapa": "ativo",
-    }
+    lead_payload = apply_lead_address_rules(
+        {
+            "org_id": x_org_id,
+            "nome": body.nome,
+            "telefone": body.telefone,
+            "email": str(body.email) if body.email else None,
+            "owner_id": body.owner_id,
+            "etapa": "ativo",
+            "cep": body.cep,
+            "logradouro": body.logradouro,
+            "numero": body.numero,
+            "complemento": body.complemento,
+            "bairro": body.bairro,
+            "cidade": body.cidade,
+            "estado": body.estado,
+            "latitude": body.latitude,
+            "longitude": body.longitude,
+        }
+    )
 
     lead_resp = (
         supa.table("leads")

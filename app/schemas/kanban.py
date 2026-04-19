@@ -52,9 +52,19 @@ class LeadCard(BaseModel):
     email: Optional[str] = None
     origem: Optional[str] = None
     owner_id: Optional[str] = None
+    cep: Optional[str] = None
+    logradouro: Optional[str] = None
+    numero: Optional[str] = None
+    complemento: Optional[str] = None
+    bairro: Optional[str] = None
+    cidade: Optional[str] = None
+    estado: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     created_at: Optional[str] = None  # supabase retorna ISO; pydantic parseia
     first_contact_at: Optional[str] = None
+    address_updated_at: Optional[str] = None
 
     # Interesse aberto mais recente (lead_interesses)
     interest: Optional[Interest] = None

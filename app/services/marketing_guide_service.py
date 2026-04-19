@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional, Tuple
 from supabase import Client
 from playwright.async_api import async_playwright
 
+from app.services.lead_address_service import apply_lead_address_rules
+
 
 def _safe_upsert_lead(
     supa: Client,
@@ -26,22 +28,38 @@ def _safe_upsert_lead(
 
     if existing:
         lead_id = existing[0]["id"]
+        current = (
+            supa.table("leads")
+            .select("id, cep, logradouro, numero, complemento, bairro, cidade, estado, latitude, longitude")
+            .eq("id", lead_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        current_lead = current[0] if current else None
 
         if existing[0].get("owner_id"):
             payload_full.pop("owner_id", None)
             payload_min.pop("owner_id", None)
 
         try:
-            supa.table("leads").update(payload_full).eq("id", lead_id).execute()
+            supa.table("leads").update(
+                apply_lead_address_rules(payload_full, current_lead=current_lead)
+            ).eq("id", lead_id).execute()
         except Exception:
-            supa.table("leads").update(payload_min).eq("id", lead_id).execute()
+            supa.table("leads").update(
+                apply_lead_address_rules(payload_min, current_lead=current_lead)
+            ).eq("id", lead_id).execute()
 
         return lead_id
 
     try:
-        inserted = supa.table("leads").insert(payload_full).execute().data or []
+        inserted = supa.table("leads").insert(
+            apply_lead_address_rules(payload_full)
+        ).execute().data or []
     except Exception:
-        inserted = supa.table("leads").insert(payload_min).execute().data or []
+        inserted = supa.table("leads").insert(
+            apply_lead_address_rules(payload_min)
+        ).execute().data or []
 
     if not inserted:
         raise RuntimeError("Falha ao inserir lead (retorno vazio).")

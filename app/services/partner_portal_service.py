@@ -130,6 +130,16 @@ def _serialize_cliente_for_partner(lead: Optional[dict], can_view_client_data: b
             "etapa": lead.get("etapa"),
             "owner_id": lead.get("owner_id"),
             "created_at": lead.get("created_at"),
+            "cep": lead.get("cep"),
+            "logradouro": lead.get("logradouro"),
+            "numero": lead.get("numero"),
+            "complemento": lead.get("complemento"),
+            "bairro": lead.get("bairro"),
+            "cidade": lead.get("cidade"),
+            "estado": lead.get("estado"),
+            "latitude": lead.get("latitude"),
+            "longitude": lead.get("longitude"),
+            "address_updated_at": lead.get("address_updated_at"),
             "masked": False,
         }
 
@@ -338,7 +348,11 @@ def _fetch_leads_by_ids(
 
     resp = (
         supa.table("leads")
-        .select("id, org_id, nome, telefone, email, etapa, owner_id, created_at")
+        .select(
+            "id, org_id, nome, telefone, email, etapa, owner_id, created_at, "
+            "cep, logradouro, numero, complemento, bairro, cidade, estado, "
+            "latitude, longitude, address_updated_at"
+        )
         .eq("org_id", org_id)
         .in_("id", lead_ids)
         .execute()

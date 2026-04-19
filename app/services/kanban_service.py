@@ -9,6 +9,7 @@ from supabase import Client
 from app.schemas.kanban import KanbanSnapshot, LeadCard, Stage, KanbanMetrics
 
 from app.schemas.kanban import Interest
+from app.services.lead_address_service import LEAD_ADDRESS_SELECT
 from app.services.kanban_interest_insights import build_interest_insight
 
 
@@ -51,7 +52,8 @@ def build_kanban_snapshot(
     resp = (
         supa.table("leads")
         .select(
-            "id, nome, etapa, telefone, email, origem, owner_id, created_at, first_contact_at"
+            "id, nome, etapa, telefone, email, origem, owner_id, created_at, first_contact_at, "
+            f"{LEAD_ADDRESS_SELECT}"
         )
         .eq("org_id", org_id)
         .in_("etapa", stages)
@@ -154,8 +156,18 @@ def build_kanban_snapshot(
             email=row.get("email"),
             origem=row.get("origem"),
             owner_id=row.get("owner_id"),
+            cep=row.get("cep"),
+            logradouro=row.get("logradouro"),
+            numero=row.get("numero"),
+            complemento=row.get("complemento"),
+            bairro=row.get("bairro"),
+            cidade=row.get("cidade"),
+            estado=row.get("estado"),
+            latitude=row.get("latitude"),
+            longitude=row.get("longitude"),
             created_at=row.get("created_at"),
             first_contact_at=row.get("first_contact_at"),
+            address_updated_at=row.get("address_updated_at"),
             interest=interest,
             readiness_score=diag.get("readiness_score"),
             score_risco=diag.get("score_risco"),
