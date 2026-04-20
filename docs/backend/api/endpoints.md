@@ -402,12 +402,17 @@ Campos adicionais:
 Validacoes:
 
 - valida lead na `org_id`
-- valida administradora existente
+- valida administradora na mesma `org_id` do contexto autenticado
 - valida parceiro na `org_id`, quando informado
 - valida `contract_status` separadamente de `cota_situacao`
 - rejeita estados iniciais invalidos, por exemplo:
   - contrato `contemplado` com cota nao `contemplada`
   - contrato pendente com cota `cancelada`
+- nao infere `data_alocacao` nem `data_contemplacao` a partir de `data_assinatura`
+- bloqueia duplicidade operacional obvia:
+  - contrato duplicado por `numero_contrato` dentro da organizacao
+  - cota duplicada por `administradora_id + grupo_codigo + numero_cota` dentro da organizacao
+  - registro repetido do mesmo lead para a mesma combinacao operacional
 
 Resposta:
 

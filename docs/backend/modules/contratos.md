@@ -76,10 +76,19 @@ Entrada minima observada no schema:
 
 Validacoes adicionais:
 
-- valida administradora existente;
+- valida administradora dentro da mesma `org_id`;
 - valida parceiro na organizacao, quando informado;
 - valida `contract_status` separadamente de `cota_situacao`;
-- bloqueia combinacoes iniciais invalidas, como contrato `contemplado` com cota nao `contemplada`.
+- bloqueia combinacoes iniciais invalidas, como contrato `contemplado` com cota nao `contemplada`;
+- bloqueia duplicidade de contrato por numero dentro da organizacao;
+- bloqueia duplicidade operacional de cota por administradora, grupo e numero dentro da organizacao.
+
+Datas operacionais:
+
+- `data_assinatura` continua obrigatoria para o contrato;
+- o fluxo `register-existing` nao assume automaticamente que `data_assinatura` equivale a `data_alocacao`;
+- o fluxo `register-existing` nao assume automaticamente que `data_assinatura` equivale a `data_contemplacao`;
+- essas datas operacionais permanecem nulas ate haver evento/regra explicita que justifique o preenchimento.
 
 ### Atualizar status
 
@@ -170,6 +179,11 @@ No fluxo `register-existing`, isso aparece explicitamente porque:
 - `contract_status` entra no payload do contrato;
 - `cota_situacao` entra no payload da cota;
 - o backend valida essas camadas sem colapsa-las em um unico campo.
+
+Outra implicacao importante:
+
+- status de contrato nao autoriza inferir marcos operacionais da cota;
+- contemplacao continua sendo evento da cota, nao do contrato.
 
 ### Relacao com parceiros
 

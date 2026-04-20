@@ -288,6 +288,28 @@ def _ensure_administradora_exists(supa: Client, *, administradora_id: str) -> No
         raise HTTPException(404, "Administradora não encontrada")
 
 
+def _ensure_administradora_in_org(
+    supa: Client,
+    *,
+    administradora_id: str,
+    org_id: str,
+) -> None:
+    resp = (
+        supa.table("administradoras")
+        .select("id, org_id")
+        .eq("id", administradora_id)
+        .eq("org_id", org_id)
+        .limit(1)
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        raise HTTPException(
+            403,
+            "Administradora inválida para a organização informada",
+        )
+
+
 def _ensure_parceiro_in_org(
     supa: Client,
     *,
@@ -363,6 +385,7 @@ def _build_contract_payload(
     numero: Optional[str],
     data_assinatura: Optional[str],
     status_value: str,
+    infer_operational_dates: bool = False,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "org_id": org_id,
@@ -372,6 +395,9 @@ def _build_contract_payload(
         "data_assinatura": data_assinatura,
         "status": status_value,
     }
+
+    if not infer_operational_dates:
+        return payload
 
     if status_value == "pendente_pagamento":
         payload["data_pagamento"] = None
@@ -425,6 +451,55 @@ def _maybe_link_parceiro_to_contract(
     )
     rows = getattr(resp, "data", None) or []
     return len(rows)
+
+
+def _ensure_no_duplicate_operational_registration(
+    supa: Client,
+    *,
+    org_id: str,
+    lead_id: str,
+    administradora_id: str,
+    grupo_codigo: str,
+    numero_cota: str,
+    numero_contrato: str,
+) -> None:
+    contrato_resp = (
+        supa.table("contratos")
+        .select("id, numero, cota_id")
+        .eq("org_id", org_id)
+        .eq("numero", numero_contrato)
+        .limit(1)
+        .execute()
+    )
+    contratos = getattr(contrato_resp, "data", None) or []
+    if contratos:
+        raise HTTPException(
+            409,
+            "Já existe contrato com esse número na organização.",
+        )
+
+    cota_resp = (
+        supa.table("cotas")
+        .select("id, lead_id, administradora_id, grupo_codigo, numero_cota")
+        .eq("org_id", org_id)
+        .eq("administradora_id", administradora_id)
+        .eq("grupo_codigo", grupo_codigo)
+        .eq("numero_cota", numero_cota)
+        .limit(1)
+        .execute()
+    )
+    cotas = getattr(cota_resp, "data", None) or []
+    if cotas:
+        existing = cotas[0]
+        if existing.get("lead_id") == lead_id:
+            raise HTTPException(
+                409,
+                "Já existe cota cadastrada para este lead com a mesma administradora, grupo e número.",
+            )
+        raise HTTPException(
+            409,
+            "Já existe cota cadastrada na organização com a mesma administradora, grupo e número.",
+        )
 
 
 def _setup_comissao_for_contract(
@@ -582,6 +657,7 @@ def create_contract_from_lead(
             numero=body.numero_contrato,
             data_assinatura=body.data_assinatura,
             status_value="pendente_assinatura",
+            infer_operational_dates=False,
         ),
     )
 
@@ -625,9 +701,22 @@ def register_existing_contract(
 ) -> Dict[str, Any]:
     org_id = _ensure_org_header(x_org_id)
     _ensure_lead_in_org(supa, lead_id=body.lead_id, org_id=org_id)
-    _ensure_administradora_exists(supa, administradora_id=body.administradora_id)
+    _ensure_administradora_in_org(
+        supa,
+        administradora_id=body.administradora_id,
+        org_id=org_id,
+    )
     _ensure_parceiro_in_org(supa, parceiro_id=body.parceiro_id, org_id=org_id)
     _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
+    _ensure_no_duplicate_operational_registration(
+        supa,
+        org_id=org_id,
+        lead_id=body.lead_id,
+        administradora_id=body.administradora_id,
+        grupo_codigo=body.grupo_codigo,
+        numero_cota=body.numero_cota,
+        numero_contrato=body.numero_contrato,
+    )
 
     cota_payload = _build_cota_payload(
         body,
@@ -653,6 +742,7 @@ def register_existing_contract(
             numero=body.numero_contrato,
             data_assinatura=body.data_assinatura,
             status_value=body.contract_status,
+            infer_operational_dates=False,
         ),
     )
 

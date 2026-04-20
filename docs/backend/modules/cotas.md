@@ -50,7 +50,8 @@ Passos:
 No fluxo `register-existing`:
 
 - a situacao inicial da cota pode ser informada por `cota_situacao`;
-- essa situacao e validada separadamente do `contract_status`.
+- essa situacao e validada separadamente do `contract_status`;
+- o cadastro nao preenche automaticamente `data_alocacao` ou `data_contemplacao` por simples inferencia a partir da assinatura do contrato.
 
 ### Atualizacao operacional da cota
 
@@ -160,6 +161,12 @@ No cadastro de contrato ja existente:
 - `cota_situacao` nasce na cota, nao no contrato;
 - o backend rejeita combinacoes evidentemente invalidas com `contract_status`.
 
+Protecoes operacionais adicionais:
+
+- o backend bloqueia duplicidade de cota na organizacao para a mesma combinacao de `administradora_id`, `grupo_codigo` e `numero_cota`;
+- quando a duplicidade recai sobre o mesmo lead, o erro e tratado como repeticao operacional mais especifica;
+- essas validacoes acontecem no backend alem do RLS.
+
 ### Lance fixo
 
 Opcoes de lance fixo:
@@ -170,6 +177,6 @@ Opcoes de lance fixo:
 
 ## Pontos pendentes de confirmacao
 
-- constraints unicas de `(org_id, administradora_id, grupo_codigo, numero_cota)` no banco;
+- constraints unicas fisicas de `(org_id, administradora_id, grupo_codigo, numero_cota)` no banco;
 - nome fisico da tabela de regras operacionais por administradora;
 - se existe historico formal de alteracoes da cota alem de auditoria indireta.
