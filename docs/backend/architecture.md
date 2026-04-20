@@ -17,6 +17,30 @@ O desenho atual segue um padrao simples:
 3. `services` concentram a maior parte das regras de negocio.
 4. o acesso a dados ocorre via client Supabase usando tabelas, RPCs e Storage.
 
+## Fluxo macro do produto
+
+O modelo observado no codigo separa o sistema em camadas de dominio.
+
+### 1. Camada comercial
+
+- `lead` representa a oportunidade comercial;
+- funil, diagnostico e proposta pertencem a esse contexto pre-contratacao.
+
+### 2. Camada de formalizacao
+
+- o `contrato` nasce na formalizacao/fechamento;
+- ele formaliza comercial e juridicamente uma operacao ancorada em uma `cota`.
+
+### 3. Camada operacional do consorcio
+
+- a `cota` e o ativo operacional do consorcio;
+- assembleia, lance e contemplacao pertencem a operacao da cota.
+
+### 4. Camada de pos-venda
+
+- `carteira` e uma dimensao operacional de pos-venda;
+- ela nao substitui lead, cota ou contrato.
+
 Arquivos centrais:
 
 - `app/main.py`: registra app, CORS e todos os routers.
@@ -236,6 +260,66 @@ Consequencias observadas:
 - contrato e criado com referencia para `cota_id`;
 - varias regras financeiras e de lance vivem na cota, nao no contrato;
 - movimentacoes de comissao partem de contrato e cota em conjunto.
+
+### Contrato nao e cota
+
+Essa separacao precisa permanecer explicita:
+
+- contrato controla a formalizacao;
+- cota controla o ativo operacional;
+- eventos de assembleia, lance e contemplacao nao nascem no contrato.
+
+### Contemplacao ocorre na cota, nao no contrato
+
+No modelo atual:
+
+- o registro estruturado de contemplacao fica na operacao da cota;
+- a comissao sincroniza esse evento a partir da relacao entre contrato e cota;
+- campos de contrato que reflitam contemplacao devem ser lidos como reflexo do evento operacional, nao como sua origem.
+
+### Carteira e outra dimensao operacional
+
+Carteira nao e:
+
+- etapa do lead;
+- status do contrato;
+- situacao da cota.
+
+Carteira e o dominio de acompanhamento pos-venda.
+
+### Camadas de estado do sistema
+
+O sistema possui pelo menos tres camadas de estado separadas.
+
+#### Status do contrato
+
+Camada de formalizacao:
+
+- `pendente_assinatura`
+- `pendente_pagamento`
+- `alocado`
+- `contemplado`
+- `cancelado`
+
+#### Situacao da cota
+
+Camada operacional:
+
+- `ativa`
+- `contemplada`
+- `cancelada`
+
+#### Status da carteira
+
+Camada de pos-venda:
+
+- `ativo` observado no codigo
+- outros estados completos ficam `pendente de confirmacao`
+
+Regra de leitura:
+
+- nunca usar `contratos.status` como substituto de `cotas.status`;
+- nunca usar `carteira_clientes.status` como substituto das camadas anteriores.
 
 ### Entrada automatica na carteira
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional, Literal, Dict, Any, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, AliasChoices, model_validator
 from supabase import Client
 
 from app.routers.carteira import ensure_carteira_cliente
@@ -62,9 +62,16 @@ class LanceFixoOpcaoIn(BaseModel):
 
 
 class ContractBaseIn(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+    )
+
     administradora_id: str
     numero_cota: str
-    grupo_codigo: str
+    grupo_codigo: str = Field(
+        validation_alias=AliasChoices("grupo_codigo", "grupo"),
+    )
     produto: Literal["imobiliario", "auto"] = "imobiliario"
     valor_carta: str
     prazo: Optional[int] = None
@@ -109,6 +116,11 @@ class ContractFromLeadIn(ContractBaseIn):
 
 class RegisterExistingContractIn(ContractBaseIn):
     lead_id: str
+    prazo: int
+    valor_parcela: str
+    data_adesao: str
+    numero_contrato: str
+    data_assinatura: str
     contract_status: Literal[
         "pendente_assinatura",
         "pendente_pagamento",
@@ -119,6 +131,26 @@ class RegisterExistingContractIn(ContractBaseIn):
     cota_situacao: Literal["ativa", "contemplada", "cancelada"] = "ativa"
     parceiro_id: Optional[str] = None
     observacoes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_initial_state_integrity(self) -> "RegisterExistingContractIn":
+        if (
+            self.contract_status == "contemplado"
+            and self.cota_situacao != "contemplada"
+        ):
+            raise ValueError(
+                "Contrato contemplado exige cota em situação contemplada."
+            )
+
+        if (
+            self.contract_status in {"pendente_assinatura", "pendente_pagamento"}
+            and self.cota_situacao == "cancelada"
+        ):
+            raise ValueError(
+                "Contrato pendente não pode nascer com cota cancelada."
+            )
+
+        return self
 
 
 class ContractStatusUpdateIn(BaseModel):
@@ -240,7 +272,45 @@ def _build_cota_payload(
         "data_adesao": body.data_adesao,
         # banco real usa status para a situação da cota
         "status": cota_status,
-    })
+    })    
+
+
+def _ensure_administradora_exists(supa: Client, *, administradora_id: str) -> None:
+    resp = (
+        supa.table("administradoras")
+        .select("id")
+        .eq("id", administradora_id)
+        .limit(1)
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        raise HTTPException(404, "Administradora não encontrada")
+
+
+def _ensure_parceiro_in_org(
+    supa: Client,
+    *,
+    parceiro_id: Optional[str],
+    org_id: str,
+) -> None:
+    if not parceiro_id:
+        return
+
+    resp = (
+        supa.table("parceiros_corretores")
+        .select("id, org_id")
+        .eq("id", parceiro_id)
+        .limit(1)
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        raise HTTPException(404, "Parceiro não encontrado")
+
+    parceiro = rows[0]
+    if parceiro.get("org_id") != org_id:
+        raise HTTPException(403, "Parceiro pertence a outra organização")
 
 
 def _create_cota(supa: Client, *, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -485,6 +555,7 @@ def create_contract_from_lead(
 ) -> Dict[str, Any]:
     org_id = _ensure_org_header(x_org_id)
     _ensure_lead_in_org(supa, lead_id=body.lead_id, org_id=org_id)
+    _ensure_administradora_exists(supa, administradora_id=body.administradora_id)
     _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
 
     cota_payload = _build_cota_payload(
@@ -540,6 +611,7 @@ def create_contract_from_lead(
         **result,
         "cota_id": cota_id,
         "comissao": comissao_result,
+        "contract_status": contrato["status"],
         "status": contrato["status"],
         "cota_situacao": cota.get("status"),
     }
@@ -553,6 +625,8 @@ def register_existing_contract(
 ) -> Dict[str, Any]:
     org_id = _ensure_org_header(x_org_id)
     _ensure_lead_in_org(supa, lead_id=body.lead_id, org_id=org_id)
+    _ensure_administradora_exists(supa, administradora_id=body.administradora_id)
+    _ensure_parceiro_in_org(supa, parceiro_id=body.parceiro_id, org_id=org_id)
     _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
 
     cota_payload = _build_cota_payload(
@@ -616,6 +690,7 @@ def register_existing_contract(
         **result,
         "cota_id": cota_id,
         "comissao": comissao_result,
+        "contract_status": contrato["status"],
         "status": contrato["status"],
         "cota_situacao": cota.get("status"),
     }

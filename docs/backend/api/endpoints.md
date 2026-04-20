@@ -378,12 +378,43 @@ Headers:
 
 - `X-Org-Id`
 
-Payload adicional:
+Payload minimo:
+
+- `lead_id`
+- `administradora_id`
+- `grupo` ou `grupo_codigo`
+- `numero_cota`
+- `produto`
+- `valor_carta`
+- `prazo`
+- `valor_parcela`
+- `data_adesao`
+- `numero_contrato`
+- `data_assinatura`
+
+Campos adicionais:
 
 - `contract_status`
 - `cota_situacao`
 - `parceiro_id` opcional
 - `repasse_percentual_comissao` opcional
+
+Validacoes:
+
+- valida lead na `org_id`
+- valida administradora existente
+- valida parceiro na `org_id`, quando informado
+- valida `contract_status` separadamente de `cota_situacao`
+- rejeita estados iniciais invalidos, por exemplo:
+  - contrato `contemplado` com cota nao `contemplada`
+  - contrato pendente com cota `cancelada`
+
+Resposta:
+
+- `contrato_id`
+- `cota_id`
+- `contract_status`
+- `cota_situacao`
 
 ### `PATCH /contracts/{contract_id}/status`
 

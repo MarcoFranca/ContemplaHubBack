@@ -9,6 +9,54 @@ Este overview foi montado com base em:
 
 Como o dump SQL completo do schema esta ausente no repositorio atual, alguns detalhes ficam como `pendente de confirmacao`.
 
+## Camadas de estado do sistema
+
+O schema atual sugere tres camadas de estado independentes.
+
+### 1. Status do contrato
+
+Campo principal:
+
+- `contratos.status`
+
+Valores observados:
+
+- `pendente_assinatura`
+- `pendente_pagamento`
+- `alocado`
+- `contemplado`
+- `cancelado`
+
+### 2. Situacao da cota
+
+Campo principal:
+
+- `cotas.status`
+
+Valores observados:
+
+- `ativa`
+- `contemplada`
+- `cancelada`
+
+### 3. Status da carteira
+
+Campo principal:
+
+- `carteira_clientes.status`
+
+Valor confirmado:
+
+- `ativo`
+
+Outros valores:
+
+- `pendente de confirmacao`
+
+Regra de modelagem:
+
+- essas camadas nao devem ser colapsadas em um unico estado.
+
 ## Visao por dominio
 
 ### 1. Leads
@@ -231,6 +279,10 @@ Regras criticas:
 - varias regras financeiras e de assembleia partem da cota;
 - status relevantes vistos no codigo: `ativa`, `contemplada`, `cancelada`.
 
+Observacao de dominio:
+
+- assembleia, lance e contemplacao pertencem a esta entidade e ao seu ecossistema operacional.
+
 ### 6. Contratos
 
 Tabela principal: `contratos`
@@ -275,6 +327,10 @@ Regras criticas:
   - `cancelado`
 - o backend valida transicoes permitidas e correcoes retroativas;
 - mudanca de status pode mover automaticamente a etapa do lead.
+
+Observacao de dominio:
+
+- contrato formaliza a operacao, mas nao substitui a cota como origem dos eventos operacionais.
 
 ### 7. Comissoes
 
@@ -453,6 +509,11 @@ Regra critica:
 
 - o backend impede duplicidade funcional por `(org_id, lead_id)` ao usar `ensure_carteira_cliente`.
 
+Leitura de dominio:
+
+- carteira e uma dimensao de pos-venda operacional;
+- ela nao substitui lead, contrato nem cota.
+
 ### 10. Lances e contemplacao
 
 Tabelas observadas:
@@ -468,6 +529,10 @@ Regras criticas:
 - lances sao registrados por `cota_id` e competencia;
 - contemplacao afeta status da cota e eventos de comissao;
 - opcoes de lance fixo nao podem repetir ordem nem percentual.
+
+Regra de dominio:
+
+- contemplacao ocorre na cota, nao no contrato.
 
 ## Relacionamentos principais
 
@@ -519,3 +584,11 @@ erDiagram
 - sem `parceiro_id`, nao ha repasse de comissao;
 - sem `pdf_path`, o download assinado de contrato nao pode ser gerado;
 - sem `org_id`, endpoints internos principais falham logo na entrada.
+
+## Leitura correta do dominio
+
+- `lead` e a unidade comercial de entrada;
+- `contrato` nasce na formalizacao/fechamento;
+- `cota` e o ativo operacional do consorcio;
+- `assembleia`, `lance` e `contemplacao` pertencem a operacao da cota;
+- `carteira` representa outra dimensao operacional, focada em pos-venda.

@@ -22,6 +22,14 @@ O sistema cobre principalmente:
 - portal de parceiros com visao restrita por permissao;
 - assets/documentos em Supabase Storage.
 
+## Leitura correta do dominio
+
+- `lead` e a unidade de entrada comercial;
+- `contrato` nasce na formalizacao/fechamento;
+- `cota` e o ativo operacional do consorcio;
+- `assembleia`, `lance` e `contemplacao` pertencem a operacao da cota;
+- `carteira` representa o pos-venda operacional, em dimensao propria.
+
 ## Navegacao
 
 - [Arquitetura](./architecture.md)

@@ -12,6 +12,13 @@ No modelo atual, a cota concentra:
 - status operacional da carta;
 - base para comissao e contemplacao.
 
+## Posicao no fluxo macro
+
+- a cota e o ativo operacional do consorcio;
+- assembleia, lance e contemplacao pertencem a essa camada;
+- contrato formaliza a venda, mas nao substitui a cota;
+- carteira passa a consumir a cota em visao de pos-venda.
+
 ## Entidades principais
 
 - `cotas`
@@ -39,6 +46,11 @@ Passos:
 2. cria `cotas`;
 3. opcionalmente cria `cota_lance_fixo_opcoes`;
 4. depois cria `contratos`.
+
+No fluxo `register-existing`:
+
+- a situacao inicial da cota pode ser informada por `cota_situacao`;
+- essa situacao e validada separadamente do `contract_status`.
 
 ### Atualizacao operacional da cota
 
@@ -70,6 +82,14 @@ Mantem o estado do mes operacional.
 - `POST /lances/cartas/{cota_id}/contemplar`
 - `POST /lances/cartas/{cota_id}/cancelar`
 - `POST /lances/cartas/{cota_id}/reativar`
+
+### Operacao de assembleia, lance e contemplacao
+
+Esses tres conceitos pertencem ao dominio da cota:
+
+- assembleia usa `assembleia_dia` e/ou regra operacional da administradora;
+- lance e registrado por `cota_id` e competencia;
+- contemplacao e persistida por `cota_id`.
 
 ## Regras de negocio importantes
 
@@ -107,6 +127,11 @@ A contemplacao tem reflexo em:
 - registro de `contemplacoes`;
 - eventos de comissao do tipo `contemplacao`.
 
+Regra de leitura:
+
+- contemplacao nao nasce no contrato;
+- contemplacao nasce na operacao da cota.
+
 ### Grupo, cota, lance e assembleia
 
 Relacao observada no codigo:
@@ -116,6 +141,24 @@ Relacao observada no codigo:
 - regras da operadora ajudam a prever assembleia;
 - lances sao registrados por competencia;
 - contemplacao pode ocorrer por `lance`, `sorteio` ou `outro`.
+
+### Camada de estado da cota
+
+A situacao da cota e uma camada de estado propria, separada de:
+
+- `contratos.status`
+- `carteira_clientes.status`
+
+Valores observados:
+
+- `ativa`
+- `contemplada`
+- `cancelada`
+
+No cadastro de contrato ja existente:
+
+- `cota_situacao` nasce na cota, nao no contrato;
+- o backend rejeita combinacoes evidentemente invalidas com `contract_status`.
 
 ### Lance fixo
 

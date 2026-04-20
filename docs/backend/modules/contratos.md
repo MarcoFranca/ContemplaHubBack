@@ -12,6 +12,12 @@ Ele cobre:
 - gestao de documento PDF;
 - gatilhos para carteira, kanban, parceiros e comissao.
 
+## Posicao no fluxo macro
+
+- o contrato nasce na formalizacao/fechamento;
+- ele nao e o ativo operacional primario do consorcio;
+- ele formaliza uma operacao ancorada em uma `cota`.
+
 ## Entidades principais
 
 - `contratos`
@@ -37,16 +43,43 @@ Passos:
 8. garante cliente na carteira;
 9. sincroniza parceiros do contrato.
 
+Leitura correta:
+
+- primeiro nasce a cota operacional;
+- depois nasce o contrato de formalizacao.
+
 ### Registrar contrato existente
 
 `POST /contracts/register-existing`
 
 Diferencas:
 
+- exige um conjunto minimo de dados operacionais ja consolidados
 - permite informar `contract_status`;
 - permite informar `cota_situacao`;
 - pode vincular `parceiro_id` inicial;
 - aceita `repasse_percentual_comissao`.
+
+Entrada minima observada no schema:
+
+- `lead_id`
+- `administradora_id`
+- `grupo` ou `grupo_codigo`
+- `numero_cota`
+- `produto`
+- `valor_carta`
+- `prazo`
+- `valor_parcela`
+- `data_adesao`
+- `numero_contrato`
+- `data_assinatura`
+
+Validacoes adicionais:
+
+- valida administradora existente;
+- valida parceiro na organizacao, quando informado;
+- valida `contract_status` separadamente de `cota_situacao`;
+- bloqueia combinacoes iniciais invalidas, como contrato `contemplado` com cota nao `contemplada`.
 
 ### Atualizar status
 
@@ -95,6 +128,16 @@ O codigo deixa isso bem explicito:
 - o contrato referencia a cota;
 - o contrato controla status comercial/juridico da formalizacao.
 
+### Contrato nao governa assembleia, lance e contemplacao
+
+Esses eventos pertencem a operacao da cota.
+
+No dominio atual:
+
+- assembleia e configurada/resolvida a partir da cota;
+- lance e registrado por `cota_id`;
+- contemplacao e registrada por `cota_id`.
+
 ### Status do contrato
 
 Status vistos:
@@ -113,6 +156,20 @@ Na criacao/atualizacao do contrato, o backend integra:
 - comissao
 - sincronizacao de parceiros
 - kanban do lead
+
+### Camada de estado do contrato
+
+O estado do contrato deve ser lido separado de outras camadas:
+
+- status do contrato
+- situacao da cota
+- status da carteira
+
+No fluxo `register-existing`, isso aparece explicitamente porque:
+
+- `contract_status` entra no payload do contrato;
+- `cota_situacao` entra no payload da cota;
+- o backend valida essas camadas sem colapsa-las em um unico campo.
 
 ### Relacao com parceiros
 

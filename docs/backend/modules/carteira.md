@@ -11,6 +11,13 @@ Ele cobre:
 - listagem enriquecida para operacao;
 - reabertura de negociacao sem perder o vinculo de carteira.
 
+## Posicao no fluxo macro
+
+- carteira e pos-venda operacional;
+- ela normalmente passa a existir depois da formalizacao;
+- ela nao substitui lead, contrato nem cota;
+- ela funciona como outra dimensao operacional do sistema.
+
 ## Entidades principais
 
 - `carteira_clientes`
@@ -32,6 +39,12 @@ Regras:
 - se nao existir, cria com `status = ativo`.
 
 Esse service e chamado automaticamente por contratos.
+
+Leitura correta:
+
+- a entrada automatica acontece por conta da formalizacao/fechamento;
+- isso nao transforma carteira em extensao do contrato;
+- carteira passa a ser o dominio de acompanhamento pos-venda.
 
 ### Listar carteira
 
@@ -82,11 +95,29 @@ O modulo deixa explicito que:
 - o cliente pode permanecer em carteira;
 - ao mesmo tempo pode voltar ao fluxo comercial para nova negociacao.
 
+### Carteira nao se confunde com estado de contrato ou cota
+
+Carteira possui sua propria camada de estado.
+
+Ela nao responde por:
+
+- assinatura/pagamento/alocacao do contrato;
+- atividade, cancelamento ou contemplacao da cota;
+- operacao de assembleia ou lance.
+
 ### Entrada automatica por contrato
 
 Na criacao de contrato, o backend registra automaticamente o cliente na carteira.
 
 Isso reduz falha operacional entre venda/contratacao e pos-venda.
+
+### Carteira como dominio proprio
+
+Mesmo quando alimentada automaticamente pelo contrato, carteira continua sendo dominio proprio porque:
+
+- trabalha sobre relacionamento continuo;
+- consolida cliente, cotas e contratos em visao operacional;
+- permite nova negociacao sem recriar a base do cliente.
 
 ## Pontos pendentes de confirmacao
 
