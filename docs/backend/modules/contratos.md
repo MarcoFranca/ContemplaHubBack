@@ -76,7 +76,10 @@ Entrada minima observada no schema:
 
 Validacoes adicionais:
 
-- valida administradora dentro da mesma `org_id`;
+- valida administradora acessivel ao contexto:
+  - aceita administradora da mesma `org_id`;
+  - aceita administradora global, quando `administradoras.org_id` estiver nulo/vazio;
+  - rejeita administradora vinculada a outra organizacao;
 - valida parceiro na organizacao, quando informado;
 - valida `contract_status` separadamente de `cota_situacao`;
 - bloqueia combinacoes iniciais invalidas, como contrato `contemplado` com cota nao `contemplada`;

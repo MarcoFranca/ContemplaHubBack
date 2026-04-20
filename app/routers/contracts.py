@@ -298,16 +298,26 @@ def _ensure_administradora_in_org(
         supa.table("administradoras")
         .select("id, org_id")
         .eq("id", administradora_id)
-        .eq("org_id", org_id)
         .limit(1)
         .execute()
     )
     rows = getattr(resp, "data", None) or []
     if not rows:
-        raise HTTPException(
-            403,
-            "Administradora inválida para a organização informada",
-        )
+        raise HTTPException(404, "Administradora não encontrada")
+
+    administradora = rows[0]
+    administradora_org_id = administradora.get("org_id")
+
+    if administradora_org_id == org_id:
+        return
+
+    if administradora_org_id in (None, "", "global", "GLOBAL"):
+        return
+
+    raise HTTPException(
+        403,
+        "Administradora inválida para a organização informada",
+    )
 
 
 def _ensure_parceiro_in_org(

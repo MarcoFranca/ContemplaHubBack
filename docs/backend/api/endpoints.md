@@ -402,7 +402,10 @@ Campos adicionais:
 Validacoes:
 
 - valida lead na `org_id`
-- valida administradora na mesma `org_id` do contexto autenticado
+- valida administradora acessivel ao contexto autenticado:
+  - aceita administradora da mesma `org_id`
+  - aceita administradora global, quando o registro nao estiver vinculado a uma organizacao especifica
+  - rejeita administradora vinculada a outra organizacao
 - valida parceiro na `org_id`, quando informado
 - valida `contract_status` separadamente de `cota_situacao`
 - rejeita estados iniciais invalidos, por exemplo:

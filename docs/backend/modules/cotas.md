@@ -51,6 +51,9 @@ No fluxo `register-existing`:
 
 - a situacao inicial da cota pode ser informada por `cota_situacao`;
 - essa situacao e validada separadamente do `contract_status`;
+- a administradora precisa estar acessivel ao tenant atual:
+  - pode ser da mesma `org_id`;
+  - pode ser global quando `administradoras.org_id` estiver nulo/vazio;
 - o cadastro nao preenche automaticamente `data_alocacao` ou `data_contemplacao` por simples inferencia a partir da assinatura do contrato.
 
 ### Atualizacao operacional da cota
