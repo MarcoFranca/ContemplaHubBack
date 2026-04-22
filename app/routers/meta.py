@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from supabase import Client
 
+from app.core.config import settings
 from app.deps import get_supabase_admin
 from app.schemas.meta import (
     MetaIntegrationCreateIn,
@@ -29,6 +31,16 @@ from app.services.meta_leads_service import (
 
 
 router = APIRouter(tags=["meta"])
+logger = logging.getLogger(__name__)
+
+
+def _mask_token(value: Optional[str]) -> str:
+    if not value:
+        return "<missing>"
+    cleaned = str(value).strip()
+    if len(cleaned) <= 6:
+        return f"{cleaned[:2]}***"
+    return f"{cleaned[:3]}***{cleaned[-2:]}"
 
 
 def _sanitize_integration(row: dict[str, Any]) -> dict[str, Any]:
@@ -78,36 +90,123 @@ def _get_integration_or_404(
 
 
 @router.get("/api/public/webhooks/meta/leadgen")
-def verify_meta_webhook(
+@router.get("/api/public/webhooks/meta/leadgen/", include_in_schema=False)
+async def verify_meta_webhook(
+    request: Request,
     hub_mode: Optional[str] = Query(default=None, alias="hub.mode"),
     hub_verify_token: Optional[str] = Query(default=None, alias="hub.verify_token"),
     hub_challenge: Optional[str] = Query(default=None, alias="hub.challenge"),
     supa: Client = Depends(get_supabase_admin),
 ):
-    if hub_mode != "subscribe" or not hub_verify_token or not hub_challenge:
-        raise HTTPException(status_code=400, detail="Parâmetros de verificação inválidos.")
-
-    integration = resolve_meta_verify_token(
-        supa,
-        verify_token=hub_verify_token,
+    logger.info(
+        "meta_webhook_verify_received",
+        extra={
+            "path": request.url.path,
+            "query_keys": sorted(request.query_params.keys()),
+            "hub_mode": hub_mode,
+            "hub_challenge_present": bool(hub_challenge),
+            "verify_token_masked": _mask_token(hub_verify_token),
+        },
     )
+
+    if hub_mode != "subscribe" or not hub_verify_token or not hub_challenge:
+        logger.warning(
+            "meta_webhook_verify_invalid_params",
+            extra={
+                "path": request.url.path,
+                "hub_mode": hub_mode,
+                "hub_challenge_present": bool(hub_challenge),
+                "verify_token_masked": _mask_token(hub_verify_token),
+                "status_code": 403,
+            },
+        )
+        raise HTTPException(status_code=403, detail="Verificação inválida.")
+
+    env_verify_token = settings.META_VERIFY_TOKEN.strip()
+    if env_verify_token:
+        is_valid = hub_verify_token == env_verify_token
+        logger.info(
+            "meta_webhook_verify_env_check",
+            extra={
+                "path": request.url.path,
+                "env_token_configured": True,
+                "verify_token_masked": _mask_token(hub_verify_token),
+                "status_code": 200 if is_valid else 403,
+            },
+        )
+        if not is_valid:
+            raise HTTPException(status_code=403, detail="verify_token inválido.")
+        logger.info(
+            "meta_webhook_verify_success",
+            extra={
+                "path": request.url.path,
+                "verification_source": "env",
+                "status_code": 200,
+            },
+        )
+        return PlainTextResponse(content=hub_challenge, status_code=200)
+
+    logger.warning(
+        "meta_webhook_verify_env_missing_fallback_integration",
+        extra={
+            "path": request.url.path,
+            "verify_token_masked": _mask_token(hub_verify_token),
+        },
+    )
+
+    integration = resolve_meta_verify_token(supa, verify_token=hub_verify_token)
     if not integration:
+        logger.warning(
+            "meta_webhook_verify_failed",
+            extra={
+                "path": request.url.path,
+                "verify_token_masked": _mask_token(hub_verify_token),
+                "verification_source": "integration_fallback",
+                "status_code": 403,
+            },
+        )
         raise HTTPException(status_code=403, detail="verify_token inválido.")
 
-    return PlainTextResponse(hub_challenge)
+    logger.info(
+        "meta_webhook_verify_success",
+        extra={
+            "path": request.url.path,
+            "verification_source": "integration_fallback",
+            "integration_id": integration.get("id"),
+            "status_code": 200,
+        },
+    )
+    return PlainTextResponse(content=hub_challenge, status_code=200)
 
 
 @router.post("/api/public/webhooks/meta/leadgen")
+@router.post("/api/public/webhooks/meta/leadgen/", include_in_schema=False)
 async def receive_meta_webhook(
     request: Request,
     supa: Client = Depends(get_supabase_admin),
 ):
     body = await request.json()
+    logger.info(
+        "meta_webhook_post_received",
+        extra={
+            "path": request.url.path,
+            "object_type": body.get("object"),
+            "entry_count": len(body.get("entry") or []),
+        },
+    )
     object_type = body.get("object")
     processed: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
     if object_type != "page":
+        logger.info(
+            "meta_webhook_post_ignored",
+            extra={
+                "path": request.url.path,
+                "object_type": object_type,
+                "status_code": 200,
+            },
+        )
         return {"ok": True, "processed": 0, "ignored": True}
 
     for entry in body.get("entry") or []:
@@ -124,6 +223,16 @@ async def receive_meta_webhook(
                 result = ingest_meta_lead_event(supa, payload=payload)
                 processed.append(result)
             except HTTPException as exc:
+                logger.warning(
+                    "meta_webhook_post_process_error",
+                    extra={
+                        "path": request.url.path,
+                        "page_id": payload.get("page_id"),
+                        "form_id": payload.get("form_id"),
+                        "leadgen_id": payload.get("leadgen_id"),
+                        "status_code": exc.status_code,
+                    },
+                )
                 errors.append(
                     {
                         "page_id": payload.get("page_id"),
@@ -133,6 +242,15 @@ async def receive_meta_webhook(
                     }
                 )
 
+    logger.info(
+        "meta_webhook_post_completed",
+        extra={
+            "path": request.url.path,
+            "processed_count": len(processed),
+            "error_count": len(errors),
+            "status_code": 200,
+        },
+    )
     return {
         "ok": True,
         "processed": len(processed),

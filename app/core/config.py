@@ -30,6 +30,7 @@ class Settings(BaseModel):
         "META_GRAPH_API_BASE",
         "https://graph.facebook.com/v22.0",
     )
+    META_VERIFY_TOKEN: str = os.getenv("META_VERIFY_TOKEN", "")
 
     class Config:
         frozen = True

@@ -131,8 +131,12 @@ Query params:
 
 Regras:
 
-- valida `hub.verify_token` contra uma integracao Meta ativa;
-- responde o `hub.challenge` em texto puro quando a verificacao e valida.
+- valida `hub.verify_token` prioritariamente contra a env `META_VERIFY_TOKEN`;
+- quando a env nao estiver configurada, faz fallback compativel para uma integracao Meta ativa;
+- responde o `hub.challenge` em texto puro quando a verificacao e valida;
+- nao usa wrapper JSON, aspas extras nem response model;
+- nao exige autenticacao ou usuario logado;
+- aceita path com e sem trailing slash para evitar redirect 307/308 na validacao.
 
 ### `POST /api/public/webhooks/meta/leadgen`
 
@@ -157,7 +161,8 @@ Regras:
 - atualiza metadados do lead quando o contato ja existe;
 - registra evento em `meta_webhook_events`;
 - atualiza `last_webhook_at`, `last_success_at` e `last_error_*` na integracao;
-- publica evento em `event_outbox`.
+- publica evento em `event_outbox`;
+- registra logs estruturados de recebimento e processamento sem expor segredos.
 
 Resposta:
 

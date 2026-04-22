@@ -25,21 +25,23 @@ Ele cobre:
 ## Fluxo principal
 
 1. A Meta chama `GET /api/public/webhooks/meta/leadgen` para verificar o webhook.
-2. O backend valida `hub.verify_token` contra uma integracao ativa em `meta_lead_integrations`.
-3. A Meta envia o evento em `POST /api/public/webhooks/meta/leadgen`.
-4. O backend resolve a integracao por `page_id` e `form_id`, sem confiar no payload para tenancy.
-5. O backend usa `leadgen_id` + `access_token_encrypted` da integracao para buscar o lead real na Graph API.
-6. O sistema normaliza `telefone` e `email`, faz deduplicacao em `leads` por `org_id` e atualiza metadados quando o contato ja existe.
-7. Quando o contato nao existe, cria lead novo com:
+2. O backend valida `hub.verify_token` prioritariamente contra a env `META_VERIFY_TOKEN`.
+3. Se a env nao estiver configurada, faz fallback compativel para uma integracao ativa em `meta_lead_integrations`.
+4. A Meta envia o evento em `POST /api/public/webhooks/meta/leadgen`.
+5. O backend resolve a integracao por `page_id` e `form_id`, sem confiar no payload para tenancy.
+6. O backend usa `leadgen_id` + `access_token_encrypted` da integracao para buscar o lead real na Graph API.
+7. O sistema normaliza `telefone` e `email`, faz deduplicacao em `leads` por `org_id` e atualiza metadados quando o contato ja existe.
+8. Quando o contato nao existe, cria lead novo com:
    - `etapa = novo`
    - `origem = meta_ads`
-8. Registra o evento em `meta_webhook_events`.
-9. Publica evento tecnico em `event_outbox`.
-10. Registra auditoria.
+9. Registra o evento em `meta_webhook_events`.
+10. Publica evento tecnico em `event_outbox`.
+11. Registra auditoria.
 
 ## Regras de negocio importantes
 
 - tenancy sempre vem de `meta_lead_integrations.org_id`;
+- a verificacao publica do webhook nao depende de sessao, usuario logado ou middleware de auth;
 - `default_owner_id` so e aceito se pertencer a mesma organizacao;
 - `channel` da integracao fica em `meta_ads`;
 - `source_label` e `form_label` ajudam a manter rastreabilidade comercial no lead;
