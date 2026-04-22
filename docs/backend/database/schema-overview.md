@@ -102,6 +102,68 @@ Regras criticas:
 - todo acesso interno filtra `org_id`;
 - `telefone` ou `email` e obrigatorio na criacao;
 - `etapa` participa do funil comercial e de automacoes de negocio.
+- capturas via Meta Lead Ads entram com `origem = meta_ads` e `etapa = novo`.
+
+### 1.1 Integracoes Meta Lead Ads
+
+Tabelas principais:
+
+- `meta_lead_integrations`
+- `meta_webhook_events`
+
+`meta_lead_integrations`
+
+Campos confirmados:
+
+- `id`
+- `org_id`
+- `created_by`
+- `updated_by`
+- `nome`
+- `provider`
+- `page_id`
+- `page_name`
+- `form_id`
+- `form_name`
+- `source_label`
+- `channel`
+- `default_owner_id`
+- `verify_token`
+- `access_token_encrypted`
+- `ativo`
+- `last_webhook_at`
+- `last_success_at`
+- `last_error_at`
+- `last_error_message`
+- `settings`
+- `created_at`
+- `updated_at`
+
+`meta_webhook_events`
+
+Campos confirmados:
+
+- `id`
+- `org_id`
+- `integration_id`
+- `provider`
+- `event_id`
+- `page_id`
+- `form_id`
+- `leadgen_id`
+- `event_type`
+- `status`
+- `error_message`
+- `payload`
+- `processed_at`
+- `created_at`
+
+Regras criticas:
+
+- tenancy do webhook vem de `meta_lead_integrations.org_id`;
+- `access_token_encrypted` nao deve ser exposto ao frontend;
+- `default_owner_id`, quando usado, precisa pertencer a mesma organizacao;
+- eventos de webhook podem ser auditados e reinspecionados por integracao.
 
 ### 2. Diagnosticos
 

@@ -113,6 +113,127 @@ Resposta:
 
 - `204` sem corpo
 
+## Meta Lead Ads
+
+### `GET /api/public/webhooks/meta/leadgen`
+
+Verifica o webhook da Meta.
+
+Autenticacao:
+
+- publica
+
+Query params:
+
+- `hub.mode`
+- `hub.verify_token`
+- `hub.challenge`
+
+Regras:
+
+- valida `hub.verify_token` contra uma integracao Meta ativa;
+- responde o `hub.challenge` em texto puro quando a verificacao e valida.
+
+### `POST /api/public/webhooks/meta/leadgen`
+
+Recebe eventos de leadgen da Meta.
+
+Autenticacao:
+
+- publica
+
+Payload esperado:
+
+- objeto `page` do webhook da Meta;
+- eventos em `entry[].changes[]` com `field = leadgen`.
+
+Regras:
+
+- resolve a integracao por `page_id` e `form_id`;
+- nunca usa o payload para decidir `org_id`;
+- busca os dados reais do lead na Graph API usando `leadgen_id`;
+- deduplica por `org_id + telefone/email` normalizados;
+- cria lead novo com `etapa = novo` e `origem = meta_ads` quando o contato ainda nao existe;
+- atualiza metadados do lead quando o contato ja existe;
+- registra evento em `meta_webhook_events`;
+- atualiza `last_webhook_at`, `last_success_at` e `last_error_*` na integracao;
+- publica evento em `event_outbox`.
+
+Resposta:
+
+- `200` com contagem de itens processados e erros do lote.
+
+### `GET /meta/integrations`
+
+Lista integracoes Meta da organizacao.
+
+Autenticacao:
+
+- manager autenticado
+
+Resposta:
+
+- lista com metadados da integracao;
+- nao expone `access_token_encrypted` nem `verify_token`.
+
+### `POST /meta/integrations`
+
+Cria integracao Meta da organizacao autenticada.
+
+Autenticacao:
+
+- manager autenticado
+
+Payload:
+
+- `nome`
+- `page_id`
+- `page_name` opcional
+- `form_id` opcional
+- `form_name` opcional
+- `source_label`
+- `default_owner_id` opcional
+- `ativo`
+- `verify_token`
+- `access_token`
+- `settings` opcional
+
+Regras:
+
+- `provider` e fixado como integracao Meta;
+- `channel` e fixado como `meta_ads`;
+- `default_owner_id` precisa pertencer a mesma `org_id`.
+
+### `PATCH /meta/integrations/{id}`
+
+Atualiza integracao Meta.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- opera apenas na `org_id` do usuario;
+- `access_token` e `verify_token` so sao alterados quando enviados no payload;
+- mantem `access_token_encrypted` fora das responses.
+
+### `GET /meta/integrations/{id}/events`
+
+Lista eventos recebidos por integracao.
+
+Autenticacao:
+
+- manager autenticado
+
+Query params:
+
+- `limit` default `100`
+
+Resposta:
+
+- lista de `meta_webhook_events` da integracao, ordenada por `created_at desc`.
+
 ## Kanban
 
 ### `GET /kanban`

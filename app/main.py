@@ -20,6 +20,7 @@ from app.routers.auth_debug import router as auth_debug_router
 from app.routers.partner_users import router as partner_users_router
 from app.routers.contract_documents import router as contract_documents_router
 from app.routers.partner_portal import router as partner_portal_router
+from app.routers.meta import router as meta_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -65,6 +66,7 @@ app.include_router(partner_users_router)
 app.include_router(auth_debug_router)
 app.include_router(contract_documents_router)
 app.include_router(partner_portal_router)
+app.include_router(meta_router)
 
 @app.on_event("startup")
 async def print_routes():

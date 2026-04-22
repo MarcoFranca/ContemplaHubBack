@@ -31,6 +31,21 @@ Regras observadas:
 - `org_id` vem de `X-Org-Id`;
 - endereco principal pode ser salvo junto do lead.
 
+### Criacao por Meta Lead Ads
+
+Entrada por `POST /api/public/webhooks/meta/leadgen`.
+
+Regras observadas:
+
+- a organizacao nao vem do payload publico, e resolvida por `meta_lead_integrations`;
+- o backend usa `leadgen_id` para buscar o lead real na Meta;
+- a deduplicacao ocorre por `org_id + telefone/email` normalizados;
+- quando o contato nao existe, o lead nasce com:
+  - `etapa = novo`
+  - `origem = meta_ads`
+- quando o contato ja existe, o backend atualiza metadados comerciais sem duplicar o cadastro;
+- se a integracao tiver `default_owner_id`, o lead recebe esse responsavel quando ainda nao houver um dono definido.
+
 ### Atualizacao de lead
 
 Entrada por `PATCH /leads/{lead_id}`.
@@ -85,6 +100,7 @@ Composicao atual:
 - cota/contrato tambem nascem a partir de `lead_id`;
 - carteira usa `lead_id` como referencia principal;
 - mudanca de status de contrato pode mover o lead automaticamente.
+- Meta Lead Ads pode alimentar o funil diretamente na etapa `novo`.
 
 ## Pontos pendentes de confirmacao
 

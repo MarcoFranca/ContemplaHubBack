@@ -20,6 +20,7 @@ O sistema cobre principalmente:
 - cadastro de cotas, contratos e carteira;
 - comissoes e repasses para parceiros;
 - portal de parceiros com visao restrita por permissao;
+- integracoes externas de captura de leads, incluindo Meta Lead Ads;
 - assets/documentos em Supabase Storage.
 
 ## Leitura correta do dominio
@@ -40,6 +41,7 @@ O sistema cobre principalmente:
 ## Modulos
 
 - [Leads](./modules/leads.md)
+- [Meta Integracoes](./modules/meta-integracoes.md)
 - [Diagnosticos](./modules/diagnosticos.md)
 - [Propostas](./modules/propostas.md)
 - [Cotas](./modules/cotas.md)

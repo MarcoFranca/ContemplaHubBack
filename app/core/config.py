@@ -26,6 +26,10 @@ class Settings(BaseModel):
     CONTRACTS_SIGNED_URL_EXPIRES_IN: int = int(
         os.getenv("CONTRACTS_SIGNED_URL_EXPIRES_IN", "300")
     )
+    META_GRAPH_API_BASE: str = os.getenv(
+        "META_GRAPH_API_BASE",
+        "https://graph.facebook.com/v22.0",
+    )
 
     class Config:
         frozen = True
