@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
 import requests
 from fastapi import HTTPException, status
@@ -65,6 +67,125 @@ def _integration_provider_filter(builder: Any) -> Any:
     return builder.in_("provider", META_PROVIDER_ALIASES)
 
 
+def _settings_dict(integration: dict[str, Any]) -> dict[str, Any]:
+    settings_value = integration.get("settings")
+    return settings_value if isinstance(settings_value, dict) else {}
+
+
+def _meta_oauth_redirect_uri() -> str:
+    return f"{settings.BACKEND_PUBLIC_URL.rstrip('/')}/meta/oauth/callback"
+
+
+def _frontend_meta_integrations_url() -> str:
+    return f"{settings.FRONTEND_SITE_URL.rstrip('/')}/app/meta-integracoes"
+
+
+def _webhook_configured(integration: dict[str, Any]) -> bool:
+    return bool(settings.META_VERIFY_TOKEN.strip() or _trim(integration.get("verify_token")))
+
+
+def _access_token_configured(integration: dict[str, Any]) -> bool:
+    return bool(_trim(integration.get("access_token_encrypted")))
+
+
+def _subscription_settings(integration: dict[str, Any]) -> dict[str, Any]:
+    raw = _settings_dict(integration).get("subscription")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _connection_settings(integration: dict[str, Any]) -> dict[str, Any]:
+    raw = _settings_dict(integration).get("connection")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _oauth_draft_settings(integration: dict[str, Any]) -> dict[str, Any]:
+    raw = _settings_dict(integration).get("oauth_draft")
+    return raw if isinstance(raw, dict) else {}
+
+
+def build_meta_integration_status(integration: dict[str, Any]) -> dict[str, Any]:
+    subscription = _subscription_settings(integration)
+    connection = _connection_settings(integration)
+    return {
+        "webhook_configured": _webhook_configured(integration),
+        "access_token_configured": _access_token_configured(integration),
+        "page_subscribed": subscription.get("subscribed"),
+        "subscription_checked_at": subscription.get("checked_at"),
+        "subscription_error": subscription.get("error"),
+        "connection_ok": connection.get("ok"),
+        "connection_checked_at": connection.get("checked_at"),
+        "connection_error": connection.get("error"),
+    }
+
+
+def _oauth_state_secret() -> str:
+    return (
+        settings.META_APP_SECRET.strip()
+        or settings.SUPABASE_SERVICE_ROLE_KEY.strip()
+        or settings.META_VERIFY_TOKEN.strip()
+    )
+
+
+def create_meta_oauth_state(*, org_id: str, user_id: str) -> str:
+    secret = _oauth_state_secret()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Segredo de OAuth Meta não configurado.",
+        )
+    payload = {
+        "org_id": org_id,
+        "user_id": user_id,
+        "nonce": secrets.token_urlsafe(18),
+        "issued_at": utcnow_iso(),
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    signature = hashlib.sha256(f"{raw}.{secret}".encode("utf-8")).hexdigest()
+    return json.dumps({"payload": payload, "sig": signature}, separators=(",", ":"))
+
+
+def parse_meta_oauth_state(state_value: str) -> dict[str, Any]:
+    secret = _oauth_state_secret()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Segredo de OAuth Meta não configurado.",
+        )
+    try:
+        state = json.loads(state_value)
+        payload = state["payload"]
+        sig = state["sig"]
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="state inválido.")
+
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    expected = hashlib.sha256(f"{raw}.{secret}".encode("utf-8")).hexdigest()
+    if not secrets.compare_digest(expected, sig):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="state inválido.")
+    if not payload.get("org_id") or not payload.get("user_id"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="state inválido.")
+    return payload
+
+
+def build_meta_oauth_authorize_url(*, org_id: str, user_id: str) -> str:
+    if not settings.META_APP_ID.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="META_APP_ID não configurado.",
+        )
+    state = create_meta_oauth_state(org_id=org_id, user_id=user_id)
+    params = urlencode(
+        {
+            "client_id": settings.META_APP_ID.strip(),
+            "redirect_uri": _meta_oauth_redirect_uri(),
+            "response_type": "code",
+            "scope": settings.META_OAUTH_SCOPES,
+            "state": state,
+        }
+    )
+    return f"https://www.facebook.com/v22.0/dialog/oauth?{params}"
+
+
 def insert_audit_log(
     supa: Client,
     *,
@@ -98,6 +219,22 @@ def _update_integration_status(
 ) -> None:
     payload = {**updates, "updated_at": utcnow_iso()}
     supa.table("meta_lead_integrations").update(payload).eq("id", integration_id).execute()
+
+
+def _merge_integration_settings(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    next_settings = {**_settings_dict(integration), **updates}
+    _update_integration_status(
+        supa,
+        integration_id=integration["id"],
+        updates={"settings": next_settings},
+    )
+    integration["settings"] = next_settings
+    return integration
 
 
 def _insert_webhook_event(
@@ -281,6 +418,586 @@ def _fetch_meta_lead_details(
     if not isinstance(data, dict) or not data.get("id"):
         raise RuntimeError("Meta Graph não retornou um lead válido.")
     return data
+
+
+def _meta_graph_request(
+    *,
+    method: str,
+    path: str,
+    access_token: str,
+    params: Optional[dict[str, Any]] = None,
+    data: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    response = requests.request(
+        method=method.upper(),
+        url=f"{settings.META_GRAPH_API_BASE.rstrip('/')}/{path.lstrip('/')}",
+        params={
+            **(params or {}),
+            "access_token": access_token,
+        },
+        data=data,
+        timeout=20,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Meta Graph falhou: {response.status_code} {response.text}")
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Meta Graph retornou payload inválido.")
+    return payload
+
+
+def _meta_graph_user_request(
+    *,
+    method: str,
+    path: str,
+    user_access_token: str,
+    params: Optional[dict[str, Any]] = None,
+    data: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    return _meta_graph_request(
+        method=method,
+        path=path,
+        access_token=user_access_token,
+        params=params,
+        data=data,
+    )
+
+
+def exchange_meta_oauth_code(*, code: str) -> str:
+    if not settings.META_APP_ID.strip() or not settings.META_APP_SECRET.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Credenciais OAuth da Meta não configuradas.",
+        )
+    response = requests.get(
+        f"{settings.META_GRAPH_API_BASE.rstrip('/')}/oauth/access_token",
+        params={
+            "client_id": settings.META_APP_ID.strip(),
+            "client_secret": settings.META_APP_SECRET.strip(),
+            "redirect_uri": _meta_oauth_redirect_uri(),
+            "code": code,
+        },
+        timeout=20,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Meta OAuth falhou: {response.status_code} {response.text}")
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Meta OAuth retornou payload inválido.")
+    access_token = _trim(payload.get("access_token"))
+    if not access_token:
+        raise RuntimeError("Meta OAuth não retornou access_token.")
+    return access_token
+
+
+def list_meta_oauth_pages(*, user_access_token: str) -> list[dict[str, Any]]:
+    payload = _meta_graph_user_request(
+        method="GET",
+        path="me/accounts",
+        user_access_token=user_access_token,
+        params={"fields": "id,name,category,access_token"},
+    )
+    result: list[dict[str, Any]] = []
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        result.append(
+            {
+                "id": str(item["id"]),
+                "name": _trim(item.get("name")),
+                "category": _trim(item.get("category")),
+                "access_token": _trim(item.get("access_token")),
+            }
+        )
+    return result
+
+
+def _build_oauth_draft_payload(
+    *,
+    org_id: str,
+    user_id: str,
+    user_access_token: str,
+    pages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    draft_nonce = secrets.token_urlsafe(12)
+    return {
+        "org_id": org_id,
+        "created_by": user_id,
+        "updated_by": user_id,
+        "nome": "Meta OAuth draft",
+        "provider": META_PROVIDER,
+        "page_id": f"oauth-draft:{draft_nonce}",
+        "page_name": "OAuth draft",
+        "form_id": None,
+        "form_name": None,
+        "source_label": "Meta Ads",
+        "channel": META_CHANNEL,
+        "default_owner_id": None,
+        "verify_token": None,
+        "access_token_encrypted": user_access_token,
+        "ativo": False,
+        "settings": {
+            "oauth_draft": {
+                "active": True,
+                "connected_at": utcnow_iso(),
+                "pages": [
+                    {
+                        "id": page["id"],
+                        "name": page.get("name"),
+                        "category": page.get("category"),
+                    }
+                    for page in pages
+                ],
+            }
+        },
+        "updated_at": utcnow_iso(),
+    }
+
+
+def _list_org_meta_integrations(
+    supa: Client,
+    *,
+    org_id: str,
+) -> list[dict[str, Any]]:
+    resp = (
+        _integration_provider_filter(
+            supa.table("meta_lead_integrations")
+            .select("*")
+            .eq("org_id", org_id)
+        )
+        .order("updated_at", desc=True)
+        .limit(200)
+        .execute()
+    )
+    return _safe_data(resp) or []
+
+
+def get_latest_meta_oauth_draft(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+) -> Optional[dict[str, Any]]:
+    rows = _list_org_meta_integrations(supa, org_id=org_id)
+    for row in rows:
+        oauth_draft = _oauth_draft_settings(row)
+        if oauth_draft.get("active") and row.get("created_by") == user_id:
+            return row
+    return None
+
+
+def save_meta_oauth_draft(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+    user_access_token: str,
+    pages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    current = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
+    payload = _build_oauth_draft_payload(
+        org_id=org_id,
+        user_id=user_id,
+        user_access_token=user_access_token,
+        pages=pages,
+    )
+    if current:
+        resp = (
+            supa.table("meta_lead_integrations")
+            .update(payload)
+            .eq("id", current["id"])
+            .eq("org_id", org_id)
+            .select("*")
+            .single()
+            .execute()
+        )
+    else:
+        resp = (
+            supa.table("meta_lead_integrations")
+            .insert(payload)
+            .select("*")
+            .single()
+            .execute()
+        )
+    row = _safe_data(resp)
+    if not row:
+        raise RuntimeError("Falha ao salvar sessão OAuth temporária da Meta.")
+    return row
+
+
+def get_meta_oauth_pages_for_user(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    draft = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
+    if not draft:
+        return []
+    pages = _oauth_draft_settings(draft).get("pages") or []
+    result: list[dict[str, Any]] = []
+    for item in pages:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        result.append(
+            {
+                "id": str(item["id"]),
+                "name": _trim(item.get("name")),
+                "category": _trim(item.get("category")),
+            }
+        )
+    return result
+
+
+def get_meta_page_forms_for_user(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+    page_id: str,
+) -> list[dict[str, Any]]:
+    draft = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
+    if not draft:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhuma conexão OAuth Meta em andamento.",
+        )
+    access_token = _ensure_meta_integration_token(draft)
+    pages = get_meta_oauth_pages_for_user(supa, org_id=org_id, user_id=user_id)
+    if not any(page["id"] == page_id for page in pages):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Página não disponível na sessão OAuth atual.",
+        )
+    payload = _meta_graph_user_request(
+        method="GET",
+        path=f"{page_id}/leadgen_forms",
+        user_access_token=access_token,
+        params={"fields": "id,name,status"},
+    )
+    result: list[dict[str, Any]] = []
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        result.append(
+            {
+                "id": str(item["id"]),
+                "name": _trim(item.get("name")),
+                "status": _trim(item.get("status")),
+            }
+        )
+    return result
+
+
+def finalize_meta_oauth_integration(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+    nome: str,
+    source_label: str,
+    page_id: str,
+    form_id: Optional[str],
+    default_owner_id: Optional[str],
+    ativo: bool,
+) -> dict[str, Any]:
+    draft = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
+    if not draft:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhuma conexão OAuth Meta em andamento.",
+        )
+    user_access_token = _ensure_meta_integration_token(draft)
+    pages = list_meta_oauth_pages(user_access_token=user_access_token)
+    page = next((item for item in pages if item["id"] == page_id), None)
+    if not page:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Página não autorizada para a conexão Meta atual.",
+        )
+    forms = get_meta_page_forms_for_user(
+        supa,
+        org_id=org_id,
+        user_id=user_id,
+        page_id=page_id,
+    )
+    selected_form = (
+        next((item for item in forms if item["id"] == form_id), None) if form_id else None
+    )
+    if form_id and not selected_form:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formulário não encontrado para a página selecionada.",
+        )
+
+    payload = {
+        "nome": nome,
+        "page_id": page_id,
+        "page_name": page.get("name"),
+        "form_id": form_id,
+        "form_name": selected_form.get("name") if selected_form else None,
+        "source_label": source_label,
+        "default_owner_id": default_owner_id,
+        "access_token_encrypted": page.get("access_token") or user_access_token,
+        "ativo": ativo,
+        "updated_by": user_id,
+        "updated_at": utcnow_iso(),
+        "settings": {
+            **_settings_dict(draft),
+            "oauth_draft": {
+                "active": False,
+                "finalized_at": utcnow_iso(),
+            },
+        },
+    }
+
+    resp = (
+        supa.table("meta_lead_integrations")
+        .update(payload)
+        .eq("id", draft["id"])
+        .eq("org_id", org_id)
+        .select("*")
+        .single()
+        .execute()
+    )
+    row = _safe_data(resp)
+    if not row:
+        raise RuntimeError("Falha ao finalizar integração Meta via OAuth.")
+    return row
+
+
+def _ensure_meta_integration_token(integration: dict[str, Any]) -> str:
+    access_token = _trim(integration.get("access_token_encrypted"))
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Integração Meta sem access_token configurado.",
+        )
+    return access_token
+
+
+def _record_connection_result(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+    ok: bool,
+    raw: Optional[dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> dict[str, Any]:
+    checked_at = utcnow_iso()
+    return _merge_integration_settings(
+        supa,
+        integration=integration,
+        updates={
+            "connection": {
+                "ok": ok,
+                "checked_at": checked_at,
+                "error": error,
+                "page_name": raw.get("name") if isinstance(raw, dict) else None,
+            }
+        },
+    )
+
+
+def _record_subscription_result(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+    subscribed: Optional[bool],
+    raw: Optional[dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> dict[str, Any]:
+    checked_at = utcnow_iso()
+    return _merge_integration_settings(
+        supa,
+        integration=integration,
+        updates={
+            "subscription": {
+                "subscribed": subscribed,
+                "checked_at": checked_at,
+                "error": error,
+                "app_id": settings.META_APP_ID or None,
+                "page_id": integration.get("page_id"),
+                "raw_count": len((raw or {}).get("data") or [])
+                if isinstance(raw, dict)
+                else None,
+            }
+        },
+    )
+
+
+def test_meta_integration_connection(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+) -> dict[str, Any]:
+    access_token = _ensure_meta_integration_token(integration)
+    try:
+        payload = _meta_graph_request(
+            method="GET",
+            path=integration["page_id"],
+            access_token=access_token,
+            params={"fields": "id,name"},
+        )
+        _record_connection_result(
+            supa,
+            integration=integration,
+            ok=True,
+            raw=payload,
+            error=None,
+        )
+        return {
+            "ok": True,
+            "integration_id": integration["id"],
+            "page_id": integration["page_id"],
+            "page_name": payload.get("name") or integration.get("page_name"),
+            "checked_at": utcnow_iso(),
+            "raw": payload,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _record_connection_result(
+            supa,
+            integration=integration,
+            ok=False,
+            raw=None,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        )
+
+
+def get_meta_subscription_status(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+) -> dict[str, Any]:
+    access_token = _ensure_meta_integration_token(integration)
+    try:
+        payload = _meta_graph_request(
+            method="GET",
+            path=f"{integration['page_id']}/subscribed_apps",
+            access_token=access_token,
+            params={"fields": "id,name"},
+        )
+        entries = payload.get("data") or []
+        app_id = settings.META_APP_ID.strip()
+        subscribed = any(
+            str(item.get("id")) == app_id for item in entries if isinstance(item, dict)
+        ) if app_id else bool(entries)
+        _record_subscription_result(
+            supa,
+            integration=integration,
+            subscribed=subscribed,
+            raw=payload,
+            error=None,
+        )
+        return {
+            "ok": True,
+            "integration_id": integration["id"],
+            "page_id": integration["page_id"],
+            "page_name": integration.get("page_name"),
+            "subscribed": subscribed,
+            "checked_at": utcnow_iso(),
+            "app_id": app_id or None,
+            "raw": payload,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _record_subscription_result(
+            supa,
+            integration=integration,
+            subscribed=False,
+            raw=None,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        )
+
+
+def subscribe_meta_page(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+) -> dict[str, Any]:
+    access_token = _ensure_meta_integration_token(integration)
+    try:
+        payload = _meta_graph_request(
+            method="POST",
+            path=f"{integration['page_id']}/subscribed_apps",
+            access_token=access_token,
+            data={"subscribed_fields": "leadgen"},
+        )
+        _record_subscription_result(
+            supa,
+            integration=integration,
+            subscribed=True,
+            raw=payload,
+            error=None,
+        )
+        return {
+            "ok": True,
+            "integration_id": integration["id"],
+            "page_id": integration["page_id"],
+            "subscribed": True,
+            "checked_at": utcnow_iso(),
+            "raw": payload,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _record_subscription_result(
+            supa,
+            integration=integration,
+            subscribed=False,
+            raw=None,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        )
+
+
+def list_meta_page_forms(
+    *,
+    integration: dict[str, Any],
+) -> list[dict[str, Any]]:
+    try:
+        access_token = _ensure_meta_integration_token(integration)
+        payload = _meta_graph_request(
+            method="GET",
+            path=f"{integration['page_id']}/leadgen_forms",
+            access_token=access_token,
+            params={"fields": "id,name,status"},
+        )
+        forms = payload.get("data") or []
+        result: list[dict[str, Any]] = []
+        for item in forms:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            result.append(
+                {
+                    "id": str(item["id"]),
+                    "name": _trim(item.get("name")),
+                    "status": _trim(item.get("status")),
+                }
+            )
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        )
 
 
 def _parse_meta_field_data(field_data: list[dict[str, Any]] | None) -> dict[str, Optional[str]]:

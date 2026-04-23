@@ -7,11 +7,14 @@ Este modulo conecta formularios da Meta Lead Ads ao funil comercial do Contempla
 Ele cobre:
 
 - cadastro multi-tenant das integracoes por `org_id`;
+- conexao assistida via OAuth da Meta, preservando o modo manual existente;
 - verificacao e recebimento do webhook publico;
+- validacao de assinatura `X-Hub-Signature-256` com `META_APP_SECRET`;
 - resolucao segura da organizacao pela tabela `meta_lead_integrations`;
 - busca do lead real na Meta via `leadgen_id`;
 - deduplicacao por telefone/email normalizados;
 - criacao ou atualizacao do lead comercial;
+- operacao assistida da Graph API para testar conexao, inscrever pagina e consultar formularios;
 - rastreabilidade em `meta_webhook_events`, `event_outbox` e `audit_logs`.
 
 ## Tabelas principais
@@ -42,11 +45,54 @@ Ele cobre:
 
 - tenancy sempre vem de `meta_lead_integrations.org_id`;
 - a verificacao publica do webhook nao depende de sessao, usuario logado ou middleware de auth;
+- o POST do webhook exige assinatura valida quando `META_APP_SECRET` estiver configurado no ambiente;
 - `default_owner_id` so e aceito se pertencer a mesma organizacao;
 - `channel` da integracao fica em `meta_ads`;
 - `source_label` e `form_label` ajudam a manter rastreabilidade comercial no lead;
 - se o lead ja existir, o sistema atualiza metadados e nao duplica o cadastro;
 - eventos duplicados do mesmo webhook sao ignorados por hash de evento.
+
+## Operacao assistida
+
+O backend agora expone operacoes administrativas para fechar a integracao em producao:
+
+- `GET /meta/oauth/start`
+- `GET /meta/oauth/callback`
+- `GET /meta/pages`
+- `GET /meta/pages/{page_id}/forms`
+- `POST /meta/integrations/from-oauth`
+- `POST /meta/integrations/{id}/test-connection`
+- `POST /meta/integrations/{id}/subscribe-page`
+- `GET /meta/integrations/{id}/subscription-status`
+- `GET /meta/integrations/{id}/forms`
+
+Essas operacoes:
+
+- usam somente o `access_token` salvo na propria integracao;
+- usam uma sessao OAuth temporaria server-side por `org_id` e `user_id` durante o fluxo assistido;
+- respeitam `org_id` e `require_manager`;
+- atualizam o status operacional em `settings`, sem expor o token ao frontend.
+
+### Fluxo assistido via OAuth
+
+1. O manager chama `GET /meta/oauth/start`.
+2. O backend gera uma URL de consentimento com `state` assinado contendo `org_id` e `user_id`.
+3. A Meta redireciona para `GET /meta/oauth/callback`.
+4. O backend troca `code` por token de usuario e lista as paginas autorizadas.
+5. O backend salva um rascunho temporario na propria `meta_lead_integrations`, marcado em `settings.oauth_draft.active = true`.
+6. O frontend consulta `GET /meta/pages` e `GET /meta/pages/{page_id}/forms` para montar o fluxo assistido sem ver o token.
+7. O frontend confirma a selecao em `POST /meta/integrations/from-oauth`.
+8. O backend converte o rascunho em integracao real da org e tenta inscrever a pagina em `leadgen`.
+
+### Sessao temporaria de OAuth
+
+Para evitar tabela nova e nao expor segredo ao browser, o fluxo assistido usa um rascunho operacional na tabela existente:
+
+- o rascunho fica vinculado a `org_id` e `created_by`;
+- o token Meta fica apenas no backend, em `access_token_encrypted`;
+- `page_id` recebe um valor tecnico temporario enquanto a conexao nao e finalizada;
+- a listagem principal de integracoes oculta rascunhos ativos;
+- depois da finalizacao, o mesmo registro passa a representar a integracao real.
 
 ## Endpoints relacionados
 
@@ -55,6 +101,15 @@ Ele cobre:
 - `GET /meta/integrations`
 - `POST /meta/integrations`
 - `PATCH /meta/integrations/{id}`
+- `GET /meta/oauth/start`
+- `GET /meta/oauth/callback`
+- `GET /meta/pages`
+- `GET /meta/pages/{page_id}/forms`
+- `POST /meta/integrations/from-oauth`
+- `POST /meta/integrations/{id}/test-connection`
+- `POST /meta/integrations/{id}/subscribe-page`
+- `GET /meta/integrations/{id}/subscription-status`
+- `GET /meta/integrations/{id}/forms`
 - `GET /meta/integrations/{id}/events`
 
 ## Seguranca

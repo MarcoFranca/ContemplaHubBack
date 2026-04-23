@@ -30,7 +30,15 @@ class Settings(BaseModel):
         "META_GRAPH_API_BASE",
         "https://graph.facebook.com/v22.0",
     )
+    META_APP_ID: str = os.getenv("META_APP_ID", "")
+    META_APP_SECRET: str = os.getenv("META_APP_SECRET", "")
     META_VERIFY_TOKEN: str = os.getenv("META_VERIFY_TOKEN", "")
+    META_OAUTH_SCOPES: str = os.getenv(
+        "META_OAUTH_SCOPES",
+        "pages_show_list,pages_read_engagement,pages_manage_metadata,leads_retrieval,business_management",
+    )
+    BACKEND_PUBLIC_URL: str = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000")
+    FRONTEND_SITE_URL: str = os.getenv("FRONTEND_SITE_URL", "http://localhost:3000")
 
     class Config:
         frozen = True

@@ -155,6 +155,7 @@ Regras:
 
 - resolve a integracao por `page_id` e `form_id`;
 - nunca usa o payload para decidir `org_id`;
+- valida `X-Hub-Signature-256` com `META_APP_SECRET` antes de processar o body;
 - busca os dados reais do lead na Graph API usando `leadgen_id`;
 - deduplica por `org_id + telefone/email` normalizados;
 - cria lead novo com `etapa = novo` e `origem = meta_ads` quando o contato ainda nao existe;
@@ -168,6 +169,64 @@ Resposta:
 
 - `200` com contagem de itens processados e erros do lote.
 
+### `POST /meta/integrations/{id}/subscribe-page`
+
+Inscreve a pagina da integracao no app da Meta.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- opera apenas na `org_id` do usuario;
+- usa o `access_token` da propria integracao;
+- chama `/{page-id}/subscribed_apps?subscribed_fields=leadgen` na Graph API;
+- atualiza o status operacional salvo em `settings`.
+
+### `GET /meta/integrations/{id}/subscription-status`
+
+Verifica se a pagina esta inscrita no app da Meta.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- opera apenas na `org_id` do usuario;
+- consulta `/{page-id}/subscribed_apps`;
+- quando `META_APP_ID` estiver configurado, compara explicitamente com o app atual;
+- atualiza o status operacional salvo em `settings`.
+
+### `GET /meta/integrations/{id}/forms`
+
+Lista formularios disponiveis na pagina da integracao.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- opera apenas na `org_id` do usuario;
+- consulta `/{page-id}/leadgen_forms` na Graph API;
+- nao altera o cadastro da integracao.
+
+### `POST /meta/integrations/{id}/test-connection`
+
+Valida se `page_id` e `access_token` da integracao estao operacionais.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- opera apenas na `org_id` do usuario;
+- consulta `/{page-id}?fields=id,name` na Graph API;
+- atualiza o status operacional salvo em `settings`.
+
 ### `GET /meta/integrations`
 
 Lista integracoes Meta da organizacao.
@@ -179,7 +238,88 @@ Autenticacao:
 Resposta:
 
 - lista com metadados da integracao;
+- oculta rascunhos internos de OAuth da listagem principal;
 - nao expone `access_token_encrypted` nem `verify_token`.
+
+### `GET /meta/oauth/start`
+
+Inicia o fluxo OAuth assistido da Meta.
+
+Autenticacao:
+
+- manager autenticado
+
+Resposta:
+
+- `auth_url` para redirecionamento ao consentimento da Meta
+- a URL ja sai assinada com `state` server-side contendo `org_id` e `user_id`
+
+### `GET /meta/oauth/callback`
+
+Recebe o retorno do consentimento OAuth da Meta.
+
+Autenticacao:
+
+- publica
+
+Regras:
+
+- valida `state` assinado;
+- troca `code` por token de usuario;
+- busca paginas autorizadas;
+- salva uma sessao temporaria server-side vinculada a `org_id` e `user_id`;
+- reutiliza a tabela `meta_lead_integrations` como rascunho operacional de OAuth, sem criar tabela extra;
+- persiste temporariamente o token da Meta apenas no backend;
+- redireciona o browser de volta para `/app/meta-integracoes?tab=oauth`.
+
+Observacoes:
+
+- a callback e publica, mas a associacao com tenant vem do `state` assinado, nunca do client;
+- em erro, redireciona para a mesma tela com `oauth_error`.
+
+### `GET /meta/pages`
+
+Lista paginas autorizadas da sessao OAuth assistida atual.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- usa a sessao temporaria mais recente do usuario na org;
+- retorna apenas paginas previamente carregadas no callback OAuth;
+- nao expone token no client.
+
+### `GET /meta/pages/{page_id}/forms`
+
+Lista formularios da pagina selecionada na sessao OAuth atual.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- usa a sessao OAuth temporaria mais recente do usuario na org;
+- valida que a pagina escolhida pertence ao conjunto autorizado no fluxo atual;
+- consulta a Graph API com token mantido apenas no backend.
+
+### `POST /meta/integrations/from-oauth`
+
+Finaliza a integracao assistida da Meta.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- usa a sessao OAuth temporaria do usuario na org;
+- valida a pagina e o formulario escolhidos;
+- transforma o rascunho em integracao real;
+- tenta inscrever a pagina no app para `leadgen`;
+- oculta o rascunho da listagem principal de integracoes.
 
 ### `POST /meta/integrations`
 

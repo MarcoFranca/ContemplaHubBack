@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from typing import Any, Optional
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from supabase import Client
 
 from app.core.config import settings
 from app.deps import get_supabase_admin
 from app.schemas.meta import (
     MetaIntegrationCreateIn,
+    MetaConnectionTestOut,
     MetaIntegrationOut,
+    MetaOAuthFinalizeIn,
+    MetaOAuthStartOut,
+    MetaPageFormOut,
+    MetaPageOut,
+    MetaSubscribePageOut,
+    MetaSubscriptionStatusOut,
     MetaIntegrationUpdateIn,
     MetaWebhookEventOut,
 )
@@ -23,9 +33,24 @@ from app.services.meta_leads_service import (
     _ensure_owner_in_org,
     _integration_provider_filter,
     _safe_data,
+    build_meta_oauth_authorize_url,
+    build_meta_integration_status,
+    exchange_meta_oauth_code,
+    finalize_meta_oauth_integration,
+    get_latest_meta_oauth_draft,
+    get_meta_oauth_pages_for_user,
+    get_meta_page_forms_for_user,
+    get_meta_subscription_status,
     ingest_meta_lead_event,
     insert_audit_log,
+    list_meta_page_forms,
+    list_meta_oauth_pages,
+    parse_meta_oauth_state,
     resolve_meta_verify_token,
+    save_meta_oauth_draft,
+    subscribe_meta_page,
+    test_meta_integration_connection,
+    _frontend_meta_integrations_url,
     utcnow_iso,
 )
 
@@ -44,6 +69,7 @@ def _mask_token(value: Optional[str]) -> str:
 
 
 def _sanitize_integration(row: dict[str, Any]) -> dict[str, Any]:
+    operational = build_meta_integration_status(row)
     return {
         "id": row["id"],
         "org_id": row["org_id"],
@@ -61,6 +87,7 @@ def _sanitize_integration(row: dict[str, Any]) -> dict[str, Any]:
         "last_success_at": row.get("last_success_at"),
         "last_error_at": row.get("last_error_at"),
         "last_error_message": row.get("last_error_message"),
+        **operational,
         "settings": row.get("settings") or {},
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -87,6 +114,32 @@ def _get_integration_or_404(
     if not row:
         raise HTTPException(status_code=404, detail="Integração Meta não encontrada.")
     return row
+
+
+def _validate_meta_signature(
+    *,
+    body: bytes,
+    signature_header: Optional[str],
+) -> None:
+    app_secret = settings.META_APP_SECRET.strip()
+    if not app_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="META_APP_SECRET não configurado para validar assinatura do webhook.",
+        )
+    if not signature_header:
+        raise HTTPException(status_code=403, detail="Assinatura do webhook ausente.")
+    if not signature_header.startswith("sha256="):
+        raise HTTPException(status_code=403, detail="Assinatura do webhook inválida.")
+
+    expected = hmac.new(
+        app_secret.encode("utf-8"),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    received = signature_header.split("=", 1)[1].strip()
+    if not hmac.compare_digest(expected, received):
+        raise HTTPException(status_code=403, detail="Assinatura do webhook inválida.")
 
 
 @router.get("/api/public/webhooks/meta/leadgen")
@@ -183,8 +236,25 @@ async def verify_meta_webhook(
 @router.post("/api/public/webhooks/meta/leadgen/", include_in_schema=False)
 async def receive_meta_webhook(
     request: Request,
+    x_hub_signature_256: Optional[str] = Header(default=None, alias="X-Hub-Signature-256"),
     supa: Client = Depends(get_supabase_admin),
 ):
+    raw_body = await request.body()
+    try:
+        _validate_meta_signature(
+            body=raw_body,
+            signature_header=x_hub_signature_256,
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "meta_webhook_post_invalid_signature",
+            extra={
+                "path": request.url.path,
+                "signature_present": bool(x_hub_signature_256),
+                "status_code": exc.status_code,
+            },
+        )
+        raise
     body = await request.json()
     logger.info(
         "meta_webhook_post_received",
@@ -192,6 +262,7 @@ async def receive_meta_webhook(
             "path": request.url.path,
             "object_type": body.get("object"),
             "entry_count": len(body.get("entry") or []),
+            "signature_present": bool(x_hub_signature_256),
         },
     )
     object_type = body.get("object")
@@ -273,8 +344,67 @@ def list_meta_integrations(
         .order("created_at", desc=True)
         .execute()
     )
-    rows = _safe_data(resp) or []
+    rows = [
+        row
+        for row in (_safe_data(resp) or [])
+        if not bool(((row.get("settings") or {}).get("oauth_draft") or {}).get("active"))
+    ]
     return [_sanitize_integration(row) for row in rows]
+
+
+@router.get("/meta/oauth/start", response_model=MetaOAuthStartOut)
+def start_meta_oauth(
+    ctx: AuthContext = Depends(require_manager),
+):
+    return {"ok": True, "auth_url": build_meta_oauth_authorize_url(org_id=ctx.org_id, user_id=ctx.user_id)}
+
+
+@router.get("/meta/oauth/callback")
+def meta_oauth_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_description: Optional[str] = Query(default=None),
+    supa: Client = Depends(get_supabase_admin),
+):
+    frontend_url = _frontend_meta_integrations_url()
+    if error:
+        params = urlencode(
+            {
+                "tab": "oauth",
+                "oauth_error": error_description or error,
+            }
+        )
+        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
+    if not code or not state:
+        params = urlencode({"tab": "oauth", "oauth_error": "Callback OAuth Meta inválido."})
+        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
+
+    try:
+        parsed_state = parse_meta_oauth_state(state)
+        user_access_token = exchange_meta_oauth_code(code=code)
+        pages = list_meta_oauth_pages(user_access_token=user_access_token)
+        draft = save_meta_oauth_draft(
+            supa,
+            org_id=parsed_state["org_id"],
+            user_id=parsed_state["user_id"],
+            user_access_token=user_access_token,
+            pages=pages,
+        )
+        insert_audit_log(
+            supa,
+            org_id=parsed_state["org_id"],
+            actor_id=parsed_state["user_id"],
+            entity="meta_lead_integration",
+            entity_id=draft["id"],
+            action="oauth_callback",
+            diff={"pages_available": len(pages)},
+        )
+        params = urlencode({"tab": "oauth", "oauth_connected": "1"})
+        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
+    except Exception as exc:
+        params = urlencode({"tab": "oauth", "oauth_error": str(exc)})
+        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
 
 
 @router.post("/meta/integrations", response_model=MetaIntegrationOut, status_code=201)
@@ -334,6 +464,32 @@ def create_meta_integration(
         },
     )
     return _sanitize_integration(row)
+
+
+@router.get("/meta/pages", response_model=list[MetaPageOut])
+def list_meta_oauth_pages_endpoint(
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    return get_meta_oauth_pages_for_user(
+        supa,
+        org_id=ctx.org_id,
+        user_id=ctx.user_id,
+    )
+
+
+@router.get("/meta/pages/{page_id}/forms", response_model=list[MetaPageFormOut])
+def list_meta_oauth_page_forms_endpoint(
+    page_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    return get_meta_page_forms_for_user(
+        supa,
+        org_id=ctx.org_id,
+        user_id=ctx.user_id,
+        page_id=page_id,
+    )
 
 
 @router.patch("/meta/integrations/{integration_id}", response_model=MetaIntegrationOut)
@@ -398,6 +554,58 @@ def patch_meta_integration(
     return _sanitize_integration(row)
 
 
+@router.post("/meta/integrations/from-oauth", response_model=MetaIntegrationOut)
+def create_meta_integration_from_oauth(
+    body: MetaOAuthFinalizeIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    default_owner_id = _ensure_owner_in_org(
+        supa,
+        org_id=ctx.org_id,
+        owner_id=body.default_owner_id,
+    )
+    row = finalize_meta_oauth_integration(
+        supa,
+        org_id=ctx.org_id,
+        user_id=ctx.user_id,
+        nome=body.nome,
+        source_label=body.source_label,
+        page_id=body.page_id,
+        form_id=body.form_id,
+        default_owner_id=default_owner_id,
+        ativo=body.ativo,
+    )
+    subscribed = False
+    try:
+        subscribe_result = subscribe_meta_page(supa, integration=row)
+        subscribed = bool(subscribe_result.get("subscribed"))
+    except Exception as exc:
+        logger.warning(
+            "meta_oauth_finalize_subscription_error",
+            extra={
+                "integration_id": row["id"],
+                "page_id": row["page_id"],
+                "status_code": 500,
+                "message": str(exc),
+            },
+        )
+    insert_audit_log(
+        supa,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        entity="meta_lead_integration",
+        entity_id=row["id"],
+        action="oauth_finalize",
+        diff={
+            "page_id": row["page_id"],
+            "form_id": row.get("form_id"),
+            "subscribed": subscribed,
+        },
+    )
+    return _sanitize_integration(row)
+
+
 @router.get(
     "/meta/integrations/{integration_id}/events",
     response_model=list[MetaWebhookEventOut],
@@ -425,3 +633,91 @@ def list_meta_integration_events(
     )
     rows = _safe_data(resp) or []
     return rows
+
+
+@router.post(
+    "/meta/integrations/{integration_id}/subscribe-page",
+    response_model=MetaSubscribePageOut,
+)
+def subscribe_meta_integration_page(
+    integration_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    integration = _get_integration_or_404(
+        supa,
+        org_id=ctx.org_id,
+        integration_id=integration_id,
+    )
+    result = subscribe_meta_page(supa, integration=integration)
+    insert_audit_log(
+        supa,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        entity="meta_lead_integration",
+        entity_id=integration_id,
+        action="subscribe_page",
+        diff={"page_id": integration["page_id"], "subscribed": result["subscribed"]},
+    )
+    return result
+
+
+@router.get(
+    "/meta/integrations/{integration_id}/subscription-status",
+    response_model=MetaSubscriptionStatusOut,
+)
+def get_meta_integration_subscription_status(
+    integration_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    integration = _get_integration_or_404(
+        supa,
+        org_id=ctx.org_id,
+        integration_id=integration_id,
+    )
+    return get_meta_subscription_status(supa, integration=integration)
+
+
+@router.get(
+    "/meta/integrations/{integration_id}/forms",
+    response_model=list[MetaPageFormOut],
+)
+def get_meta_integration_forms(
+    integration_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    integration = _get_integration_or_404(
+        supa,
+        org_id=ctx.org_id,
+        integration_id=integration_id,
+    )
+    return list_meta_page_forms(integration=integration)
+
+
+@router.post(
+    "/meta/integrations/{integration_id}/test-connection",
+    response_model=MetaConnectionTestOut,
+)
+def post_meta_integration_test_connection(
+    integration_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    integration = _get_integration_or_404(
+        supa,
+        org_id=ctx.org_id,
+        integration_id=integration_id,
+    )
+    result = test_meta_integration_connection(supa, integration=integration)
+    insert_audit_log(
+        supa,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        entity="meta_lead_integration",
+        entity_id=integration_id,
+        action="test_connection",
+        diff={"page_id": integration["page_id"], "ok": result["ok"]},
+    )
+    return result

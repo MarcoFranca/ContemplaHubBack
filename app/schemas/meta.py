@@ -72,6 +72,14 @@ class MetaIntegrationOut(BaseModel):
     last_success_at: Optional[str] = None
     last_error_at: Optional[str] = None
     last_error_message: Optional[str] = None
+    webhook_configured: bool = False
+    access_token_configured: bool = False
+    page_subscribed: Optional[bool] = None
+    subscription_checked_at: Optional[str] = None
+    subscription_error: Optional[str] = None
+    connection_ok: Optional[bool] = None
+    connection_checked_at: Optional[str] = None
+    connection_error: Optional[str] = None
     settings: dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -93,3 +101,69 @@ class MetaWebhookEventOut(BaseModel):
     processed_at: Optional[str] = None
     created_at: Optional[str] = None
 
+
+class MetaSubscriptionStatusOut(BaseModel):
+    ok: bool = True
+    integration_id: str
+    page_id: str
+    page_name: Optional[str] = None
+    subscribed: bool
+    checked_at: str
+    app_id: Optional[str] = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class MetaSubscribePageOut(BaseModel):
+    ok: bool = True
+    integration_id: str
+    page_id: str
+    subscribed: bool
+    checked_at: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class MetaPageFormOut(BaseModel):
+    id: str
+    name: Optional[str] = None
+    status: Optional[str] = None
+
+
+class MetaPageOut(BaseModel):
+    id: str
+    name: Optional[str] = None
+    category: Optional[str] = None
+
+
+class MetaConnectionTestOut(BaseModel):
+    ok: bool = True
+    integration_id: str
+    page_id: str
+    page_name: Optional[str] = None
+    checked_at: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class MetaOAuthStartOut(BaseModel):
+    ok: bool = True
+    auth_url: str
+
+
+class MetaOAuthFinalizeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    nome: str = Field(min_length=2, max_length=120)
+    source_label: str = Field(min_length=2, max_length=160)
+    page_id: str = Field(min_length=1, max_length=120)
+    form_id: Optional[str] = Field(default=None, max_length=120)
+    default_owner_id: Optional[str] = None
+    ativo: bool = True
+
+    @field_validator("form_id", "default_owner_id", mode="before")
+    @classmethod
+    def finalize_empty_to_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned or None
+        return value
