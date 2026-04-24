@@ -75,6 +75,7 @@ def _build_frontend_redirect_response(
     params: dict[str, str],
     log_event: str,
     level: str = "info",
+    message_detail: Optional[str] = None,
 ):
     raw_frontend_site_url = settings.FRONTEND_SITE_URL
     try:
@@ -83,7 +84,7 @@ def _build_frontend_redirect_response(
         redirect_url = f"{redirect_base}?{urlencode(params)}"
         logger_method = getattr(logger, level, logger.info)
         logger_method(
-            log_event,
+            f"{log_event}: {message_detail}" if message_detail else log_event,
             extra={
                 "FRONTEND_SITE_URL": frontend_site_url,
                 "redirect_url": redirect_url,
@@ -527,7 +528,12 @@ def meta_oauth_callback(
                 user_access_token=user_access_token,
             )
             logger.warning(
-                "meta_oauth_callback_no_pages",
+                (
+                    "meta_oauth_callback_no_pages: "
+                    f"meta_user={((diagnostics.get('user') or {}).get('id') or '<unknown>')} "
+                    f"granted={','.join(diagnostics.get('granted_permissions') or []) or '<none>'} "
+                    f"declined={','.join(diagnostics.get('declined_permissions') or []) or '<none>'}"
+                ),
                 extra={
                     "org_id": parsed_state["org_id"],
                     "user_id": parsed_state["user_id"],
@@ -592,7 +598,7 @@ def meta_oauth_callback(
     except Exception as exc:
         error_message = exc.detail if isinstance(exc, HTTPException) else str(exc)
         logger.exception(
-            "meta_oauth_callback_failed",
+            f"meta_oauth_callback_failed: {error_message}",
             extra={
                 "code_masked": _mask_token(code),
                 "has_state": bool(state),
@@ -607,6 +613,7 @@ def meta_oauth_callback(
             params={"tab": "oauth", "error": str(error_message)},
             log_event="meta_oauth_callback_redirect_error_result",
             level="warning",
+            message_detail=str(error_message),
         )
 
 

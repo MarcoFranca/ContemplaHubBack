@@ -99,6 +99,8 @@ O callback registra logs seguros antes e depois de cada etapa:
 - resultado do insert/update;
 - redirect final de sucesso ou erro.
 
+Para ambientes como Railway, o backend tambem inclui o motivo principal da falha no proprio texto da mensagem de log, em vez de depender apenas de campos `extra`.
+
 Quando `/me/accounts` retorna vazio, o backend tambem registra diagnostico seguro com:
 
 - usuario Meta resolvido via `/me`;
