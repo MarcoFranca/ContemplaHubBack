@@ -5,6 +5,7 @@ import hmac
 import logging
 from typing import Any, Optional
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -663,6 +664,7 @@ def create_meta_integration(
     )
 
     payload = {
+        "id": str(uuid4()),
         "org_id": ctx.org_id,
         "created_by": ctx.user_id,
         "updated_by": ctx.user_id,
@@ -682,14 +684,12 @@ def create_meta_integration(
         "updated_at": utcnow_iso(),
     }
 
-    resp = (
-        supa.table("meta_lead_integrations")
-        .insert(payload)
-        .select("*")
-        .single()
-        .execute()
+    supa.table("meta_lead_integrations").insert(payload).execute()
+    row = _get_integration_or_404(
+        supa,
+        org_id=ctx.org_id,
+        integration_id=payload["id"],
     )
-    row = _safe_data(resp)
     if not row:
         raise HTTPException(status_code=500, detail="Erro ao criar integração Meta.")
 
@@ -768,16 +768,18 @@ def patch_meta_integration(
     if "settings" in body.model_fields_set:
         payload["settings"] = body.settings or {}
 
-    resp = (
+    (
         supa.table("meta_lead_integrations")
         .update(payload)
         .eq("id", integration_id)
         .eq("org_id", ctx.org_id)
-        .select("*")
-        .single()
         .execute()
     )
-    row = _safe_data(resp)
+    row = _get_integration_or_404(
+        supa,
+        org_id=ctx.org_id,
+        integration_id=integration_id,
+    )
     if not row:
         raise HTTPException(status_code=500, detail="Erro ao atualizar integração Meta.")
 

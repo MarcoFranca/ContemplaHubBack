@@ -7,6 +7,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode, urlparse
+from uuid import uuid4
 
 import requests
 from fastapi import HTTPException, status
@@ -854,6 +855,26 @@ def _list_org_meta_integrations(
     return _safe_data(resp) or []
 
 
+def _fetch_meta_integration_row(
+    supa: Client,
+    *,
+    org_id: str,
+    integration_id: str,
+) -> Optional[dict[str, Any]]:
+    resp = (
+        _integration_provider_filter(
+            supa.table("meta_lead_integrations")
+            .select("*")
+            .eq("org_id", org_id)
+            .eq("id", integration_id)
+        )
+        .maybe_single()
+        .execute()
+    )
+    row = _safe_data(resp)
+    return row if isinstance(row, dict) else None
+
+
 def _oauth_draft_rows_for_user(
     supa: Client,
     *,
@@ -951,6 +972,7 @@ def save_meta_oauth_draft(
         page_id = str(page["id"])
         seen_page_ids.add(page_id)
         existing_row = rows_by_page_id.get(page_id)
+        target_integration_id = str((existing_row or {}).get("id") or uuid4())
         payload = _build_oauth_page_draft_payload(
             org_id=org_id,
             user_id=user_id,
@@ -958,6 +980,8 @@ def save_meta_oauth_draft(
             existing_row=existing_row,
             user_access_token=user_access_token,
         )
+        if not existing_row:
+            payload = {"id": target_integration_id, **payload}
         logger.info(
             "meta_oauth_draft_persist_attempt",
             extra={
@@ -982,23 +1006,15 @@ def save_meta_oauth_draft(
 
         try:
             if existing_row:
-                resp = (
+                (
                     supa.table("meta_lead_integrations")
                     .update(payload)
                     .eq("id", existing_row["id"])
                     .eq("org_id", org_id)
-                    .select("*")
-                    .single()
                     .execute()
                 )
             else:
-                resp = (
-                    supa.table("meta_lead_integrations")
-                    .insert(payload)
-                    .select("*")
-                    .single()
-                    .execute()
-                )
+                supa.table("meta_lead_integrations").insert(payload).execute()
         except Exception as exc:
             error_message = _stringify_exception(exc)
             logger.exception(
@@ -1035,7 +1051,11 @@ def save_meta_oauth_draft(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Falha ao salvar integração temporária da página {page_id}: {error_message}",
             ) from exc
-        row = _safe_data(resp)
+        row = _fetch_meta_integration_row(
+            supa,
+            org_id=org_id,
+            integration_id=target_integration_id,
+        )
         if not row:
             raise RuntimeError(
                 f"Falha ao salvar integração temporária da página Meta {page_id}."
@@ -1195,16 +1215,18 @@ def finalize_meta_oauth_integration(
         },
     }
 
-    resp = (
+    (
         supa.table("meta_lead_integrations")
         .update(payload)
         .eq("id", draft["id"])
         .eq("org_id", org_id)
-        .select("*")
-        .single()
         .execute()
     )
-    row = _safe_data(resp)
+    row = _fetch_meta_integration_row(
+        supa,
+        org_id=org_id,
+        integration_id=draft["id"],
+    )
     if not row:
         raise RuntimeError("Falha ao finalizar integração Meta via OAuth.")
     return row
