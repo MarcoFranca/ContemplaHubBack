@@ -254,6 +254,13 @@ Resposta:
 - `auth_url` para redirecionamento ao consentimento da Meta
 - a URL ja sai assinada com `state` server-side contendo `org_id` e `user_id`
 
+Validacoes:
+
+- `BACKEND_PUBLIC_URL` precisa apontar para a origem publica HTTPS do backend;
+- o backend remove barra final antes de montar `redirect_uri`;
+- o backend rejeita `localhost`, `http`, path adicional e dominio igual ao frontend;
+- quando a env estiver incorreta, retorna erro amigavel em vez de gerar URL OAuth invalida.
+
 ### `GET /meta/oauth/callback`
 
 Recebe o retorno do consentimento OAuth da Meta.

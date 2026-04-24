@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 from fastapi import HTTPException, status
@@ -22,6 +23,7 @@ META_EVENT_TYPE = "meta_leadgen"
 META_GRAPH_FIELDS = (
     "id,created_time,field_data,ad_id,ad_name,campaign_id,campaign_name,form_id,platform"
 )
+logger = logging.getLogger(__name__)
 
 
 def utcnow_iso() -> str:
@@ -72,8 +74,61 @@ def _settings_dict(integration: dict[str, Any]) -> dict[str, Any]:
     return settings_value if isinstance(settings_value, dict) else {}
 
 
+def _validated_backend_public_url() -> str:
+    raw_value = settings.BACKEND_PUBLIC_URL.strip()
+    if not raw_value:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "BACKEND_PUBLIC_URL não configurado para o OAuth da Meta. "
+                "Use a URL pública HTTPS do backend, sem localhost e sem barra final."
+            ),
+        )
+
+    normalized = raw_value.rstrip("/")
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+
+    if parsed.scheme != "https":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "BACKEND_PUBLIC_URL inválido para o OAuth da Meta. "
+                "Use exatamente a URL pública HTTPS do backend."
+            ),
+        )
+    if not host or host in {"localhost", "127.0.0.1", "0.0.0.0"}:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "BACKEND_PUBLIC_URL inválido para o OAuth da Meta. "
+                "Não use localhost; configure a URL pública HTTPS do backend."
+            ),
+        )
+    if parsed.path not in {"", "/"}:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "BACKEND_PUBLIC_URL inválido para o OAuth da Meta. "
+                "Informe apenas a origem pública do backend, sem path adicional."
+            ),
+        )
+
+    frontend_value = settings.FRONTEND_SITE_URL.strip().rstrip("/")
+    if frontend_value and normalized.lower() == frontend_value.lower():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "BACKEND_PUBLIC_URL inválido para o OAuth da Meta. "
+                "Ele não pode apontar para o domínio do frontend."
+            ),
+        )
+
+    return normalized
+
+
 def _meta_oauth_redirect_uri() -> str:
-    return f"{settings.BACKEND_PUBLIC_URL.rstrip('/')}/meta/oauth/callback"
+    return f"{_validated_backend_public_url()}/meta/oauth/callback"
 
 
 def _frontend_meta_integrations_url() -> str:
@@ -173,17 +228,30 @@ def build_meta_oauth_authorize_url(*, org_id: str, user_id: str) -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="META_APP_ID não configurado.",
         )
+    backend_public_url = _validated_backend_public_url()
+    redirect_uri = f"{backend_public_url}/meta/oauth/callback"
     state = create_meta_oauth_state(org_id=org_id, user_id=user_id)
     params = urlencode(
         {
             "client_id": settings.META_APP_ID.strip(),
-            "redirect_uri": _meta_oauth_redirect_uri(),
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": settings.META_OAUTH_SCOPES,
             "state": state,
         }
     )
-    return f"https://www.facebook.com/v22.0/dialog/oauth?{params}"
+    auth_url = f"https://www.facebook.com/v22.0/dialog/oauth?{params}"
+    logger.info(
+        "meta_oauth_authorize_url_built",
+        extra={
+            "BACKEND_PUBLIC_URL": backend_public_url,
+            "redirect_uri": redirect_uri,
+            "auth_url": auth_url,
+            "org_id": org_id,
+            "user_id": user_id,
+        },
+    )
+    return auth_url
 
 
 def insert_audit_log(
@@ -470,12 +538,22 @@ def exchange_meta_oauth_code(*, code: str) -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Credenciais OAuth da Meta não configuradas.",
         )
+    backend_public_url = _validated_backend_public_url()
+    redirect_uri = f"{backend_public_url}/meta/oauth/callback"
+    logger.info(
+        "meta_oauth_exchange_started",
+        extra={
+            "BACKEND_PUBLIC_URL": backend_public_url,
+            "redirect_uri": redirect_uri,
+            "code_present": bool(code),
+        },
+    )
     response = requests.get(
         f"{settings.META_GRAPH_API_BASE.rstrip('/')}/oauth/access_token",
         params={
             "client_id": settings.META_APP_ID.strip(),
             "client_secret": settings.META_APP_SECRET.strip(),
-            "redirect_uri": _meta_oauth_redirect_uri(),
+            "redirect_uri": redirect_uri,
             "code": code,
         },
         timeout=20,

@@ -356,7 +356,20 @@ def list_meta_integrations(
 def start_meta_oauth(
     ctx: AuthContext = Depends(require_manager),
 ):
-    return {"ok": True, "auth_url": build_meta_oauth_authorize_url(org_id=ctx.org_id, user_id=ctx.user_id)}
+    try:
+        auth_url = build_meta_oauth_authorize_url(org_id=ctx.org_id, user_id=ctx.user_id)
+    except HTTPException as exc:
+        logger.warning(
+            "meta_oauth_start_failed",
+            extra={
+                "org_id": ctx.org_id,
+                "user_id": ctx.user_id,
+                "status_code": exc.status_code,
+                "detail": exc.detail,
+            },
+        )
+        raise
+    return {"ok": True, "auth_url": auth_url}
 
 
 @router.get("/meta/oauth/callback")

@@ -72,6 +72,7 @@ Essas operacoes:
 - usam uma sessao OAuth temporaria server-side por `org_id` e `user_id` durante o fluxo assistido;
 - respeitam `org_id` e `require_manager`;
 - atualizam o status operacional em `settings`, sem expor o token ao frontend.
+- validam `BACKEND_PUBLIC_URL` antes de montar `redirect_uri`, recusando `localhost`, `http`, path extra e dominio do frontend.
 
 ### Fluxo assistido via OAuth
 
