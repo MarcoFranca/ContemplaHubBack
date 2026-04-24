@@ -180,7 +180,8 @@ Autenticacao:
 Regras:
 
 - opera apenas na `org_id` do usuario;
-- usa o `access_token` da propria integracao;
+- usa o `access_token` da propria integracao e exige `Page Access Token` valido para esta operacao;
+- quando a integracao ainda tiver apenas fallback com token de usuario, retorna erro amigavel orientando reconectar a conta Meta com acesso completo a pagina;
 - chama `/{page-id}/subscribed_apps?subscribed_fields=leadgen` na Graph API;
 - atualiza o status operacional salvo em `settings`.
 
@@ -195,6 +196,7 @@ Autenticacao:
 Regras:
 
 - opera apenas na `org_id` do usuario;
+- exige `Page Access Token` valido para consultar a inscricao da pagina;
 - consulta `/{page-id}/subscribed_apps`;
 - quando `META_APP_ID` estiver configurado, compara explicitamente com o app atual;
 - atualiza o status operacional salvo em `settings`.
@@ -210,6 +212,7 @@ Autenticacao:
 Regras:
 
 - opera apenas na `org_id` do usuario;
+- exige `Page Access Token` valido para consultar formularios da pagina;
 - consulta `/{page-id}/leadgen_forms` na Graph API;
 - nao altera o cadastro da integracao.
 
@@ -224,6 +227,7 @@ Autenticacao:
 Regras:
 
 - opera apenas na `org_id` do usuario;
+- exige `Page Access Token` valido para testar leitura da pagina;
 - consulta `/{page-id}?fields=id,name` na Graph API;
 - atualiza o status operacional salvo em `settings`.
 
@@ -285,6 +289,7 @@ Regras:
 - quando `/me/accounts` vier vazio, retorna erro claro orientando validar paginas acessiveis na conta Meta e permissoes como `pages_show_list` e `pages_read_engagement`;
 - salva uma integracao temporaria por pagina retornada, ja com `org_id`, `page_id`, `page_name` e `access_token` mantido apenas no backend;
 - quando a tabela exigir `verify_token` obrigatorio, o fluxo assistido reutiliza `META_VERIFY_TOKEN` ou gera um token tecnico estavel por `org_id + page_id`, sem depender de input manual;
+- o fluxo assistido marca se o token salvo ja e um `Page Access Token` operacional ou apenas fallback com token de usuario;
 - reutiliza a tabela `meta_lead_integrations` como persistencia temporaria do OAuth, sem criar tabela extra;
 - registra logs de `state`, `code`, token mascarado, paginas encontradas, tentativa de persistencia, resultado do insert/update e erro detalhado;
 - valida `FRONTEND_SITE_URL` com `urllib.parse` antes de redirecionar, sem aceitar valor vazio, path extra ou barra final duplicada;

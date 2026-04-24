@@ -222,6 +222,11 @@ def _connection_settings(integration: dict[str, Any]) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _integration_token_settings(integration: dict[str, Any]) -> dict[str, Any]:
+    raw = _settings_dict(integration).get("token")
+    return raw if isinstance(raw, dict) else {}
+
+
 def _oauth_draft_settings(integration: dict[str, Any]) -> dict[str, Any]:
     raw = _settings_dict(integration).get("oauth_draft")
     return raw if isinstance(raw, dict) else {}
@@ -784,6 +789,7 @@ def list_meta_oauth_pages(*, user_access_token: str) -> list[dict[str, Any]]:
                 "name": None,
                 "category": None,
                 "access_token": user_access_token,
+                "_token_source": "granular_scope_fallback",
             }
         resolved_page_id = str(page["id"])
         if resolved_page_id in seen_page_ids:
@@ -937,6 +943,8 @@ def _build_oauth_page_draft_payload(
     page_id = str(page["id"])
     page_name = _trim(page.get("name"))
     existing_settings = _settings_dict(existing_row or {})
+    page_access_token = _trim(page.get("access_token"))
+    token_kind = "page" if page_access_token else "user_fallback"
     return {
         "org_id": org_id,
         "created_by": (existing_row or {}).get("created_by") or user_id,
@@ -954,16 +962,25 @@ def _build_oauth_page_draft_payload(
             (existing_row or {}).get("verify_token")
             or _default_meta_verify_token(org_id=org_id, page_id=page_id)
         ),
-        "access_token_encrypted": _trim(page.get("access_token")) or user_access_token,
+        "access_token_encrypted": page_access_token or user_access_token,
         "ativo": bool((existing_row or {}).get("ativo", False)),
         "settings": {
             **existing_settings,
+            "token": {
+                **_integration_token_settings(existing_row or {}),
+                "kind": token_kind,
+                "page_access_token_ready": token_kind == "page",
+                "source": _trim(page.get("_token_source")) or token_kind,
+                "updated_at": utcnow_iso(),
+            },
             "oauth_draft": {
                 **_oauth_draft_settings(existing_row or {}),
                 "active": True,
                 "connected_at": utcnow_iso(),
                 "oauth_user_id": user_id,
                 "page_category": _trim(page.get("category")),
+                "access_token_kind": token_kind,
+                "page_access_token_ready": token_kind == "page",
             },
         },
         "updated_at": utcnow_iso(),
@@ -1226,6 +1243,7 @@ def finalize_meta_oauth_integration(
         "settings": {
             **_settings_dict(draft),
             "oauth_draft": {
+                **_oauth_draft_settings(draft),
                 "active": False,
                 "finalized_at": utcnow_iso(),
             },
@@ -1249,13 +1267,48 @@ def finalize_meta_oauth_integration(
     return row
 
 
-def _ensure_meta_integration_token(integration: dict[str, Any]) -> str:
+def _meta_graph_error_to_detail(message: str) -> str:
+    lowered = (message or "").lower()
+    if "error_subcode" in lowered and "2069032" in lowered:
+        return (
+            "A Meta exigiu um token de página para esta operação. "
+            "Reconecte a conta Meta com acesso completo à página e permissões "
+            "`pages_read_engagement`, `pages_manage_metadata` e `leads_retrieval`."
+        )
+    if "\"code\":100" in lowered and "pages_read_engagement" in lowered:
+        return (
+            "A Meta recusou a leitura da página por falta de permissão. "
+            "Confirme acesso real do usuário à página e as permissões "
+            "`pages_read_engagement` ou recursos equivalentes aprovados no app."
+        )
+    return message
+
+
+def _ensure_meta_integration_token(
+    integration: dict[str, Any],
+    *,
+    require_page_token: bool = False,
+) -> str:
     access_token = _trim(integration.get("access_token_encrypted"))
     if not access_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Integração Meta sem access_token configurado.",
         )
+    if require_page_token:
+        token_kind = (
+            _integration_token_settings(integration).get("kind")
+            or _oauth_draft_settings(integration).get("access_token_kind")
+        )
+        if token_kind == "user_fallback":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "A integração ainda não possui um token de página válido. "
+                    "Reconecte a conta Meta depois de garantir acesso completo à página "
+                    "e permissões `pages_read_engagement`, `pages_manage_metadata` e `leads_retrieval`."
+                ),
+            )
     return access_token
 
 
@@ -1314,7 +1367,10 @@ def test_meta_integration_connection(
     *,
     integration: dict[str, Any],
 ) -> dict[str, Any]:
-    access_token = _ensure_meta_integration_token(integration)
+    access_token = _ensure_meta_integration_token(
+        integration,
+        require_page_token=True,
+    )
     try:
         payload = _meta_graph_request(
             method="GET",
@@ -1340,16 +1396,17 @@ def test_meta_integration_connection(
     except HTTPException:
         raise
     except Exception as exc:
+        friendly_error = _meta_graph_error_to_detail(str(exc))
         _record_connection_result(
             supa,
             integration=integration,
             ok=False,
             raw=None,
-            error=str(exc),
+            error=friendly_error,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=friendly_error,
         )
 
 
@@ -1358,7 +1415,10 @@ def get_meta_subscription_status(
     *,
     integration: dict[str, Any],
 ) -> dict[str, Any]:
-    access_token = _ensure_meta_integration_token(integration)
+    access_token = _ensure_meta_integration_token(
+        integration,
+        require_page_token=True,
+    )
     try:
         payload = _meta_graph_request(
             method="GET",
@@ -1391,16 +1451,17 @@ def get_meta_subscription_status(
     except HTTPException:
         raise
     except Exception as exc:
+        friendly_error = _meta_graph_error_to_detail(str(exc))
         _record_subscription_result(
             supa,
             integration=integration,
             subscribed=False,
             raw=None,
-            error=str(exc),
+            error=friendly_error,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=friendly_error,
         )
 
 
@@ -1409,7 +1470,10 @@ def subscribe_meta_page(
     *,
     integration: dict[str, Any],
 ) -> dict[str, Any]:
-    access_token = _ensure_meta_integration_token(integration)
+    access_token = _ensure_meta_integration_token(
+        integration,
+        require_page_token=True,
+    )
     try:
         payload = _meta_graph_request(
             method="POST",
@@ -1435,16 +1499,17 @@ def subscribe_meta_page(
     except HTTPException:
         raise
     except Exception as exc:
+        friendly_error = _meta_graph_error_to_detail(str(exc))
         _record_subscription_result(
             supa,
             integration=integration,
             subscribed=False,
             raw=None,
-            error=str(exc),
+            error=friendly_error,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=friendly_error,
         )
 
 
@@ -1453,7 +1518,10 @@ def list_meta_page_forms(
     integration: dict[str, Any],
 ) -> list[dict[str, Any]]:
     try:
-        access_token = _ensure_meta_integration_token(integration)
+        access_token = _ensure_meta_integration_token(
+            integration,
+            require_page_token=True,
+        )
         payload = _meta_graph_request(
             method="GET",
             path=f"{integration['page_id']}/leadgen_forms",
@@ -1478,7 +1546,7 @@ def list_meta_page_forms(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=_meta_graph_error_to_detail(str(exc)),
         )
 
 

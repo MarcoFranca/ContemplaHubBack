@@ -69,6 +69,7 @@ O backend agora expone operacoes administrativas para fechar a integracao em pro
 Essas operacoes:
 
 - usam somente o `access_token` salvo na propria integracao;
+- distinguem token de pagina operacional de fallback com token de usuario;
 - usam uma sessao OAuth temporaria server-side por `org_id` e `user_id` durante o fluxo assistido;
 - respeitam `org_id` e `require_manager`;
 - atualizam o status operacional em `settings`, sem expor o token ao frontend.
@@ -119,10 +120,17 @@ Para evitar tabela nova e nao expor segredo ao browser, o fluxo assistido usa um
 
 - o rascunho fica vinculado a `org_id`, `created_by` e `settings.oauth_draft.oauth_user_id`;
 - o token Meta fica apenas no backend, em `access_token_encrypted`;
+- o backend marca em `settings` quando o token salvo ja e um `Page Access Token` ou quando o fluxo caiu em fallback com token de usuario;
 - o `verify_token` obrigatorio da tabela e preenchido automaticamente com `META_VERIFY_TOKEN` quando existir, ou com um token tecnico estavel por org/pagina no fluxo assistido;
 - `page_id` e `page_name` ja sao persistidos com os valores reais retornados pela Graph API;
 - a listagem principal pode mostrar rascunhos ativos para o proprio usuario que acabou de conectar, facilitando diagnostico e continuidade do fluxo;
 - depois da finalizacao, o mesmo registro passa a representar a integracao real.
+
+## Regras operacionais de token
+
+- `subscribe-page`, `subscription-status`, `test-connection` e leitura de formularios exigem `Page Access Token`;
+- quando o fluxo OAuth so conseguir persistir fallback com token de usuario, o backend bloqueia essas operacoes cedo e devolve erro amigavel;
+- erros conhecidos da Meta, como `Invalid OAuth 2.0 Access Token` para token de pagina ausente e falhas por `pages_read_engagement`, sao traduzidos para mensagens operacionais mais claras.
 
 ## Endpoints relacionados
 
