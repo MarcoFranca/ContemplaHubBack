@@ -275,6 +275,7 @@ Regras:
 - valida que o `user_id` do `state` ainda pertence a `org_id` informada;
 - troca `code` por token de usuario;
 - busca paginas autorizadas;
+- quando `/me/accounts` vier vazio, tenta recuperar `page_id` selecionados via `debug_token` e `granular_scopes`, antes de concluir que nao ha paginas;
 - registra no callback indicadores objetivos de progresso:
   - `state_validado=true/false`
   - `token_exchange_ok=true/false`

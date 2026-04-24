@@ -108,6 +108,8 @@ Quando `/me/accounts` retorna vazio, o backend tambem registra diagnostico segur
 - permissoes concedidas e negadas via `/me/permissions`;
 - indicacao clara para revisar acesso a paginas e escopos como `pages_show_list` e `pages_read_engagement`.
 
+Como fallback operacional, o backend tambem tenta recuperar `page_id` via `debug_token` e `granular_scopes`, resolvendo os dados da pagina antes de desistir do fluxo.
+
 Quando a persistencia falha por schema/tabela ausente, o backend devolve erro amigavel indicando necessidade de revisar estrutura ou migration.
 Quando o redirect para o frontend falha, o backend valida `FRONTEND_SITE_URL` com `urllib.parse`, registra `FRONTEND_SITE_URL` e `redirect_url` final no log, e devolve fallback seguro em texto claro com o problema encontrado, em vez de estourar excecao generica.
 

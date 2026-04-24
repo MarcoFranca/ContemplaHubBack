@@ -601,6 +601,71 @@ def _meta_graph_user_request(
     )
 
 
+def _meta_app_access_token() -> str:
+    app_id = settings.META_APP_ID.strip()
+    app_secret = settings.META_APP_SECRET.strip()
+    if not app_id or not app_secret:
+        raise RuntimeError("Credenciais da Meta indisponíveis para debug_token.")
+    return f"{app_id}|{app_secret}"
+
+
+def _debug_meta_user_token(*, user_access_token: str) -> dict[str, Any]:
+    payload = _meta_graph_request(
+        method="GET",
+        path="debug_token",
+        access_token=_meta_app_access_token(),
+        params={"input_token": user_access_token},
+    )
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("Meta debug_token retornou payload inválido.")
+    return data
+
+
+def _granular_target_page_ids(debug_data: dict[str, Any]) -> list[str]:
+    target_ids: list[str] = []
+    seen: set[str] = set()
+    relevant_scopes = {
+        "pages_show_list",
+        "pages_read_engagement",
+        "pages_manage_metadata",
+        "leads_retrieval",
+    }
+    for item in debug_data.get("granular_scopes") or []:
+        if not isinstance(item, dict):
+            continue
+        scope = _trim(item.get("scope"))
+        if scope not in relevant_scopes:
+            continue
+        for raw_target_id in item.get("target_ids") or []:
+            target_id = _trim(raw_target_id)
+            if not target_id or target_id in seen:
+                continue
+            seen.add(target_id)
+            target_ids.append(target_id)
+    return target_ids
+
+
+def _resolve_page_from_user_token(
+    *,
+    page_id: str,
+    user_access_token: str,
+) -> dict[str, Any]:
+    payload = _meta_graph_user_request(
+        method="GET",
+        path=page_id,
+        user_access_token=user_access_token,
+        params={"fields": "id,name,category,access_token"},
+    )
+    resolved_page_id = _trim(payload.get("id")) or page_id
+    return {
+        "id": resolved_page_id,
+        "name": _trim(payload.get("name")),
+        "category": _trim(payload.get("category")),
+        "access_token": _trim(payload.get("access_token")) or user_access_token,
+    }
+
+
 def exchange_meta_oauth_code(*, code: str) -> str:
     if not settings.META_APP_ID.strip() or not settings.META_APP_SECRET.strip():
         raise HTTPException(
@@ -657,7 +722,70 @@ def list_meta_oauth_pages(*, user_access_token: str) -> list[dict[str, Any]]:
                 "access_token": _trim(item.get("access_token")),
             }
         )
-    return result
+    if result:
+        return result
+
+    logger.warning(
+        "meta_oauth_pages_primary_empty_result",
+        extra={
+            "pages_count": 0,
+            "payload_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
+        },
+    )
+
+    try:
+        debug_data = _debug_meta_user_token(user_access_token=user_access_token)
+        granular_page_ids = _granular_target_page_ids(debug_data)
+        logger.info(
+            "meta_oauth_pages_granular_targets_loaded",
+            extra={
+                "granular_page_ids": granular_page_ids,
+                "granular_scope_count": len(debug_data.get("granular_scopes") or []),
+                "scopes": debug_data.get("scopes") or [],
+            },
+        )
+    except Exception as exc:
+        logger.warning(
+            f"meta_oauth_pages_granular_targets_failed: {_stringify_exception(exc)}",
+            extra={},
+        )
+        return result
+
+    fallback_pages: list[dict[str, Any]] = []
+    seen_page_ids: set[str] = set()
+    for page_id in granular_page_ids:
+        try:
+            page = _resolve_page_from_user_token(
+                page_id=page_id,
+                user_access_token=user_access_token,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"meta_oauth_pages_granular_page_resolve_failed: page_id={page_id} error={_stringify_exception(exc)}",
+                extra={},
+            )
+            page = {
+                "id": page_id,
+                "name": None,
+                "category": None,
+                "access_token": user_access_token,
+            }
+        resolved_page_id = str(page["id"])
+        if resolved_page_id in seen_page_ids:
+            continue
+        seen_page_ids.add(resolved_page_id)
+        fallback_pages.append(page)
+
+    if fallback_pages:
+        logger.info(
+            "meta_oauth_pages_fallback_success",
+            extra={
+                "pages_count": len(fallback_pages),
+                "page_ids": [page["id"] for page in fallback_pages],
+            },
+        )
+
+    return fallback_pages
 
 
 def get_meta_oauth_user_diagnostics(*, user_access_token: str) -> dict[str, Any]:
