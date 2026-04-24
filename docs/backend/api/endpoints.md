@@ -275,7 +275,8 @@ Regras:
 - valida que o `user_id` do `state` ainda pertence a `org_id` informada;
 - troca `code` por token de usuario;
 - busca paginas autorizadas;
-- se nao houver paginas, retorna erro claro `Nenhuma página encontrada para este usuário`;
+- se nao houver paginas, registra diagnostico seguro do usuario OAuth e das permissoes concedidas/negadas;
+- quando `/me/accounts` vier vazio, retorna erro claro orientando validar paginas acessiveis na conta Meta e permissoes como `pages_show_list` e `pages_read_engagement`;
 - salva uma integracao temporaria por pagina retornada, ja com `org_id`, `page_id`, `page_name` e `access_token` mantido apenas no backend;
 - reutiliza a tabela `meta_lead_integrations` como persistencia temporaria do OAuth, sem criar tabela extra;
 - registra logs de `state`, `code`, token mascarado, paginas encontradas, tentativa de persistencia, resultado do insert/update e erro detalhado;

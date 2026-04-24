@@ -660,6 +660,54 @@ def list_meta_oauth_pages(*, user_access_token: str) -> list[dict[str, Any]]:
     return result
 
 
+def get_meta_oauth_user_diagnostics(*, user_access_token: str) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "user": None,
+        "granted_permissions": [],
+        "declined_permissions": [],
+    }
+
+    try:
+        me_payload = _meta_graph_user_request(
+            method="GET",
+            path="me",
+            user_access_token=user_access_token,
+            params={"fields": "id,name"},
+        )
+        diagnostics["user"] = {
+            "id": _trim(me_payload.get("id")),
+            "name": _trim(me_payload.get("name")),
+        }
+    except Exception as exc:
+        diagnostics["user_error"] = _stringify_exception(exc)
+
+    try:
+        permissions_payload = _meta_graph_user_request(
+            method="GET",
+            path="me/permissions",
+            user_access_token=user_access_token,
+        )
+        granted: list[str] = []
+        declined: list[str] = []
+        for item in permissions_payload.get("data") or []:
+            if not isinstance(item, dict):
+                continue
+            permission = _trim(item.get("permission"))
+            status_value = (_trim(item.get("status")) or "").lower()
+            if not permission:
+                continue
+            if status_value == "granted":
+                granted.append(permission)
+            elif status_value:
+                declined.append(f"{permission}:{status_value}")
+        diagnostics["granted_permissions"] = granted
+        diagnostics["declined_permissions"] = declined
+    except Exception as exc:
+        diagnostics["permissions_error"] = _stringify_exception(exc)
+
+    return diagnostics
+
+
 def _list_org_meta_integrations(
     supa: Client,
     *,

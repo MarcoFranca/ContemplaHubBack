@@ -40,6 +40,7 @@ from app.services.meta_leads_service import (
     finalize_meta_oauth_integration,
     get_meta_oauth_pages_for_user,
     get_meta_page_forms_for_user,
+    get_meta_oauth_user_diagnostics,
     get_meta_subscription_status,
     ingest_meta_lead_event,
     insert_audit_log,
@@ -522,9 +523,29 @@ def meta_oauth_callback(
             },
         )
         if not pages:
+            diagnostics = get_meta_oauth_user_diagnostics(
+                user_access_token=user_access_token,
+            )
+            logger.warning(
+                "meta_oauth_callback_no_pages",
+                extra={
+                    "org_id": parsed_state["org_id"],
+                    "user_id": parsed_state["user_id"],
+                    "pages_count": 0,
+                    "granted_permissions": diagnostics.get("granted_permissions") or [],
+                    "declined_permissions": diagnostics.get("declined_permissions") or [],
+                    "meta_user": diagnostics.get("user"),
+                    "permissions_error": diagnostics.get("permissions_error"),
+                    "user_error": diagnostics.get("user_error"),
+                },
+            )
             raise HTTPException(
                 status_code=404,
-                detail="Nenhuma página encontrada para este usuário",
+                detail=(
+                    "Nenhuma página encontrada para este usuário. "
+                    "Confirme se a conta Meta tem páginas acessíveis e se as permissões "
+                    "`pages_show_list` e `pages_read_engagement` foram concedidas."
+                ),
             )
         logger.info(
             "meta_oauth_callback_persisting_drafts",
