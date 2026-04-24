@@ -155,8 +155,38 @@ def _meta_oauth_redirect_uri() -> str:
     return f"{_validated_backend_public_url()}/meta/oauth/callback"
 
 
+def _validated_frontend_site_url() -> str:
+    raw_value = settings.FRONTEND_SITE_URL.strip()
+    if not raw_value:
+        raise ValueError(
+            "FRONTEND_SITE_URL não configurado para o callback OAuth da Meta."
+        )
+
+    normalized = raw_value.rstrip("/")
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            "FRONTEND_SITE_URL inválido para o callback OAuth da Meta. "
+            "Use uma URL HTTP/HTTPS válida do frontend."
+        )
+    if not host:
+        raise ValueError(
+            "FRONTEND_SITE_URL inválido para o callback OAuth da Meta. "
+            "O host do frontend não foi reconhecido."
+        )
+    if parsed.path not in {"", "/"}:
+        raise ValueError(
+            "FRONTEND_SITE_URL inválido para o callback OAuth da Meta. "
+            "Informe apenas a origem do frontend, sem path adicional."
+        )
+
+    return normalized
+
+
 def _frontend_meta_integrations_url() -> str:
-    return f"{settings.FRONTEND_SITE_URL.rstrip('/')}/app/meta-integracoes"
+    return f"{_validated_frontend_site_url()}/app/meta-integracoes"
 
 
 def _webhook_configured(integration: dict[str, Any]) -> bool:

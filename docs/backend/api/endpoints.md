@@ -279,7 +279,10 @@ Regras:
 - salva uma integracao temporaria por pagina retornada, ja com `org_id`, `page_id`, `page_name` e `access_token` mantido apenas no backend;
 - reutiliza a tabela `meta_lead_integrations` como persistencia temporaria do OAuth, sem criar tabela extra;
 - registra logs de `state`, `code`, token mascarado, paginas encontradas, tentativa de persistencia, resultado do insert/update e erro detalhado;
-- redireciona o browser de volta para `/app/meta-integracoes?tab=oauth&success=true`.
+- valida `FRONTEND_SITE_URL` com `urllib.parse` antes de redirecionar, sem aceitar valor vazio, path extra ou barra final duplicada;
+- registra em log `FRONTEND_SITE_URL` e `redirect_url` final antes do redirect;
+- redireciona o browser de volta para `https://SEU_FRONTEND/app/meta-integracoes?success=true`;
+- quando o redirect nao puder ser montado, responde com fallback seguro em texto claro explicando o problema de configuracao do frontend, sem estourar `HTTPException` generica.
 
 Observacoes:
 

@@ -50,6 +50,7 @@ from app.services.meta_leads_service import (
     save_meta_oauth_draft,
     subscribe_meta_page,
     test_meta_integration_connection,
+    _validated_frontend_site_url,
     _frontend_meta_integrations_url,
     utcnow_iso,
 )
@@ -66,6 +67,46 @@ def _mask_token(value: Optional[str]) -> str:
     if len(cleaned) <= 6:
         return f"{cleaned[:2]}***"
     return f"{cleaned[:3]}***{cleaned[-2:]}"
+
+
+def _build_frontend_redirect_response(
+    *,
+    params: dict[str, str],
+    log_event: str,
+    level: str = "info",
+):
+    raw_frontend_site_url = settings.FRONTEND_SITE_URL
+    try:
+        frontend_site_url = _validated_frontend_site_url()
+        redirect_base = _frontend_meta_integrations_url()
+        redirect_url = f"{redirect_base}?{urlencode(params)}"
+        logger_method = getattr(logger, level, logger.info)
+        logger_method(
+            log_event,
+            extra={
+                "FRONTEND_SITE_URL": frontend_site_url,
+                "redirect_url": redirect_url,
+                "status_code": 302,
+            },
+        )
+        return RedirectResponse(url=redirect_url, status_code=302)
+    except Exception as exc:
+        fallback_message = (
+            "OAuth Meta concluído, mas o redirecionamento para o frontend falhou. "
+            f"FRONTEND_SITE_URL atual: {raw_frontend_site_url or '<missing>'}. "
+            f"Erro: {str(exc) or repr(exc)}"
+        )
+        logger.error(
+            "meta_oauth_callback_redirect_failure",
+            extra={
+                "FRONTEND_SITE_URL": raw_frontend_site_url,
+                "redirect_url": None,
+                "error_type": exc.__class__.__name__,
+                "error_message": str(exc) or repr(exc),
+                "status_code": 500,
+            },
+        )
+        return PlainTextResponse(content=fallback_message, status_code=500)
 
 
 def _sanitize_integration(row: dict[str, Any]) -> dict[str, Any]:
@@ -401,7 +442,6 @@ def meta_oauth_callback(
     error_description: Optional[str] = Query(default=None),
     supa: Client = Depends(get_supabase_admin),
 ):
-    frontend_url = _frontend_meta_integrations_url()
     logger.info(
         "meta_oauth_callback_received",
         extra={
@@ -411,33 +451,20 @@ def meta_oauth_callback(
         },
     )
     if error:
-        params = urlencode(
-            {
+        return _build_frontend_redirect_response(
+            params={
                 "tab": "oauth",
                 "error": error_description or error,
-            }
-        )
-        logger.warning(
-            "meta_oauth_callback_redirect_error",
-            extra={
-                "detail": error_description or error,
-                "redirect_url": f"{frontend_url}?{params}",
-                "status_code": 302,
             },
+            log_event="meta_oauth_callback_redirect_error",
+            level="warning",
         )
-        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
     if not code or not state:
-        params = urlencode({"tab": "oauth", "error": "Callback OAuth Meta inválido."})
-        logger.warning(
-            "meta_oauth_callback_redirect_invalid",
-            extra={
-                "has_code": bool(code),
-                "has_state": bool(state),
-                "redirect_url": f"{frontend_url}?{params}",
-                "status_code": 302,
-            },
+        return _build_frontend_redirect_response(
+            params={"tab": "oauth", "error": "Callback OAuth Meta inválido."},
+            log_event="meta_oauth_callback_redirect_invalid",
+            level="warning",
         )
-        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
 
     try:
         parsed_state = parse_meta_oauth_state(state)
@@ -537,17 +564,10 @@ def meta_oauth_callback(
                 "page_ids": [row["page_id"] for row in persisted_rows],
             },
         )
-        params = urlencode({"tab": "oauth", "success": "true"})
-        logger.info(
-            "meta_oauth_callback_redirect_success",
-            extra={
-                "org_id": parsed_state["org_id"],
-                "user_id": parsed_state["user_id"],
-                "redirect_url": f"{frontend_url}?{params}",
-                "status_code": 302,
-            },
+        return _build_frontend_redirect_response(
+            params={"success": "true"},
+            log_event="meta_oauth_callback_redirect_success",
         )
-        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
     except Exception as exc:
         error_message = exc.detail if isinstance(exc, HTTPException) else str(exc)
         logger.exception(
@@ -562,16 +582,11 @@ def meta_oauth_callback(
                 "status_code": exc.status_code if isinstance(exc, HTTPException) else 500,
             },
         )
-        params = urlencode({"tab": "oauth", "error": str(error_message)})
-        logger.warning(
-            "meta_oauth_callback_redirect_failure",
-            extra={
-                "detail": error_message,
-                "redirect_url": f"{frontend_url}?{params}",
-                "status_code": 302,
-            },
+        return _build_frontend_redirect_response(
+            params={"tab": "oauth", "error": str(error_message)},
+            log_event="meta_oauth_callback_redirect_error_result",
+            level="warning",
         )
-        return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
 
 
 @router.post("/meta/integrations", response_model=MetaIntegrationOut, status_code=201)
