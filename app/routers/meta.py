@@ -417,17 +417,49 @@ def meta_oauth_callback(
                 "error": error_description or error,
             }
         )
+        logger.warning(
+            "meta_oauth_callback_redirect_error",
+            extra={
+                "detail": error_description or error,
+                "redirect_url": f"{frontend_url}?{params}",
+                "status_code": 302,
+            },
+        )
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
     if not code or not state:
         params = urlencode({"tab": "oauth", "error": "Callback OAuth Meta inválido."})
+        logger.warning(
+            "meta_oauth_callback_redirect_invalid",
+            extra={
+                "has_code": bool(code),
+                "has_state": bool(state),
+                "redirect_url": f"{frontend_url}?{params}",
+                "status_code": 302,
+            },
+        )
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
 
     try:
         parsed_state = parse_meta_oauth_state(state)
+        logger.info(
+            "meta_oauth_callback_state_validated",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
+                "code_masked": _mask_token(code),
+            },
+        )
         _ensure_callback_user_in_org(
             supa,
             org_id=parsed_state["org_id"],
             user_id=parsed_state["user_id"],
+        )
+        logger.info(
+            "meta_oauth_callback_org_membership_validated",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
+            },
         )
         user_access_token = exchange_meta_oauth_code(code=code)
         logger.info(
@@ -436,6 +468,13 @@ def meta_oauth_callback(
                 "org_id": parsed_state["org_id"],
                 "user_id": parsed_state["user_id"],
                 "access_token_masked": _mask_token(user_access_token),
+            },
+        )
+        logger.info(
+            "meta_oauth_callback_fetching_pages",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
             },
         )
         pages = list_meta_oauth_pages(user_access_token=user_access_token)
@@ -460,6 +499,15 @@ def meta_oauth_callback(
                 status_code=404,
                 detail="Nenhuma página encontrada para este usuário",
             )
+        logger.info(
+            "meta_oauth_callback_persisting_drafts",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
+                "pages_count": len(pages),
+                "page_ids": [page["id"] for page in pages],
+            },
+        )
         persisted_rows = save_meta_oauth_draft(
             supa,
             org_id=parsed_state["org_id"],
@@ -490,19 +538,39 @@ def meta_oauth_callback(
             },
         )
         params = urlencode({"tab": "oauth", "success": "true"})
+        logger.info(
+            "meta_oauth_callback_redirect_success",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
+                "redirect_url": f"{frontend_url}?{params}",
+                "status_code": 302,
+            },
+        )
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
     except Exception as exc:
+        error_message = exc.detail if isinstance(exc, HTTPException) else str(exc)
         logger.exception(
             "meta_oauth_callback_failed",
             extra={
                 "code_masked": _mask_token(code),
                 "has_state": bool(state),
-                "detail": exc.detail if isinstance(exc, HTTPException) else str(exc),
+                "error_type": exc.__class__.__name__,
+                "detail": error_message,
+                "error_message": error_message,
+                "error_repr": repr(exc),
                 "status_code": exc.status_code if isinstance(exc, HTTPException) else 500,
             },
         )
-        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
-        params = urlencode({"tab": "oauth", "error": str(detail)})
+        params = urlencode({"tab": "oauth", "error": str(error_message)})
+        logger.warning(
+            "meta_oauth_callback_redirect_failure",
+            extra={
+                "detail": error_message,
+                "redirect_url": f"{frontend_url}?{params}",
+                "status_code": 302,
+            },
+        )
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
 
 

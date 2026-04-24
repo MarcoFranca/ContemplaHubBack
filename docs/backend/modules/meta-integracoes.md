@@ -86,6 +86,21 @@ Essas operacoes:
 8. O frontend confirma a selecao em `POST /meta/integrations/from-oauth`.
 9. O backend converte o registro temporario da pagina em integracao real da org e tenta inscrever a pagina em `leadgen`.
 
+### Diagnostico operacional do callback
+
+O callback registra logs seguros antes e depois de cada etapa:
+
+- recebimento de `code` e `state`;
+- validacao do `state`;
+- validacao de pertencimento do usuario a `org_id`;
+- troca do token com mascaramento;
+- busca de paginas e quantidade retornada;
+- tentativa de persistencia na `meta_lead_integrations`;
+- resultado do insert/update;
+- redirect final de sucesso ou erro.
+
+Quando a persistencia falha por schema/tabela ausente, o backend devolve erro amigavel indicando necessidade de revisar estrutura ou migration.
+
 ### Sessao temporaria de OAuth
 
 Para evitar tabela nova e nao expor segredo ao browser, o fluxo assistido usa um rascunho operacional na tabela existente:

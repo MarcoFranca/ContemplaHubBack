@@ -50,6 +50,21 @@ def _mask_logged_token(value: Any) -> str:
     return f"{cleaned[:4]}***{cleaned[-4:]}"
 
 
+def _stringify_exception(exc: Exception) -> str:
+    message = str(exc).strip()
+    return message or repr(exc)
+
+
+def _looks_like_missing_relation_error(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "does not exist" in lowered
+        or "relation" in lowered and "exist" in lowered
+        or "schema cache" in lowered
+        or "column" in lowered and "exist" in lowered
+    )
+
+
 def normalize_phone(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -737,30 +752,100 @@ def save_meta_oauth_draft(
             existing_row=existing_row,
             user_access_token=user_access_token,
         )
+        logger.info(
+            "meta_oauth_draft_persist_attempt",
+            extra={
+                "table": "meta_lead_integrations",
+                "org_id": org_id,
+                "user_id": user_id,
+                "page_id": payload["page_id"],
+                "page_name": payload.get("page_name"),
+                "existing_id": (existing_row or {}).get("id"),
+                "is_update": bool(existing_row),
+                "fields": {
+                    "nome": payload.get("nome"),
+                    "source_label": payload.get("source_label"),
+                    "channel": payload.get("channel"),
+                    "ativo": payload.get("ativo"),
+                    "provider": payload.get("provider"),
+                    "default_owner_id": payload.get("default_owner_id"),
+                    "access_token_masked": _mask_logged_token(payload.get("access_token_encrypted")),
+                },
+            },
+        )
 
-        if existing_row:
-            resp = (
-                supa.table("meta_lead_integrations")
-                .update(payload)
-                .eq("id", existing_row["id"])
-                .eq("org_id", org_id)
-                .select("*")
-                .single()
-                .execute()
+        try:
+            if existing_row:
+                resp = (
+                    supa.table("meta_lead_integrations")
+                    .update(payload)
+                    .eq("id", existing_row["id"])
+                    .eq("org_id", org_id)
+                    .select("*")
+                    .single()
+                    .execute()
+                )
+            else:
+                resp = (
+                    supa.table("meta_lead_integrations")
+                    .insert(payload)
+                    .select("*")
+                    .single()
+                    .execute()
+                )
+        except Exception as exc:
+            error_message = _stringify_exception(exc)
+            logger.exception(
+                "meta_oauth_draft_persist_failed",
+                extra={
+                    "table": "meta_lead_integrations",
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "page_id": payload["page_id"],
+                    "page_name": payload.get("page_name"),
+                    "existing_id": (existing_row or {}).get("id"),
+                    "is_update": bool(existing_row),
+                    "error_type": exc.__class__.__name__,
+                    "error_message": error_message,
+                    "fields": {
+                        "nome": payload.get("nome"),
+                        "source_label": payload.get("source_label"),
+                        "channel": payload.get("channel"),
+                        "ativo": payload.get("ativo"),
+                        "provider": payload.get("provider"),
+                        "default_owner_id": payload.get("default_owner_id"),
+                    },
+                },
             )
-        else:
-            resp = (
-                supa.table("meta_lead_integrations")
-                .insert(payload)
-                .select("*")
-                .single()
-                .execute()
-            )
+            if _looks_like_missing_relation_error(error_message):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "Estrutura de banco incompatível para a integração Meta. "
+                        "Verifique se a tabela/colunas esperadas existem ou se falta migration."
+                    ),
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Falha ao salvar integração temporária da página {page_id}: {error_message}",
+            ) from exc
         row = _safe_data(resp)
         if not row:
             raise RuntimeError(
                 f"Falha ao salvar integração temporária da página Meta {page_id}."
             )
+        logger.info(
+            "meta_oauth_draft_persist_success",
+            extra={
+                "table": "meta_lead_integrations",
+                "org_id": org_id,
+                "user_id": user_id,
+                "page_id": row.get("page_id"),
+                "page_name": row.get("page_name"),
+                "integration_id": row.get("id"),
+                "is_update": bool(existing_row),
+            },
+        )
         persisted.append(row)
 
     for row in existing_rows:
