@@ -80,19 +80,20 @@ Essas operacoes:
 2. O backend gera uma URL de consentimento com `state` assinado contendo `org_id` e `user_id`.
 3. A Meta redireciona para `GET /meta/oauth/callback`.
 4. O backend troca `code` por token de usuario e lista as paginas autorizadas.
-5. O backend salva um rascunho temporario na propria `meta_lead_integrations`, marcado em `settings.oauth_draft.active = true`.
-6. O frontend consulta `GET /meta/pages` e `GET /meta/pages/{page_id}/forms` para montar o fluxo assistido sem ver o token.
-7. O frontend confirma a selecao em `POST /meta/integrations/from-oauth`.
-8. O backend converte o rascunho em integracao real da org e tenta inscrever a pagina em `leadgen`.
+5. O backend valida se o `user_id` do `state` ainda pertence a `org_id` do fluxo.
+6. O backend salva uma integracao temporaria por pagina retornada, ja com `page_id`, `page_name` e `access_token_encrypted`.
+7. O frontend consulta `GET /meta/pages` e `GET /meta/pages/{page_id}/forms` para montar o fluxo assistido sem ver o token.
+8. O frontend confirma a selecao em `POST /meta/integrations/from-oauth`.
+9. O backend converte o registro temporario da pagina em integracao real da org e tenta inscrever a pagina em `leadgen`.
 
 ### Sessao temporaria de OAuth
 
 Para evitar tabela nova e nao expor segredo ao browser, o fluxo assistido usa um rascunho operacional na tabela existente:
 
-- o rascunho fica vinculado a `org_id` e `created_by`;
+- o rascunho fica vinculado a `org_id`, `created_by` e `settings.oauth_draft.oauth_user_id`;
 - o token Meta fica apenas no backend, em `access_token_encrypted`;
-- `page_id` recebe um valor tecnico temporario enquanto a conexao nao e finalizada;
-- a listagem principal de integracoes oculta rascunhos ativos;
+- `page_id` e `page_name` ja sao persistidos com os valores reais retornados pela Graph API;
+- a listagem principal pode mostrar rascunhos ativos para o proprio usuario que acabou de conectar, facilitando diagnostico e continuidade do fluxo;
 - depois da finalizacao, o mesmo registro passa a representar a integracao real.
 
 ## Endpoints relacionados

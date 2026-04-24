@@ -41,6 +41,15 @@ def _trim(value: Any) -> Optional[str]:
     return cleaned or None
 
 
+def _mask_logged_token(value: Any) -> str:
+    cleaned = _trim(value)
+    if not cleaned:
+        return "<missing>"
+    if len(cleaned) <= 8:
+        return f"{cleaned[:2]}***"
+    return f"{cleaned[:4]}***{cleaned[-4:]}"
+
+
 def normalize_phone(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -156,6 +165,21 @@ def _connection_settings(integration: dict[str, Any]) -> dict[str, Any]:
 def _oauth_draft_settings(integration: dict[str, Any]) -> dict[str, Any]:
     raw = _settings_dict(integration).get("oauth_draft")
     return raw if isinstance(raw, dict) else {}
+
+
+def _is_active_oauth_draft(
+    integration: dict[str, Any],
+    *,
+    user_id: Optional[str] = None,
+) -> bool:
+    oauth_draft = _oauth_draft_settings(integration)
+    if not oauth_draft.get("active"):
+        return False
+    if user_id and oauth_draft.get("oauth_user_id") not in {None, user_id}:
+        return False
+    if user_id and integration.get("created_by") not in {None, user_id}:
+        return False
+    return True
 
 
 def build_meta_integration_status(integration: dict[str, Any]) -> dict[str, Any]:
@@ -591,48 +615,6 @@ def list_meta_oauth_pages(*, user_access_token: str) -> list[dict[str, Any]]:
     return result
 
 
-def _build_oauth_draft_payload(
-    *,
-    org_id: str,
-    user_id: str,
-    user_access_token: str,
-    pages: list[dict[str, Any]],
-) -> dict[str, Any]:
-    draft_nonce = secrets.token_urlsafe(12)
-    return {
-        "org_id": org_id,
-        "created_by": user_id,
-        "updated_by": user_id,
-        "nome": "Meta OAuth draft",
-        "provider": META_PROVIDER,
-        "page_id": f"oauth-draft:{draft_nonce}",
-        "page_name": "OAuth draft",
-        "form_id": None,
-        "form_name": None,
-        "source_label": "Meta Ads",
-        "channel": META_CHANNEL,
-        "default_owner_id": None,
-        "verify_token": None,
-        "access_token_encrypted": user_access_token,
-        "ativo": False,
-        "settings": {
-            "oauth_draft": {
-                "active": True,
-                "connected_at": utcnow_iso(),
-                "pages": [
-                    {
-                        "id": page["id"],
-                        "name": page.get("name"),
-                        "category": page.get("category"),
-                    }
-                    for page in pages
-                ],
-            }
-        },
-        "updated_at": utcnow_iso(),
-    }
-
-
 def _list_org_meta_integrations(
     supa: Client,
     *,
@@ -651,18 +633,82 @@ def _list_org_meta_integrations(
     return _safe_data(resp) or []
 
 
+def _oauth_draft_rows_for_user(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in _list_org_meta_integrations(supa, org_id=org_id)
+        if _is_active_oauth_draft(row, user_id=user_id)
+    ]
+
+
 def get_latest_meta_oauth_draft(
     supa: Client,
     *,
     org_id: str,
     user_id: str,
 ) -> Optional[dict[str, Any]]:
-    rows = _list_org_meta_integrations(supa, org_id=org_id)
+    rows = _oauth_draft_rows_for_user(supa, org_id=org_id, user_id=user_id)
+    return rows[0] if rows else None
+
+
+def _get_meta_oauth_draft_for_page(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+    page_id: str,
+) -> Optional[dict[str, Any]]:
+    rows = _oauth_draft_rows_for_user(supa, org_id=org_id, user_id=user_id)
     for row in rows:
-        oauth_draft = _oauth_draft_settings(row)
-        if oauth_draft.get("active") and row.get("created_by") == user_id:
+        if str(row.get("page_id")) == str(page_id):
             return row
     return None
+
+
+def _build_oauth_page_draft_payload(
+    *,
+    org_id: str,
+    user_id: str,
+    page: dict[str, Any],
+    existing_row: Optional[dict[str, Any]],
+    user_access_token: str,
+) -> dict[str, Any]:
+    page_id = str(page["id"])
+    page_name = _trim(page.get("name"))
+    existing_settings = _settings_dict(existing_row or {})
+    return {
+        "org_id": org_id,
+        "created_by": (existing_row or {}).get("created_by") or user_id,
+        "updated_by": user_id,
+        "nome": (existing_row or {}).get("nome") or f"Meta {page_name or page_id}",
+        "provider": META_PROVIDER,
+        "page_id": page_id,
+        "page_name": page_name,
+        "form_id": (existing_row or {}).get("form_id"),
+        "form_name": (existing_row or {}).get("form_name"),
+        "source_label": (existing_row or {}).get("source_label") or "Meta Ads",
+        "channel": META_CHANNEL,
+        "default_owner_id": (existing_row or {}).get("default_owner_id"),
+        "verify_token": (existing_row or {}).get("verify_token"),
+        "access_token_encrypted": _trim(page.get("access_token")) or user_access_token,
+        "ativo": bool((existing_row or {}).get("ativo", False)),
+        "settings": {
+            **existing_settings,
+            "oauth_draft": {
+                **_oauth_draft_settings(existing_row or {}),
+                "active": True,
+                "connected_at": utcnow_iso(),
+                "oauth_user_id": user_id,
+                "page_category": _trim(page.get("category")),
+            },
+        },
+        "updated_at": utcnow_iso(),
+    }
 
 
 def save_meta_oauth_draft(
@@ -672,36 +718,74 @@ def save_meta_oauth_draft(
     user_id: str,
     user_access_token: str,
     pages: list[dict[str, Any]],
-) -> dict[str, Any]:
-    current = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
-    payload = _build_oauth_draft_payload(
-        org_id=org_id,
-        user_id=user_id,
-        user_access_token=user_access_token,
-        pages=pages,
-    )
-    if current:
-        resp = (
-            supa.table("meta_lead_integrations")
-            .update(payload)
-            .eq("id", current["id"])
-            .eq("org_id", org_id)
-            .select("*")
-            .single()
-            .execute()
+) -> list[dict[str, Any]]:
+    existing_rows = _oauth_draft_rows_for_user(supa, org_id=org_id, user_id=user_id)
+    rows_by_page_id = {
+        str(row.get("page_id")): row for row in existing_rows if row.get("page_id")
+    }
+    persisted: list[dict[str, Any]] = []
+    seen_page_ids: set[str] = set()
+
+    for page in pages:
+        page_id = str(page["id"])
+        seen_page_ids.add(page_id)
+        existing_row = rows_by_page_id.get(page_id)
+        payload = _build_oauth_page_draft_payload(
+            org_id=org_id,
+            user_id=user_id,
+            page=page,
+            existing_row=existing_row,
+            user_access_token=user_access_token,
         )
-    else:
-        resp = (
-            supa.table("meta_lead_integrations")
-            .insert(payload)
-            .select("*")
-            .single()
-            .execute()
+
+        if existing_row:
+            resp = (
+                supa.table("meta_lead_integrations")
+                .update(payload)
+                .eq("id", existing_row["id"])
+                .eq("org_id", org_id)
+                .select("*")
+                .single()
+                .execute()
+            )
+        else:
+            resp = (
+                supa.table("meta_lead_integrations")
+                .insert(payload)
+                .select("*")
+                .single()
+                .execute()
+            )
+        row = _safe_data(resp)
+        if not row:
+            raise RuntimeError(
+                f"Falha ao salvar integração temporária da página Meta {page_id}."
+            )
+        persisted.append(row)
+
+    for row in existing_rows:
+        page_id = str(row.get("page_id"))
+        if page_id in seen_page_ids:
+            continue
+        next_settings = {
+            **_settings_dict(row),
+            "oauth_draft": {
+                **_oauth_draft_settings(row),
+                "active": False,
+                "discarded_at": utcnow_iso(),
+                "oauth_user_id": user_id,
+            },
+        }
+        _update_integration_status(
+            supa,
+            integration_id=row["id"],
+            updates={
+                "settings": next_settings,
+                "ativo": False,
+            },
         )
-    row = _safe_data(resp)
-    if not row:
-        raise RuntimeError("Falha ao salvar sessão OAuth temporária da Meta.")
-    return row
+
+    return persisted
 
 
 def get_meta_oauth_pages_for_user(
@@ -710,22 +794,16 @@ def get_meta_oauth_pages_for_user(
     org_id: str,
     user_id: str,
 ) -> list[dict[str, Any]]:
-    draft = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
-    if not draft:
-        return []
-    pages = _oauth_draft_settings(draft).get("pages") or []
-    result: list[dict[str, Any]] = []
-    for item in pages:
-        if not isinstance(item, dict) or not item.get("id"):
-            continue
-        result.append(
-            {
-                "id": str(item["id"]),
-                "name": _trim(item.get("name")),
-                "category": _trim(item.get("category")),
-            }
-        )
-    return result
+    drafts = _oauth_draft_rows_for_user(supa, org_id=org_id, user_id=user_id)
+    return [
+        {
+            "id": str(row["page_id"]),
+            "name": _trim(row.get("page_name")),
+            "category": _oauth_draft_settings(row).get("page_category"),
+        }
+        for row in drafts
+        if row.get("page_id")
+    ]
 
 
 def get_meta_page_forms_for_user(
@@ -735,19 +813,18 @@ def get_meta_page_forms_for_user(
     user_id: str,
     page_id: str,
 ) -> list[dict[str, Any]]:
-    draft = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
+    draft = _get_meta_oauth_draft_for_page(
+        supa,
+        org_id=org_id,
+        user_id=user_id,
+        page_id=page_id,
+    )
     if not draft:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Nenhuma conexão OAuth Meta em andamento.",
+            detail="Nenhuma página Meta conectada foi encontrada para este usuário.",
         )
     access_token = _ensure_meta_integration_token(draft)
-    pages = get_meta_oauth_pages_for_user(supa, org_id=org_id, user_id=user_id)
-    if not any(page["id"] == page_id for page in pages):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Página não disponível na sessão OAuth atual.",
-        )
     payload = _meta_graph_user_request(
         method="GET",
         path=f"{page_id}/leadgen_forms",
@@ -780,19 +857,16 @@ def finalize_meta_oauth_integration(
     default_owner_id: Optional[str],
     ativo: bool,
 ) -> dict[str, Any]:
-    draft = get_latest_meta_oauth_draft(supa, org_id=org_id, user_id=user_id)
+    draft = _get_meta_oauth_draft_for_page(
+        supa,
+        org_id=org_id,
+        user_id=user_id,
+        page_id=page_id,
+    )
     if not draft:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Nenhuma conexão OAuth Meta em andamento.",
-        )
-    user_access_token = _ensure_meta_integration_token(draft)
-    pages = list_meta_oauth_pages(user_access_token=user_access_token)
-    page = next((item for item in pages if item["id"] == page_id), None)
-    if not page:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Página não autorizada para a conexão Meta atual.",
+            detail="Nenhuma página Meta conectada foi encontrada para este usuário.",
         )
     forms = get_meta_page_forms_for_user(
         supa,
@@ -807,17 +881,17 @@ def finalize_meta_oauth_integration(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Formulário não encontrado para a página selecionada.",
-        )
+    )
 
     payload = {
         "nome": nome,
         "page_id": page_id,
-        "page_name": page.get("name"),
+        "page_name": draft.get("page_name"),
         "form_id": form_id,
         "form_name": selected_form.get("name") if selected_form else None,
         "source_label": source_label,
         "default_owner_id": default_owner_id,
-        "access_token_encrypted": page.get("access_token") or user_access_token,
+        "access_token_encrypted": _ensure_meta_integration_token(draft),
         "ativo": ativo,
         "updated_by": user_id,
         "updated_at": utcnow_iso(),

@@ -238,7 +238,7 @@ Autenticacao:
 Resposta:
 
 - lista com metadados da integracao;
-- oculta rascunhos internos de OAuth da listagem principal;
+- exibe rascunhos ativos de OAuth apenas para o usuario que acabou de conectar a conta, para permitir acompanhamento imediato do callback;
 - nao expone `access_token_encrypted` nem `verify_token`.
 
 ### `GET /meta/oauth/start`
@@ -272,17 +272,19 @@ Autenticacao:
 Regras:
 
 - valida `state` assinado;
+- valida que o `user_id` do `state` ainda pertence a `org_id` informada;
 - troca `code` por token de usuario;
 - busca paginas autorizadas;
-- salva uma sessao temporaria server-side vinculada a `org_id` e `user_id`;
-- reutiliza a tabela `meta_lead_integrations` como rascunho operacional de OAuth, sem criar tabela extra;
-- persiste temporariamente o token da Meta apenas no backend;
-- redireciona o browser de volta para `/app/meta-integracoes?tab=oauth`.
+- se nao houver paginas, retorna erro claro `Nenhuma página encontrada para este usuário`;
+- salva uma integracao temporaria por pagina retornada, ja com `org_id`, `page_id`, `page_name` e `access_token` mantido apenas no backend;
+- reutiliza a tabela `meta_lead_integrations` como persistencia temporaria do OAuth, sem criar tabela extra;
+- registra logs de `code`, token mascarado, paginas encontradas, persistencia e erro detalhado;
+- redireciona o browser de volta para `/app/meta-integracoes?tab=oauth&success=true`.
 
 Observacoes:
 
 - a callback e publica, mas a associacao com tenant vem do `state` assinado, nunca do client;
-- em erro, redireciona para a mesma tela com `oauth_error`.
+- em erro, redireciona para a mesma tela com `error=...`.
 
 ### `GET /meta/pages`
 
@@ -294,8 +296,7 @@ Autenticacao:
 
 Regras:
 
-- usa a sessao temporaria mais recente do usuario na org;
-- retorna apenas paginas previamente carregadas no callback OAuth;
+- lista as paginas persistidas pelo callback OAuth para o usuario atual na org;
 - nao expone token no client.
 
 ### `GET /meta/pages/{page_id}/forms`
@@ -322,11 +323,11 @@ Autenticacao:
 
 Regras:
 
-- usa a sessao OAuth temporaria do usuario na org;
+- usa a integracao temporaria da pagina escolhida pelo usuario na org;
 - valida a pagina e o formulario escolhidos;
 - transforma o rascunho em integracao real;
 - tenta inscrever a pagina no app para `leadgen`;
-- oculta o rascunho da listagem principal de integracoes.
+- desativa a flag de rascunho no registro finalizado.
 
 ### `POST /meta/integrations`
 

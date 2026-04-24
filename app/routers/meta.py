@@ -31,13 +31,13 @@ from app.services.meta_leads_service import (
     META_CHANNEL,
     META_PROVIDER,
     _ensure_owner_in_org,
+    _is_active_oauth_draft,
     _integration_provider_filter,
     _safe_data,
     build_meta_oauth_authorize_url,
     build_meta_integration_status,
     exchange_meta_oauth_code,
     finalize_meta_oauth_integration,
-    get_latest_meta_oauth_draft,
     get_meta_oauth_pages_for_user,
     get_meta_page_forms_for_user,
     get_meta_subscription_status,
@@ -114,6 +114,27 @@ def _get_integration_or_404(
     if not row:
         raise HTTPException(status_code=404, detail="Integração Meta não encontrada.")
     return row
+
+
+def _ensure_callback_user_in_org(
+    supa: Client,
+    *,
+    org_id: str,
+    user_id: str,
+) -> None:
+    resp = (
+        supa.table("profiles")
+        .select("user_id")
+        .eq("org_id", org_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not _safe_data(resp):
+        raise HTTPException(
+            status_code=403,
+            detail="Usuário do callback OAuth não pertence à organização informada.",
+        )
 
 
 def _validate_meta_signature(
@@ -347,7 +368,7 @@ def list_meta_integrations(
     rows = [
         row
         for row in (_safe_data(resp) or [])
-        if not bool(((row.get("settings") or {}).get("oauth_draft") or {}).get("active"))
+        if not _is_active_oauth_draft(row) or _is_active_oauth_draft(row, user_id=ctx.user_id)
     ]
     return [_sanitize_integration(row) for row in rows]
 
@@ -381,42 +402,107 @@ def meta_oauth_callback(
     supa: Client = Depends(get_supabase_admin),
 ):
     frontend_url = _frontend_meta_integrations_url()
+    logger.info(
+        "meta_oauth_callback_received",
+        extra={
+            "code_masked": _mask_token(code),
+            "has_state": bool(state),
+            "error": error,
+        },
+    )
     if error:
         params = urlencode(
             {
                 "tab": "oauth",
-                "oauth_error": error_description or error,
+                "error": error_description or error,
             }
         )
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
     if not code or not state:
-        params = urlencode({"tab": "oauth", "oauth_error": "Callback OAuth Meta inválido."})
+        params = urlencode({"tab": "oauth", "error": "Callback OAuth Meta inválido."})
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
 
     try:
         parsed_state = parse_meta_oauth_state(state)
+        _ensure_callback_user_in_org(
+            supa,
+            org_id=parsed_state["org_id"],
+            user_id=parsed_state["user_id"],
+        )
         user_access_token = exchange_meta_oauth_code(code=code)
+        logger.info(
+            "meta_oauth_callback_token_received",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
+                "access_token_masked": _mask_token(user_access_token),
+            },
+        )
         pages = list_meta_oauth_pages(user_access_token=user_access_token)
-        draft = save_meta_oauth_draft(
+        logger.info(
+            "meta_oauth_callback_pages_loaded",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
+                "pages_count": len(pages),
+                "pages": [
+                    {
+                        "page_id": page["id"],
+                        "page_name": page.get("name"),
+                        "access_token_masked": _mask_token(page.get("access_token")),
+                    }
+                    for page in pages
+                ],
+            },
+        )
+        if not pages:
+            raise HTTPException(
+                status_code=404,
+                detail="Nenhuma página encontrada para este usuário",
+            )
+        persisted_rows = save_meta_oauth_draft(
             supa,
             org_id=parsed_state["org_id"],
             user_id=parsed_state["user_id"],
             user_access_token=user_access_token,
             pages=pages,
         )
+        logger.info(
+            "meta_oauth_callback_db_persisted",
+            extra={
+                "org_id": parsed_state["org_id"],
+                "user_id": parsed_state["user_id"],
+                "insert_count": len(persisted_rows),
+                "integration_ids": [row["id"] for row in persisted_rows],
+                "page_ids": [row["page_id"] for row in persisted_rows],
+            },
+        )
         insert_audit_log(
             supa,
             org_id=parsed_state["org_id"],
             actor_id=parsed_state["user_id"],
             entity="meta_lead_integration",
-            entity_id=draft["id"],
+            entity_id=persisted_rows[0]["id"],
             action="oauth_callback",
-            diff={"pages_available": len(pages)},
+            diff={
+                "pages_available": len(pages),
+                "page_ids": [row["page_id"] for row in persisted_rows],
+            },
         )
-        params = urlencode({"tab": "oauth", "oauth_connected": "1"})
+        params = urlencode({"tab": "oauth", "success": "true"})
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
     except Exception as exc:
-        params = urlencode({"tab": "oauth", "oauth_error": str(exc)})
+        logger.exception(
+            "meta_oauth_callback_failed",
+            extra={
+                "code_masked": _mask_token(code),
+                "has_state": bool(state),
+                "detail": exc.detail if isinstance(exc, HTTPException) else str(exc),
+                "status_code": exc.status_code if isinstance(exc, HTTPException) else 500,
+            },
+        )
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        params = urlencode({"tab": "oauth", "error": str(detail)})
         return RedirectResponse(url=f"{frontend_url}?{params}", status_code=302)
 
 
