@@ -444,6 +444,10 @@ def meta_oauth_callback(
     error_description: Optional[str] = Query(default=None),
     supa: Client = Depends(get_supabase_admin),
 ):
+    state_validado = False
+    token_exchange_ok = False
+    pages_count = 0
+    oauth_session_saved = False
     logger.info(
         "meta_oauth_callback_received",
         extra={
@@ -470,12 +474,14 @@ def meta_oauth_callback(
 
     try:
         parsed_state = parse_meta_oauth_state(state)
+        state_validado = True
         logger.info(
-            "meta_oauth_callback_state_validated",
+            "meta_oauth_callback_state_validated: state_validado=true",
             extra={
                 "org_id": parsed_state["org_id"],
                 "user_id": parsed_state["user_id"],
                 "code_masked": _mask_token(code),
+                "state_validado": True,
             },
         )
         _ensure_callback_user_in_org(
@@ -491,12 +497,14 @@ def meta_oauth_callback(
             },
         )
         user_access_token = exchange_meta_oauth_code(code=code)
+        token_exchange_ok = True
         logger.info(
-            "meta_oauth_callback_token_received",
+            "meta_oauth_callback_token_received: token_exchange_ok=true",
             extra={
                 "org_id": parsed_state["org_id"],
                 "user_id": parsed_state["user_id"],
                 "access_token_masked": _mask_token(user_access_token),
+                "token_exchange_ok": True,
             },
         )
         logger.info(
@@ -507,12 +515,13 @@ def meta_oauth_callback(
             },
         )
         pages = list_meta_oauth_pages(user_access_token=user_access_token)
+        pages_count = len(pages)
         logger.info(
-            "meta_oauth_callback_pages_loaded",
+            f"meta_oauth_callback_pages_loaded: pages_count={pages_count}",
             extra={
                 "org_id": parsed_state["org_id"],
                 "user_id": parsed_state["user_id"],
-                "pages_count": len(pages),
+                "pages_count": pages_count,
                 "pages": [
                     {
                         "page_id": page["id"],
@@ -569,14 +578,16 @@ def meta_oauth_callback(
             user_access_token=user_access_token,
             pages=pages,
         )
+        oauth_session_saved = bool(persisted_rows)
         logger.info(
-            "meta_oauth_callback_db_persisted",
+            f"meta_oauth_callback_db_persisted: oauth_session_saved={str(oauth_session_saved).lower()}",
             extra={
                 "org_id": parsed_state["org_id"],
                 "user_id": parsed_state["user_id"],
                 "insert_count": len(persisted_rows),
                 "integration_ids": [row["id"] for row in persisted_rows],
                 "page_ids": [row["page_id"] for row in persisted_rows],
+                "oauth_session_saved": oauth_session_saved,
             },
         )
         insert_audit_log(
@@ -592,13 +603,25 @@ def meta_oauth_callback(
             },
         )
         return _build_frontend_redirect_response(
-            params={"success": "true"},
+            params={"success": "true", "meta_connected": "1"},
             log_event="meta_oauth_callback_redirect_success",
+            message_detail=(
+                f"state_validado={str(state_validado).lower()} "
+                f"token_exchange_ok={str(token_exchange_ok).lower()} "
+                f"pages_count={pages_count} "
+                f"oauth_session_saved={str(oauth_session_saved).lower()}"
+            ),
         )
     except Exception as exc:
         error_message = exc.detail if isinstance(exc, HTTPException) else str(exc)
         logger.exception(
-            f"meta_oauth_callback_failed: {error_message}",
+            (
+                f"meta_oauth_callback_failed: {error_message} "
+                f"state_validado={str(state_validado).lower()} "
+                f"token_exchange_ok={str(token_exchange_ok).lower()} "
+                f"pages_count={pages_count} "
+                f"oauth_session_saved={str(oauth_session_saved).lower()}"
+            ),
             extra={
                 "code_masked": _mask_token(code),
                 "has_state": bool(state),
@@ -607,13 +630,23 @@ def meta_oauth_callback(
                 "error_message": error_message,
                 "error_repr": repr(exc),
                 "status_code": exc.status_code if isinstance(exc, HTTPException) else 500,
+                "state_validado": state_validado,
+                "token_exchange_ok": token_exchange_ok,
+                "pages_count": pages_count,
+                "oauth_session_saved": oauth_session_saved,
             },
         )
         return _build_frontend_redirect_response(
             params={"tab": "oauth", "error": str(error_message)},
             log_event="meta_oauth_callback_redirect_error_result",
             level="warning",
-            message_detail=str(error_message),
+            message_detail=(
+                f"{error_message} "
+                f"state_validado={str(state_validado).lower()} "
+                f"token_exchange_ok={str(token_exchange_ok).lower()} "
+                f"pages_count={pages_count} "
+                f"oauth_session_saved={str(oauth_session_saved).lower()}"
+            ),
         )
 
 

@@ -100,6 +100,7 @@ O callback registra logs seguros antes e depois de cada etapa:
 - redirect final de sucesso ou erro.
 
 Para ambientes como Railway, o backend tambem inclui o motivo principal da falha no proprio texto da mensagem de log, em vez de depender apenas de campos `extra`.
+O callback tambem registra indicadores objetivos de progresso: `state_validado`, `token_exchange_ok`, `pages_count` e `oauth_session_saved`.
 
 Quando `/me/accounts` retorna vazio, o backend tambem registra diagnostico seguro com:
 
