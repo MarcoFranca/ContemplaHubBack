@@ -190,6 +190,20 @@ def _frontend_meta_integrations_url() -> str:
     return f"{_validated_frontend_site_url()}/app/meta-integracoes"
 
 
+def _default_meta_verify_token(*, org_id: str, page_id: str) -> str:
+    configured = settings.META_VERIFY_TOKEN.strip()
+    if configured:
+        return configured
+
+    seed = (
+        settings.META_APP_SECRET.strip()
+        or settings.SUPABASE_SERVICE_ROLE_KEY.strip()
+        or "meta-oauth-verify-token"
+    )
+    digest = hashlib.sha256(f"{org_id}:{page_id}:{seed}".encode("utf-8")).hexdigest()
+    return f"meta-oauth-{digest[:24]}"
+
+
 def _webhook_configured(integration: dict[str, Any]) -> bool:
     return bool(settings.META_VERIFY_TOKEN.strip() or _trim(integration.get("verify_token")))
 
@@ -936,7 +950,10 @@ def _build_oauth_page_draft_payload(
         "source_label": (existing_row or {}).get("source_label") or "Meta Ads",
         "channel": META_CHANNEL,
         "default_owner_id": (existing_row or {}).get("default_owner_id"),
-        "verify_token": (existing_row or {}).get("verify_token"),
+        "verify_token": (
+            (existing_row or {}).get("verify_token")
+            or _default_meta_verify_token(org_id=org_id, page_id=page_id)
+        ),
         "access_token_encrypted": _trim(page.get("access_token")) or user_access_token,
         "ativo": bool((existing_row or {}).get("ativo", False)),
         "settings": {

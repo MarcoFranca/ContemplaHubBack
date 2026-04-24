@@ -119,6 +119,7 @@ Para evitar tabela nova e nao expor segredo ao browser, o fluxo assistido usa um
 
 - o rascunho fica vinculado a `org_id`, `created_by` e `settings.oauth_draft.oauth_user_id`;
 - o token Meta fica apenas no backend, em `access_token_encrypted`;
+- o `verify_token` obrigatorio da tabela e preenchido automaticamente com `META_VERIFY_TOKEN` quando existir, ou com um token tecnico estavel por org/pagina no fluxo assistido;
 - `page_id` e `page_name` ja sao persistidos com os valores reais retornados pela Graph API;
 - a listagem principal pode mostrar rascunhos ativos para o proprio usuario que acabou de conectar, facilitando diagnostico e continuidade do fluxo;
 - depois da finalizacao, o mesmo registro passa a representar a integracao real.
