@@ -154,6 +154,7 @@ Payload esperado:
 Regras:
 
 - resolve a integracao por `page_id` e `form_id`;
+- quando houver pagina conhecida mas formulario divergente ou integracao inativa, registra erro operacional claro em `meta_webhook_events`;
 - nunca usa o payload para decidir `org_id`;
 - valida `X-Hub-Signature-256` com `META_APP_SECRET` antes de processar o body;
 - busca os dados reais do lead na Graph API usando `leadgen_id`;
@@ -184,6 +185,22 @@ Regras:
 - quando a integracao ainda tiver apenas fallback com token de usuario, retorna erro amigavel orientando reconectar a conta Meta com acesso completo a pagina;
 - chama `/{page-id}/subscribed_apps?subscribed_fields=leadgen` na Graph API;
 - atualiza o status operacional salvo em `settings`.
+
+### `DELETE /meta/integrations/{id}`
+
+Remove a integracao Meta da organizacao autenticada.
+
+Autenticacao:
+
+- manager autenticado
+
+Regras:
+
+- opera apenas na `org_id` do usuario;
+- tenta remover a inscricao da pagina no app da Meta antes de excluir o cadastro local;
+- se a desinscricao na Meta falhar, ainda remove a integracao local e devolve o aviso em `detail`;
+- registra auditoria da remocao com status da tentativa de desinscricao;
+- a exclusao local atende o fluxo operacional de desvinculo e remocao do identificador da pagina no sistema.
 
 ### `GET /meta/integrations/{id}/subscription-status`
 

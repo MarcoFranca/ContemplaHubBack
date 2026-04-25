@@ -15,6 +15,7 @@ Ele cobre:
 - deduplicacao por telefone/email normalizados;
 - criacao ou atualizacao do lead comercial;
 - operacao assistida da Graph API para testar conexao, inscrever pagina e consultar formularios;
+- remocao segura da integracao com tentativa de desinscricao da pagina no app antes da exclusao local;
 - rastreabilidade em `meta_webhook_events`, `event_outbox` e `audit_logs`.
 
 ## Tabelas principais
@@ -32,14 +33,15 @@ Ele cobre:
 3. Se a env nao estiver configurada, faz fallback compativel para uma integracao ativa em `meta_lead_integrations`.
 4. A Meta envia o evento em `POST /api/public/webhooks/meta/leadgen`.
 5. O backend resolve a integracao por `page_id` e `form_id`, sem confiar no payload para tenancy.
-6. O backend usa `leadgen_id` + `access_token_encrypted` da integracao para buscar o lead real na Graph API.
-7. O sistema normaliza `telefone` e `email`, faz deduplicacao em `leads` por `org_id` e atualiza metadados quando o contato ja existe.
-8. Quando o contato nao existe, cria lead novo com:
+6. Se o webhook chegar para uma pagina conhecida mas com formulario divergente, o backend registra erro operacional explicito em `meta_webhook_events` para facilitar diagnostico.
+7. O backend usa `leadgen_id` + `access_token_encrypted` da integracao para buscar o lead real na Graph API.
+8. O sistema normaliza `telefone` e `email`, faz deduplicacao em `leads` por `org_id` e atualiza metadados quando o contato ja existe.
+9. Quando o contato nao existe, cria lead novo com:
    - `etapa = novo`
    - `origem = meta_ads`
-9. Registra o evento em `meta_webhook_events`.
-10. Publica evento tecnico em `event_outbox`.
-11. Registra auditoria.
+10. Registra o evento em `meta_webhook_events`.
+11. Publica evento tecnico em `event_outbox`.
+12. Registra auditoria.
 
 ## Regras de negocio importantes
 
@@ -63,6 +65,7 @@ O backend agora expone operacoes administrativas para fechar a integracao em pro
 - `POST /meta/integrations/from-oauth`
 - `POST /meta/integrations/{id}/test-connection`
 - `POST /meta/integrations/{id}/subscribe-page`
+- `DELETE /meta/integrations/{id}`
 - `GET /meta/integrations/{id}/subscription-status`
 - `GET /meta/integrations/{id}/forms`
 
@@ -139,6 +142,7 @@ Para evitar tabela nova e nao expor segredo ao browser, o fluxo assistido usa um
 - `GET /meta/integrations`
 - `POST /meta/integrations`
 - `PATCH /meta/integrations/{id}`
+- `DELETE /meta/integrations/{id}`
 - `GET /meta/oauth/start`
 - `GET /meta/oauth/callback`
 - `GET /meta/pages`

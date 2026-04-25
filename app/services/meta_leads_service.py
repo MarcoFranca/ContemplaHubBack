@@ -536,6 +536,25 @@ def resolve_meta_integration(
     return rows[0] if rows else None
 
 
+def list_meta_integrations_for_page(
+    supa: Client,
+    *,
+    page_id: str,
+) -> list[dict[str, Any]]:
+    resp = (
+        _integration_provider_filter(
+            supa.table("meta_lead_integrations")
+            .select("*")
+            .eq("page_id", page_id)
+        )
+        .order("ativo", desc=True)
+        .order("updated_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    return _safe_data(resp) or []
+
+
 def resolve_meta_verify_token(
     supa: Client,
     *,
@@ -1513,6 +1532,53 @@ def subscribe_meta_page(
         )
 
 
+def unsubscribe_meta_page(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+) -> dict[str, Any]:
+    access_token = _ensure_meta_integration_token(
+        integration,
+        require_page_token=True,
+    )
+    try:
+        payload = _meta_graph_request(
+            method="DELETE",
+            path=f"{integration['page_id']}/subscribed_apps",
+            access_token=access_token,
+        )
+        _record_subscription_result(
+            supa,
+            integration=integration,
+            subscribed=False,
+            raw=payload,
+            error=None,
+        )
+        return {
+            "ok": True,
+            "integration_id": integration["id"],
+            "page_id": integration["page_id"],
+            "subscribed": False,
+            "checked_at": utcnow_iso(),
+            "raw": payload,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        friendly_error = _meta_graph_error_to_detail(str(exc))
+        _record_subscription_result(
+            supa,
+            integration=integration,
+            subscribed=True,
+            raw=None,
+            error=friendly_error,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=friendly_error,
+        )
+
+
 def list_meta_page_forms(
     *,
     integration: dict[str, Any],
@@ -1802,21 +1868,43 @@ def ingest_meta_lead_event(
     )
 
     if not integration:
+        page_candidates = list_meta_integrations_for_page(
+            supa,
+            page_id=page_id,
+        )
+        active_candidates = [row for row in page_candidates if bool(row.get("ativo"))]
+        fallback_candidate = None
+        if len(page_candidates) == 1:
+            fallback_candidate = page_candidates[0]
+        elif len(active_candidates) == 1:
+            fallback_candidate = active_candidates[0]
+        if active_candidates and form_id:
+            error_message = (
+                "Webhook recebido para a pagina, mas nenhum formulario ativo "
+                "corresponde ao form_id informado."
+            )
+        elif page_candidates:
+            error_message = (
+                "Webhook recebido para a pagina, mas a integracao correspondente "
+                "esta inativa ou divergente do cadastro atual."
+            )
+        else:
+            error_message = "Integracao Meta nao encontrada para page_id/form_id."
         _insert_webhook_event(
             supa,
-            org_id=None,
-            integration_id=None,
+            org_id=(fallback_candidate or {}).get("org_id"),
+            integration_id=(fallback_candidate or {}).get("id"),
             payload=payload,
             page_id=page_id,
             form_id=form_id,
             leadgen_id=leadgen_id,
             event_id=event_id,
             status_value="error",
-            error_message="Integração Meta não encontrada para page_id/form_id.",
+            error_message=error_message,
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Integração Meta não encontrada para o payload informado.",
+            detail=error_message,
         )
 
     duplicate_resp = (
@@ -1973,3 +2061,33 @@ def ingest_meta_lead_event(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=message,
         )
+
+
+def delete_meta_integration(
+    supa: Client,
+    *,
+    integration: dict[str, Any],
+) -> dict[str, Any]:
+    unsubscribed = False
+    detail: Optional[str] = None
+
+    try:
+        unsubscribe_meta_page(supa, integration=integration)
+        unsubscribed = True
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    except Exception as exc:
+        detail = _stringify_exception(exc)
+
+    supa.table("meta_lead_integrations").delete().eq("id", integration["id"]).eq(
+        "org_id", integration["org_id"]
+    ).execute()
+
+    return {
+        "ok": True,
+        "integration_id": integration["id"],
+        "page_id": integration["page_id"],
+        "unsubscribed": unsubscribed,
+        "deleted_at": utcnow_iso(),
+        "detail": detail,
+    }

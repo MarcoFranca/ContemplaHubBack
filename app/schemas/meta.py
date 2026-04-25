@@ -122,6 +122,15 @@ class MetaSubscribePageOut(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class MetaDeleteIntegrationOut(BaseModel):
+    ok: bool = True
+    integration_id: str
+    page_id: str
+    unsubscribed: bool = False
+    deleted_at: str
+    detail: Optional[str] = None
+
+
 class MetaPageFormOut(BaseModel):
     id: str
     name: Optional[str] = None

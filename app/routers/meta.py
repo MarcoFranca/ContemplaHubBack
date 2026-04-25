@@ -16,6 +16,7 @@ from app.deps import get_supabase_admin
 from app.schemas.meta import (
     MetaIntegrationCreateIn,
     MetaConnectionTestOut,
+    MetaDeleteIntegrationOut,
     MetaIntegrationOut,
     MetaOAuthFinalizeIn,
     MetaOAuthStartOut,
@@ -37,6 +38,7 @@ from app.services.meta_leads_service import (
     _safe_data,
     build_meta_oauth_authorize_url,
     build_meta_integration_status,
+    delete_meta_integration,
     exchange_meta_oauth_code,
     finalize_meta_oauth_integration,
     get_meta_oauth_pages_for_user,
@@ -797,6 +799,35 @@ def patch_meta_integration(
         },
     )
     return _sanitize_integration(row)
+
+
+@router.delete("/meta/integrations/{integration_id}", response_model=MetaDeleteIntegrationOut)
+def delete_meta_integration_endpoint(
+    integration_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    integration = _get_integration_or_404(
+        supa,
+        org_id=ctx.org_id,
+        integration_id=integration_id,
+    )
+    result = delete_meta_integration(supa, integration=integration)
+    insert_audit_log(
+        supa,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        entity="meta_lead_integration",
+        entity_id=integration_id,
+        action="delete",
+        diff={
+            "page_id": integration["page_id"],
+            "form_id": integration.get("form_id"),
+            "unsubscribed": result["unsubscribed"],
+            "detail": result.get("detail"),
+        },
+    )
+    return result
 
 
 @router.post("/meta/integrations/from-oauth", response_model=MetaIntegrationOut)
