@@ -48,6 +48,7 @@ Ele cobre:
 - tenancy sempre vem de `meta_lead_integrations.org_id`;
 - a verificacao publica do webhook nao depende de sessao, usuario logado ou middleware de auth;
 - o POST do webhook exige assinatura valida quando `META_APP_SECRET` estiver configurado no ambiente;
+- a persistencia de `meta_webhook_events` e do upsert de `leads` usa `insert/update + execute()` seguido de leitura explicita quando necessario, para manter compatibilidade com a versao atual do client Python do Supabase;
 - `default_owner_id` so e aceito se pertencer a mesma organizacao;
 - `channel` da integracao fica em `meta_ads`;
 - `source_label` e `form_label` ajudam a manter rastreabilidade comercial no lead;

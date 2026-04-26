@@ -35,6 +35,13 @@ def _safe_data(resp: Any) -> Any:
     return getattr(resp, "data", None)
 
 
+def _first_row(resp: Any) -> Optional[dict[str, Any]]:
+    data = _safe_data(resp)
+    if isinstance(data, list):
+        return data[0] if data else None
+    return data if isinstance(data, dict) else None
+
+
 def _trim(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -394,6 +401,21 @@ def _merge_integration_settings(
     return integration
 
 
+def _fetch_webhook_event_row(
+    supa: Client,
+    *,
+    event_row_id: str,
+) -> Optional[dict[str, Any]]:
+    resp = (
+        supa.table("meta_webhook_events")
+        .select("*")
+        .eq("id", event_row_id)
+        .limit(1)
+        .execute()
+    )
+    return _first_row(resp)
+
+
 def _insert_webhook_event(
     supa: Client,
     *,
@@ -408,6 +430,7 @@ def _insert_webhook_event(
     error_message: Optional[str] = None,
 ) -> dict[str, Any]:
     event_payload = {
+        "id": str(uuid4()),
         "org_id": org_id,
         "integration_id": integration_id,
         "provider": META_PROVIDER,
@@ -420,17 +443,29 @@ def _insert_webhook_event(
         "error_message": error_message,
         "payload": payload,
     }
-    resp = (
-        supa.table("meta_webhook_events")
-        .insert(event_payload)
-        .select("*")
-        .single()
-        .execute()
-    )
-    data = _safe_data(resp)
-    if not data:
-        raise RuntimeError("Falha ao registrar meta_webhook_event.")
-    return data
+    try:
+        resp = supa.table("meta_webhook_events").insert(event_payload).execute()
+        data = _first_row(resp) or _fetch_webhook_event_row(
+            supa,
+            event_row_id=event_payload["id"],
+        )
+        if not data:
+            raise RuntimeError("Falha ao registrar meta_webhook_event.")
+        return data
+    except Exception as exc:
+        logger.exception(
+            "meta_webhook_event_insert_failed",
+            extra={
+                "integration_id": integration_id,
+                "org_id": org_id,
+                "page_id": page_id,
+                "form_id": form_id,
+                "leadgen_id": leadgen_id,
+                "event_type": META_EVENT_TYPE,
+                "error": _stringify_exception(exc),
+            },
+        )
+        raise
 
 
 def _patch_webhook_event(
@@ -462,6 +497,23 @@ def _build_event_id(payload: dict[str, Any], page_id: Optional[str], form_id: Op
         default=str,
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _fetch_lead_row(
+    supa: Client,
+    *,
+    org_id: str,
+    lead_id: str,
+) -> Optional[dict[str, Any]]:
+    resp = (
+        supa.table("leads")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("id", lead_id)
+        .limit(1)
+        .execute()
+    )
+    return _first_row(resp)
 
 
 def _ensure_owner_in_org(supa: Client, *, org_id: str, owner_id: Optional[str]) -> Optional[str]:
@@ -1764,16 +1816,14 @@ def upsert_lead_from_meta(
         elif owner_id:
             update_payload["owner_id"] = owner_id
 
-        resp = (
-            supa.table("leads")
-            .update(update_payload)
-            .eq("org_id", org_id)
-            .eq("id", existing["id"])
-            .select("*")
-            .single()
-            .execute()
+        supa.table("leads").update(update_payload).eq("org_id", org_id).eq(
+            "id", existing["id"]
+        ).execute()
+        row = _fetch_lead_row(
+            supa,
+            org_id=org_id,
+            lead_id=existing["id"],
         )
-        row = _safe_data(resp)
         if not row:
             raise RuntimeError("Falha ao atualizar lead existente da Meta.")
 
@@ -1795,17 +1845,16 @@ def upsert_lead_from_meta(
 
     create_payload = {
         **base_payload,
+        "id": str(uuid4()),
         "owner_id": owner_id,
         "created_by": actor_id,
     }
-    resp = (
-        supa.table("leads")
-        .insert(create_payload)
-        .select("*")
-        .single()
-        .execute()
+    resp = supa.table("leads").insert(create_payload).execute()
+    row = _first_row(resp) or _fetch_lead_row(
+        supa,
+        org_id=org_id,
+        lead_id=create_payload["id"],
     )
-    row = _safe_data(resp)
     if not row:
         raise RuntimeError("Falha ao criar lead da Meta.")
 

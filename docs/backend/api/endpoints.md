@@ -308,6 +308,21 @@ Regras:
 - quando a tabela exigir `verify_token` obrigatorio, o fluxo assistido reutiliza `META_VERIFY_TOKEN` ou gera um token tecnico estavel por `org_id + page_id`, sem depender de input manual;
 - o fluxo assistido marca se o token salvo ja e um `Page Access Token` operacional ou apenas fallback com token de usuario;
 - reutiliza a tabela `meta_lead_integrations` como persistencia temporaria do OAuth, sem criar tabela extra;
+
+### `POST /api/public/webhooks/meta/leadgen`
+
+Recebe o webhook de Lead Ads da Meta.
+
+Autenticacao:
+
+- publica
+
+Regras:
+
+- valida `X-Hub-Signature-256` quando `META_APP_SECRET` estiver configurado;
+- registra o evento em `meta_webhook_events` usando o padrao compativel do client Python atual do Supabase (`insert(...).execute()` + leitura explicita quando necessario);
+- tenta processar o lead e atualizar `leads` sem depender de `select("*")` encadeado apos `insert/update`;
+- quando a persistencia do evento falhar, o backend registra erro claro em log em vez de falhar silenciosamente.
 - registra logs de `state`, `code`, token mascarado, paginas encontradas, tentativa de persistencia, resultado do insert/update e erro detalhado;
 - valida `FRONTEND_SITE_URL` com `urllib.parse` antes de redirecionar, sem aceitar valor vazio, path extra ou barra final duplicada;
 - registra em log `FRONTEND_SITE_URL` e `redirect_url` final antes do redirect;
