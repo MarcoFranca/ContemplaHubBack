@@ -36,6 +36,8 @@ Ele cobre:
 6. Se o webhook chegar para uma pagina conhecida mas com formulario divergente, o backend registra erro operacional explicito em `meta_webhook_events` para facilitar diagnostico.
 7. O backend usa `leadgen_id` + `access_token_encrypted` da integracao para buscar o lead real na Graph API.
 8. O sistema normaliza `telefone` e `email`, faz deduplicacao em `leads` por `org_id` e atualiza metadados quando o contato ja existe.
+   - o telefone remove prefixos como `p:`, elimina caracteres nao numericos e so remove o DDI `55` quando o valor tiver exatamente 12 ou 13 digitos e comecar por `55`;
+   - numeros de 10 ou 11 digitos com prefixo `55` sao preservados, porque `55` pode ser DDD brasileiro.
 9. Quando o contato nao existe, cria lead novo com:
    - `etapa = novo`
    - `origem = meta_ads`
@@ -50,10 +52,21 @@ Ele cobre:
 - o POST do webhook exige assinatura valida quando `META_APP_SECRET` estiver configurado no ambiente;
 - a persistencia de `meta_webhook_events` e do upsert de `leads` usa `insert/update + execute()` seguido de leitura explicita quando necessario, para manter compatibilidade com a versao atual do client Python do Supabase;
 - `default_owner_id` so e aceito se pertencer a mesma organizacao;
-- `channel` da integracao fica em `meta_ads`;
+- `channel` do lead prioriza `platform` vindo da Meta e faz fallback para `meta_ads`;
+- o mapeamento operacional principal do lead usa:
+  - `full_name -> leads.nome`
+  - `email -> leads.email`
+  - `phone_number -> leads.telefone`
+  - `platform -> leads.channel`
+  - `campaign_name -> leads.utm_campaign`
+  - `adset_name -> leads.utm_term`
+  - `ad_name -> leads.utm_content`
+  - `form_name -> leads.form_label`
 - `source_label` e `form_label` ajudam a manter rastreabilidade comercial no lead;
 - se o lead ja existir, o sistema atualiza metadados e nao duplica o cadastro;
-- eventos duplicados do mesmo webhook sao ignorados por hash de evento.
+- eventos duplicados do mesmo webhook sao ignorados por `leadgen_id` da Meta e por hash de evento.
+- perguntas customizadas da Meta nao viram novas colunas em `leads`; o backend preserva os valores crus dentro de `meta_webhook_events.payload` e no payload tecnico de `event_outbox`.
+- o backend preserva `objetivo_consorcio_raw`, `valor_mensal_pretendido_raw` e `renda_mensal_raw` quando esses campos aparecerem no `field_data` da Meta.
 
 ## Operacao assistida
 

@@ -22,7 +22,7 @@ META_PROVIDER_ALIASES = list(PROVIDER_VALUES)
 META_CHANNEL = "meta_ads"
 META_EVENT_TYPE = "meta_leadgen"
 META_GRAPH_FIELDS = (
-    "id,created_time,field_data,ad_id,ad_name,campaign_id,campaign_name,form_id,platform"
+    "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,platform"
 )
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,14 @@ def _looks_like_missing_relation_error(message: str) -> bool:
 def normalize_phone(value: Any) -> Optional[str]:
     if value is None:
         return None
-    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+    if raw_value[:2].lower() == "p:":
+        raw_value = raw_value[2:].strip()
+    digits = "".join(ch for ch in raw_value if ch.isdigit())
+    if digits.startswith("55") and len(digits) in {12, 13}:
+        digits = digits[2:]
     return digits or None
 
 
@@ -95,6 +102,38 @@ def _first_non_empty(*values: Any) -> Optional[str]:
         if cleaned:
             return cleaned
     return None
+
+
+def _pick_meta_value(values: dict[str, Optional[str]], *keys: str) -> Optional[str]:
+    return _first_non_empty(*(values.get(key) for key in keys))
+
+
+def _extract_meta_custom_fields(values: dict[str, Optional[str]]) -> dict[str, Any]:
+    objetivo_consorcio_raw = _pick_meta_value(
+        values,
+        "objetivo_consorcio",
+        "objetivodoconsorcio",
+        "objetivo",
+    )
+    valor_mensal_pretendido_raw = _pick_meta_value(
+        values,
+        "valor_mensal_pretendido",
+        "valormensalpretendido",
+        "valor_mensal",
+    )
+    renda_mensal_raw = _pick_meta_value(
+        values,
+        "renda_mensal",
+        "rendamensal",
+    )
+
+    custom_fields: dict[str, Any] = {
+        "field_values": dict(values),
+        "objetivo_consorcio_raw": objetivo_consorcio_raw,
+        "valor_mensal_pretendido_raw": valor_mensal_pretendido_raw,
+        "renda_mensal_raw": renda_mensal_raw,
+    }
+    return custom_fields
 
 
 def _integration_provider_filter(builder: Any) -> Any:
@@ -474,13 +513,16 @@ def _patch_webhook_event(
     event_row_id: str,
     status_value: str,
     error_message: Optional[str] = None,
+    event_payload: Optional[dict[str, Any]] = None,
 ) -> None:
-    payload: dict[str, Any] = {
+    update_payload: dict[str, Any] = {
         "status": status_value,
         "processed_at": utcnow_iso(),
         "error_message": error_message,
     }
-    supa.table("meta_webhook_events").update(payload).eq("id", event_row_id).execute()
+    if event_payload is not None:
+        update_payload["payload"] = event_payload
+    supa.table("meta_webhook_events").update(update_payload).eq("id", event_row_id).execute()
 
 
 def _build_event_id(payload: dict[str, Any], page_id: Optional[str], form_id: Optional[str], leadgen_id: Optional[str]) -> str:
@@ -1668,7 +1710,7 @@ def list_meta_page_forms(
         )
 
 
-def _parse_meta_field_data(field_data: list[dict[str, Any]] | None) -> dict[str, Optional[str]]:
+def _parse_meta_field_data(field_data: list[dict[str, Any]] | None) -> dict[str, Any]:
     values: dict[str, Optional[str]] = {}
 
     for item in field_data or []:
@@ -1695,25 +1737,29 @@ def _parse_meta_field_data(field_data: list[dict[str, Any]] | None) -> dict[str,
         full_name = _first_non_empty(" ".join(part for part in [first_name, last_name] if part), "Lead Meta")
 
     email = normalize_email(
-        _first_non_empty(values.get("email"), values.get("emailaddress"), values.get("email_address"))
+        _pick_meta_value(values, "email", "emailaddress", "email_address")
     )
     phone = normalize_phone(
-        _first_non_empty(
-            values.get("phone"),
-            values.get("phonenumber"),
-            values.get("phone_number"),
-            values.get("telefone"),
-            values.get("celular"),
-            values.get("mobilephone"),
-            values.get("mobile_phone"),
-            values.get("whatsapp"),
+        _pick_meta_value(
+            values,
+            "phone",
+            "phonenumber",
+            "phone_number",
+            "telefone",
+            "celular",
+            "mobilephone",
+            "mobile_phone",
+            "whatsapp",
         )
     )
+    custom_fields = _extract_meta_custom_fields(values)
 
     return {
         "nome": full_name,
         "email": email,
         "telefone": phone,
+        "custom_fields": custom_fields,
+        "raw_field_values": values,
     }
 
 
@@ -1791,9 +1837,9 @@ def upsert_lead_from_meta(
         "email": email,
         "origem": "meta_ads",
         "etapa": "novo",
-        "source_label": integration.get("source_label"),
-        "form_label": integration.get("form_name") or lead_payload.get("form_label"),
-        "channel": integration.get("channel") or META_CHANNEL,
+        "source_label": integration.get("source_label") or lead_payload.get("source_label") or lead_payload.get("utm_campaign"),
+        "form_label": lead_payload.get("form_label") or integration.get("form_name"),
+        "channel": lead_payload.get("channel") or integration.get("channel") or META_CHANNEL,
         "utm_source": lead_payload.get("utm_source") or "meta_ads",
         "utm_medium": lead_payload.get("utm_medium"),
         "utm_campaign": lead_payload.get("utm_campaign"),
@@ -1956,6 +2002,24 @@ def ingest_meta_lead_event(
             detail=error_message,
         )
 
+    duplicate_by_leadgen_resp = (
+        supa.table("meta_webhook_events")
+        .select("id, status, integration_id")
+        .eq("integration_id", integration["id"])
+        .eq("leadgen_id", leadgen_id)
+        .in_("status", ["received", "processed"])
+        .limit(1)
+        .execute()
+    )
+    duplicate_by_leadgen_rows = _safe_data(duplicate_by_leadgen_resp) or []
+    if duplicate_by_leadgen_rows:
+        return {
+            "ok": True,
+            "event_id": duplicate_by_leadgen_rows[0]["id"],
+            "lead_id": None,
+            "action": "duplicate_ignored",
+        }
+
     duplicate_resp = (
         supa.table("meta_webhook_events")
         .select("id, status, integration_id")
@@ -1993,6 +2057,7 @@ def ingest_meta_lead_event(
         },
     )
 
+    lead_payload_audit: dict[str, Any] = {"webhook": payload}
     try:
         access_token = _trim(integration.get("access_token_encrypted"))
         if not access_token:
@@ -2006,14 +2071,27 @@ def ingest_meta_lead_event(
         if not parsed.get("nome"):
             raise RuntimeError("Lead da Meta sem nome válido.")
 
+        lead_payload_audit = {
+            "webhook": payload,
+            "meta_lead": lead_data,
+            "parsed_contact": {
+                "nome": parsed.get("nome"),
+                "email": parsed.get("email"),
+                "telefone": parsed.get("telefone"),
+            },
+            "custom_fields": parsed.get("custom_fields") or {},
+            "raw_field_values": parsed.get("raw_field_values") or {},
+        }
         meta_lead_payload = {
             **parsed,
             "utm_source": "meta_ads",
             "utm_medium": "lead_ads",
             "utm_campaign": _trim(lead_data.get("campaign_name")) or _trim(payload.get("campaign_name")),
-            "utm_term": _trim(lead_data.get("form_id")) or form_id,
+            "utm_term": _trim(lead_data.get("adset_name")) or _trim(payload.get("adset_name")),
             "utm_content": _trim(lead_data.get("ad_name")) or _trim(payload.get("ad_name")),
-            "form_label": integration.get("form_name") or _trim(payload.get("form_name")),
+            "form_label": _trim(lead_data.get("form_name")) or _trim(payload.get("form_name")) or integration.get("form_name"),
+            "channel": _trim(lead_data.get("platform")) or _trim(payload.get("platform")) or META_CHANNEL,
+            "source_label": integration.get("source_label") or _trim(lead_data.get("campaign_name")) or _trim(payload.get("campaign_name")),
             "user_agent": None,
             "referrer_url": None,
         }
@@ -2038,6 +2116,8 @@ def ingest_meta_lead_event(
                 "page_id": page_id,
                 "form_id": form_id,
                 "action": action,
+                "raw_meta_payload": lead_payload_audit,
+                "custom_fields": parsed.get("custom_fields") or {},
             },
         )
 
@@ -2045,6 +2125,7 @@ def ingest_meta_lead_event(
             supa,
             event_row_id=event["id"],
             status_value="processed",
+            event_payload=lead_payload_audit,
         )
         _update_integration_status(
             supa,
@@ -2080,6 +2161,7 @@ def ingest_meta_lead_event(
             event_row_id=event["id"],
             status_value="error",
             error_message=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            event_payload=lead_payload_audit,
         )
         _update_integration_status(
             supa,
@@ -2097,6 +2179,7 @@ def ingest_meta_lead_event(
             event_row_id=event["id"],
             status_value="error",
             error_message=message,
+            event_payload=lead_payload_audit,
         )
         _update_integration_status(
             supa,

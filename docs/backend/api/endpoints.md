@@ -158,7 +158,12 @@ Regras:
 - nunca usa o payload para decidir `org_id`;
 - valida `X-Hub-Signature-256` com `META_APP_SECRET` antes de processar o body;
 - busca os dados reais do lead na Graph API usando `leadgen_id`;
-- deduplica por `org_id + telefone/email` normalizados;
+- deduplica por `leadgen_id` da Meta e por `org_id + telefone/email` normalizados;
+- normaliza telefone removendo prefixos como `p:` e caracteres nao numericos;
+- remove o DDI `55` apenas quando o numero tiver 12 ou 13 digitos e comecar por `55`;
+- preserva numeros de 10 ou 11 digitos iniciados em `55`, porque esse valor pode ser DDD brasileiro;
+- mapeia `platform -> channel`, `campaign_name -> utm_campaign`, `adset_name -> utm_term`, `ad_name -> utm_content` e `form_name -> form_label`;
+- preserva payload bruto da Meta e perguntas customizadas no `payload jsonb` do evento para auditoria/debug;
 - cria lead novo com `etapa = novo` e `origem = meta_ads` quando o contato ainda nao existe;
 - atualiza metadados do lead quando o contato ja existe;
 - registra evento em `meta_webhook_events`;
