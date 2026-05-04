@@ -861,8 +861,8 @@ def update_contract_status(
     lead_id = cota["lead_id"]
     lead_stage_target = None
 
-    if novo_status == "alocado":
-        lead_stage_target = "ativo"
+    if novo_status in {"alocado", "contemplado"}:
+        lead_stage_target = "pos_venda"
     elif novo_status == "cancelado":
         lead_stage_target = "perdido"
 

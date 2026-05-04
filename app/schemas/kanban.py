@@ -7,11 +7,14 @@ from pydantic import BaseModel
 # Estágios possíveis do funil
 Stage = Literal[
     "novo",
+    "tentativa_contato",
+    "contato_realizado",
     "diagnostico",
     "proposta",
     "negociacao",
     "contrato",
-    "ativo",
+    "pos_venda",
+    "frio",
     "perdido",
 ]
 

@@ -18,6 +18,7 @@ def get_kanban(
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
     show_active: bool = False,
     show_lost: bool = False,
+    show_cold: bool = False,
 ):
     """
     Retorna o snapshot do Kanban (colunas => leads).
@@ -33,6 +34,7 @@ def get_kanban(
         supa=supa,
         show_active=show_active,
         show_lost=show_lost,
+        show_cold=show_cold,
     )
     return snapshot
 

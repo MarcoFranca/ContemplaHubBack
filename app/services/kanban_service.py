@@ -13,15 +13,29 @@ from app.services.lead_address_service import LEAD_ADDRESS_SELECT
 from app.services.kanban_interest_insights import build_interest_insight
 from app.services.meta_leads_service import extract_meta_ads_summary
 
+MAIN_KANBAN_STAGES: List[Stage] = [
+    "novo",
+    "tentativa_contato",
+    "contato_realizado",
+    "diagnostico",
+    "proposta",
+    "negociacao",
+    "contrato",
+]
+SUPPLEMENTAL_KANBAN_STAGES: List[Stage] = ["pos_venda", "frio", "perdido"]
+
 
 def _empty_columns() -> Dict[Stage, List[LeadCard]]:
     return {
         "novo": [],
+        "tentativa_contato": [],
+        "contato_realizado": [],
         "diagnostico": [],
         "proposta": [],
         "negociacao": [],
         "contrato": [],
-        "ativo": [],
+        "pos_venda": [],
+        "frio": [],
         "perdido": [],
     }
 
@@ -31,6 +45,7 @@ def build_kanban_snapshot(
     supa: Client,
     show_active: bool = False,
     show_lost: bool = False,
+    show_cold: bool = False,
 ) -> KanbanSnapshot:
     """
     Monta o snapshot de Kanban a partir da tabela leads,
@@ -40,14 +55,13 @@ def build_kanban_snapshot(
     """
 
     # 1) Quais etapas vamos buscar
-    if not show_active and not show_lost:
-        stages: List[Stage] = ["novo", "diagnostico", "proposta", "negociacao", "contrato"]
-    elif show_active and not show_lost:
-        stages = ["ativo"]
-    elif show_lost and not show_active:
-        stages = ["perdido"]
-    else:
-        stages = ["ativo", "perdido"]
+    stages: List[Stage] = list(MAIN_KANBAN_STAGES)
+    if show_active:
+        stages.append("pos_venda")
+    if show_cold:
+        stages.append("frio")
+    if show_lost:
+        stages.append("perdido")
 
     # 2) Busca os leads da organização nessas etapas
     resp = (
@@ -215,7 +229,7 @@ def _apply_stage_business_rules(
     if from_stage == "novo" and not first_contact_at and new_stage != "novo":
         updates["first_contact_at"] = datetime.now(timezone.utc).isoformat()
 
-    # Outras regras futuras (contrato, ativo, perdido, etc.) entram aqui
+    # Outras regras futuras do funil principal ou estados suplementares entram aqui
     return updates
 
 

@@ -64,7 +64,7 @@ Retorna:
 
 Fluxo:
 
-1. cria lead com etapa `ativo`;
+1. cria lead com etapa `pos_venda`;
 2. garante registro em `carteira_clientes`.
 
 ### Abrir nova negociacao

@@ -100,6 +100,17 @@ Regras:
 
 - valida pertencimento do lead a organizacao;
 - se sair de `novo` pela primeira vez, marca `first_contact_at`.
+- aceita o novo funil de consorcio:
+  - `novo`
+  - `tentativa_contato`
+  - `contato_realizado`
+  - `diagnostico`
+  - `proposta`
+  - `negociacao`
+  - `contrato`
+  - `pos_venda`
+  - `frio`
+  - `perdido`
 
 ### `DELETE /leads/{lead_id}`
 
@@ -454,6 +465,7 @@ Query params:
 
 - `show_active`
 - `show_lost`
+- `show_cold`
 
 Resposta:
 
@@ -466,6 +478,20 @@ Dados enriquecidos:
 - insight de interesse
 - `source_label`, `form_label`, `channel`, `utm_campaign`, `utm_term`, `utm_content`
 - `meta_ads_summary` e `meta_ads_form_answers` quando `lead_diagnosticos.extras.meta_ads` existir
+
+Comportamento do funil:
+
+- sem filtros suplementares, retorna o fluxo principal:
+  - `novo`
+  - `tentativa_contato`
+  - `contato_realizado`
+  - `diagnostico`
+  - `proposta`
+  - `negociacao`
+  - `contrato`
+- `show_active=true` adiciona `pos_venda`;
+- `show_cold=true` adiciona `frio`;
+- `show_lost=true` adiciona `perdido`.
 
 ### `GET /kanban/metrics`
 
@@ -769,7 +795,7 @@ Payload:
 Regras:
 
 - valida transicao permitida;
-- `alocado` move lead para `ativo`;
+- `alocado` e `contemplado` movem lead para `pos_venda`;
 - `cancelado` move lead para `perdido`.
 
 ## Documentos de contrato
@@ -826,7 +852,7 @@ Payload:
 
 Efeito:
 
-- cria lead em etapa `ativo`
+- cria lead em etapa `pos_venda`
 - cria/garante `carteira_clientes`
 
 ### `POST /carteira/{lead_id}/nova-negociacao`

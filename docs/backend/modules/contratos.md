@@ -113,7 +113,7 @@ Correcoes permitidas:
 
 Efeitos colaterais:
 
-- `alocado` move lead para `ativo`
+- `alocado` e `contemplado` movem lead para `pos_venda`
 - `cancelado` move lead para `perdido`
 
 ### Documento do contrato

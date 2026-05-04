@@ -331,7 +331,7 @@ Ao criar contrato:
 
 ### Sincronizacoes internas
 
-- contrato `alocado` move lead para etapa `ativo`
+- contrato `alocado` e `contemplado` movem o lead para etapa `pos_venda`
 - contrato `cancelado` move lead para `perdido`
 - configuracao de comissao sincroniza `contrato_parceiros`
 - geracao de lancamentos tambem sincroniza `contrato_parceiros`

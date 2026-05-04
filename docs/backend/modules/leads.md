@@ -64,11 +64,14 @@ Entrada por `PATCH /leads/{lead_id}/stage`.
 Etapas observadas:
 
 - `novo`
+- `tentativa_contato`
+- `contato_realizado`
 - `diagnostico`
 - `proposta`
 - `negociacao`
 - `contrato`
-- `ativo`
+- `pos_venda`
+- `frio`
 - `perdido`
 
 Regra de negocio importante:
@@ -87,13 +90,21 @@ Composicao atual:
 4. expoe metadados de origem (`source_label`, `form_label`, `channel`, `utm_*`) quando existirem;
 5. monta `LeadCard` com insight de interesse e resumo compacto do formulario Meta quando houver.
 
+Filtros operacionais observados:
+
+- o fluxo principal usa `novo -> tentativa_contato -> contato_realizado -> diagnostico -> proposta -> negociacao -> contrato`;
+- `pos_venda` pode ser exibido como coluna suplementar de leads ativos ja fechados;
+- `frio` e `perdido` ficam fora do fluxo principal e podem ser exibidos por filtro.
+
 ## Regras de negocio importantes
 
 - lead pertence sempre a uma `org_id`;
 - a etapa comercial dirige outros modulos do sistema;
 - `lead` nao equivale a contrato nem a cota;
 - o kanban usa o lead como unidade de trabalho comercial;
-- `ativo` e `perdido` representam estados finais do funil principal, mas ainda podem coexistir com carteira.
+- `pos_venda` representa o acompanhamento depois da formalizacao;
+- `frio` representa lead sem resposta/sem atividade comercial recente;
+- `perdido` representa perda definitiva do lead no ciclo atual.
 
 ## Dependencias com outros modulos
 

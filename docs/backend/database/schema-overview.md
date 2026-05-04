@@ -102,6 +102,17 @@ Regras criticas:
 - todo acesso interno filtra `org_id`;
 - `telefone` ou `email` e obrigatorio na criacao;
 - `etapa` participa do funil comercial e de automacoes de negocio.
+- funil atual observado:
+  - `novo`
+  - `tentativa_contato`
+  - `contato_realizado`
+  - `diagnostico`
+  - `proposta`
+  - `negociacao`
+  - `contrato`
+  - `pos_venda`
+  - `frio`
+  - `perdido`
 - capturas via Meta Lead Ads entram com `origem = meta_ads` e `etapa = novo`.
 
 ### 1.1 Integracoes Meta Lead Ads

@@ -273,7 +273,7 @@ def create_cliente_direto_na_carteira(
             "telefone": body.telefone,
             "email": str(body.email) if body.email else None,
             "owner_id": body.owner_id,
-            "etapa": "ativo",
+            "etapa": "pos_venda",
             "cep": body.cep,
             "logradouro": body.logradouro,
             "numero": body.numero,
