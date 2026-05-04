@@ -45,7 +45,7 @@ Regras observadas:
   - `origem = meta_ads`
 - quando o contato ja existe, o backend atualiza metadados comerciais sem duplicar o cadastro;
 - se a integracao tiver `default_owner_id`, o lead recebe esse responsavel quando ainda nao houver um dono definido.
-- os campos customizados do formulario Meta sao preservados em `lead_diagnosticos.extras.meta_ads`, sem criar colunas novas no lead.
+- os campos customizados do formulario Meta sao preservados em `lead_diagnosticos.extras.meta_ads`, junto com contexto de campanha, conjunto, criativo (`ad_name`), formulario e plataforma, sem criar colunas novas no lead.
 
 ### Atualizacao de lead
 

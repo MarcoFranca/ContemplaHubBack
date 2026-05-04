@@ -217,6 +217,11 @@ class MetaDiagnosticMergeTests(unittest.TestCase):
         self.assertEqual(saved["org_id"], "org-1")
         self.assertEqual(saved["lead_id"], "lead-1")
         self.assertEqual(saved["objetivo"], "Alavancagem patrimonial")
+        self.assertEqual(saved["extras"]["meta_ads"]["campaign_name"], "Campanha Imóveis")
+        self.assertEqual(saved["extras"]["meta_ads"]["adset_name"], "Conjunto Centro")
+        self.assertEqual(saved["extras"]["meta_ads"]["ad_name"], "Anúncio 01")
+        self.assertEqual(saved["extras"]["meta_ads"]["form_name"], "Formulário Imóveis")
+        self.assertEqual(saved["extras"]["meta_ads"]["platform"], "instagram")
         self.assertEqual(
             saved["extras"]["meta_ads"]["form_answers"]["valor_mensal_pretendido_label"],
             "R$ 2.000 a R$ 5.000",
@@ -288,6 +293,8 @@ class KanbanMetaFieldsTests(unittest.TestCase):
         self.assertEqual(card.utm_content, "Anúncio 01")
         self.assertEqual(card.meta_ads_summary.platform, "instagram")
         self.assertEqual(card.meta_ads_summary.leadgen_id, "meta-lead-1")
+        self.assertEqual(card.meta_ads_summary.ad_name, "Anúncio 01")
+        self.assertEqual(card.meta_ads_summary.campaign_name, "Campanha Imóveis")
         self.assertEqual(
             card.meta_ads_form_answers["objetivo_consorcio_label"],
             "Alavancagem patrimonial",
