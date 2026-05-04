@@ -464,6 +464,8 @@ Dados enriquecidos:
 - interesse aberto mais recente
 - scores de diagnostico
 - insight de interesse
+- `source_label`, `form_label`, `channel`, `utm_campaign`, `utm_term`, `utm_content`
+- `meta_ads_summary` e `meta_ads_form_answers` quando `lead_diagnosticos.extras.meta_ads` existir
 
 ### `GET /kanban/metrics`
 

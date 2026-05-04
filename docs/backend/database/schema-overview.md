@@ -209,6 +209,7 @@ Campos observados:
 Regra critica:
 
 - o codigo assume 1 diagnostico vigente por `(org_id, lead_id)`, mas explicita que nao existe constraint unica conhecida no banco; o upsert e manual.
+- `extras` tambem pode guardar `extras.meta_ads`, com respostas iniciais do formulario Meta preservadas sem sobrescrever o diagnostico manual principal.
 
 ### 3. Propostas
 

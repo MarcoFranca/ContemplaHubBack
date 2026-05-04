@@ -136,6 +136,168 @@ def _extract_meta_custom_fields(values: dict[str, Optional[str]]) -> dict[str, A
     return custom_fields
 
 
+def _normalize_meta_extras(extras: Any) -> dict[str, Any]:
+    return dict(extras) if isinstance(extras, dict) else {}
+
+
+def _merge_non_null_strings(existing: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing)
+    for key, value in updates.items():
+        if value is not None:
+            merged[key] = value
+        elif key not in merged:
+            merged[key] = None
+    return merged
+
+
+def _humanize_meta_choice(value: Any) -> Optional[str]:
+    raw = _trim(value)
+    if not raw:
+        return None
+
+    lowered = raw.lower()
+    if "_a_" in lowered and "r$" in lowered:
+        parts = lowered.split("_a_")
+        if len(parts) == 2:
+            left = _humanize_meta_currency_token(parts[0])
+            right = _humanize_meta_currency_token(parts[1])
+            if left and right:
+                return f"{left} a {right}"
+
+    normalized = " ".join(lowered.replace("-", " ").replace("_", " ").split())
+    if not normalized:
+        return None
+    return normalized[:1].upper() + normalized[1:]
+
+
+def _humanize_meta_currency_token(value: str) -> Optional[str]:
+    raw = _trim(value)
+    if not raw:
+        return None
+    lowered = raw.lower().replace("_", "")
+    if not lowered.startswith("r$"):
+        return None
+    amount = lowered[2:].strip()
+    if not amount:
+        return "R$"
+    return f"R$ {amount}"
+
+
+def _build_meta_form_answers(custom_fields: dict[str, Any]) -> dict[str, Any]:
+    objetivo_raw = _trim(custom_fields.get("objetivo_consorcio_raw"))
+    valor_raw = _trim(custom_fields.get("valor_mensal_pretendido_raw"))
+    renda_raw = _trim(custom_fields.get("renda_mensal_raw"))
+
+    return {
+        "objetivo_consorcio_raw": objetivo_raw,
+        "objetivo_consorcio_label": _humanize_meta_choice(objetivo_raw),
+        "valor_mensal_pretendido_raw": valor_raw,
+        "valor_mensal_pretendido_label": _humanize_meta_choice(valor_raw),
+        "renda_mensal_raw": renda_raw,
+        "renda_mensal_label": _humanize_meta_choice(renda_raw),
+    }
+
+
+def _build_meta_ads_context(
+    *,
+    leadgen_id: Optional[str],
+    form_id: Optional[str],
+    campaign_name: Optional[str],
+    adset_name: Optional[str],
+    ad_name: Optional[str],
+    form_name: Optional[str],
+    platform: Optional[str],
+    raw_field_values: dict[str, Any],
+    custom_fields: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "form_answers": _build_meta_form_answers(custom_fields),
+        "raw_field_values": dict(raw_field_values or {}),
+        "leadgen_id": _trim(leadgen_id),
+        "form_id": _trim(form_id),
+        "campaign_name": _trim(campaign_name),
+        "adset_name": _trim(adset_name),
+        "ad_name": _trim(ad_name),
+        "form_name": _trim(form_name),
+        "platform": _trim(platform),
+    }
+
+
+def _merge_meta_ads_extras(existing_extras: Any, meta_ads_context: dict[str, Any]) -> dict[str, Any]:
+    merged = _normalize_meta_extras(existing_extras)
+    existing_meta_ads = _normalize_meta_extras(merged.get("meta_ads"))
+    existing_form_answers = _normalize_meta_extras(existing_meta_ads.get("form_answers"))
+    existing_raw_field_values = _normalize_meta_extras(existing_meta_ads.get("raw_field_values"))
+
+    next_meta_ads = {
+        **existing_meta_ads,
+        **{
+            key: value
+            for key, value in meta_ads_context.items()
+            if key not in {"form_answers", "raw_field_values"} and value is not None
+        },
+    }
+    next_meta_ads["form_answers"] = _merge_non_null_strings(
+        existing_form_answers,
+        _normalize_meta_extras(meta_ads_context.get("form_answers")),
+    )
+    next_meta_ads["raw_field_values"] = {
+        **existing_raw_field_values,
+        **_normalize_meta_extras(meta_ads_context.get("raw_field_values")),
+    }
+    merged["meta_ads"] = next_meta_ads
+    return merged
+
+
+def extract_meta_ads_summary(extras: Any) -> Optional[dict[str, Optional[str]]]:
+    root = _normalize_meta_extras(extras)
+    meta_ads = _normalize_meta_extras(root.get("meta_ads"))
+    form_answers = _normalize_meta_extras(meta_ads.get("form_answers"))
+
+    if not meta_ads and not form_answers:
+        return None
+
+    return {
+        "objetivo_consorcio_label": _trim(form_answers.get("objetivo_consorcio_label")),
+        "valor_mensal_pretendido_label": _trim(form_answers.get("valor_mensal_pretendido_label")),
+        "renda_mensal_label": _trim(form_answers.get("renda_mensal_label")),
+        "leadgen_id": _trim(meta_ads.get("leadgen_id")),
+        "platform": _trim(meta_ads.get("platform")),
+        "campaign_name": _trim(meta_ads.get("campaign_name")),
+        "adset_name": _trim(meta_ads.get("adset_name")),
+        "ad_name": _trim(meta_ads.get("ad_name")),
+        "form_name": _trim(meta_ads.get("form_name")),
+    }
+
+
+def _build_meta_diagnostic_payload(
+    *,
+    existing_record: Optional[dict[str, Any]],
+    org_id: str,
+    lead_id: str,
+    meta_ads_context: dict[str, Any],
+) -> dict[str, Any]:
+    now = utcnow_iso()
+    existing = existing_record or {}
+    merged_extras = _merge_meta_ads_extras(existing.get("extras"), meta_ads_context)
+    form_answers = _normalize_meta_extras(meta_ads_context.get("form_answers"))
+    objetivo_label = _trim(form_answers.get("objetivo_consorcio_label"))
+
+    payload: dict[str, Any] = {
+        "org_id": org_id,
+        "lead_id": lead_id,
+        "extras": merged_extras,
+        "updated_at": now,
+    }
+    if not _trim(existing.get("objetivo")) and objetivo_label:
+        payload["objetivo"] = objetivo_label
+
+    if not existing_record:
+        payload["created_at"] = now
+
+    return payload
+
+
 def _integration_provider_filter(builder: Any) -> Any:
     return builder.in_("provider", META_PROVIDER_ALIASES)
 
@@ -1940,6 +2102,67 @@ def publish_meta_lead_event_outbox(
     ).execute()
 
 
+def upsert_meta_diagnostic_from_meta(
+    supa: Client,
+    *,
+    org_id: str,
+    lead_id: str,
+    leadgen_id: Optional[str],
+    form_id: Optional[str],
+    lead_data: dict[str, Any],
+    custom_fields: dict[str, Any],
+    form_name: Optional[str] = None,
+    campaign_name: Optional[str] = None,
+    adset_name: Optional[str] = None,
+    ad_name: Optional[str] = None,
+    platform: Optional[str] = None,
+) -> dict[str, Any]:
+    existing_resp = (
+        supa.table("lead_diagnosticos")
+        .select("id, objetivo, extras")
+        .eq("org_id", org_id)
+        .eq("lead_id", lead_id)
+        .limit(1)
+        .execute()
+    )
+    existing_rows = _safe_data(existing_resp) or []
+    existing_record = existing_rows[0] if existing_rows else None
+
+    meta_ads_context = _build_meta_ads_context(
+        leadgen_id=leadgen_id,
+        form_id=_trim(lead_data.get("form_id")) or form_id,
+        campaign_name=_trim(lead_data.get("campaign_name")) or campaign_name,
+        adset_name=_trim(lead_data.get("adset_name")) or adset_name,
+        ad_name=_trim(lead_data.get("ad_name")) or ad_name,
+        form_name=_trim(lead_data.get("form_name")) or form_name,
+        platform=_trim(lead_data.get("platform")) or platform,
+        raw_field_values=_normalize_meta_extras(custom_fields.get("field_values")),
+        custom_fields=custom_fields,
+    )
+    payload = _build_meta_diagnostic_payload(
+        existing_record=existing_record,
+        org_id=org_id,
+        lead_id=lead_id,
+        meta_ads_context=meta_ads_context,
+    )
+
+    if existing_record:
+        supa.table("lead_diagnosticos").update(payload).eq("org_id", org_id).eq(
+            "lead_id", lead_id
+        ).execute()
+        return {
+            **existing_record,
+            **payload,
+        }
+
+    insert_payload = {
+        "id": str(uuid4()),
+        **payload,
+    }
+    resp = supa.table("lead_diagnosticos").insert(insert_payload).execute()
+    return _first_row(resp) or insert_payload
+
+
 def ingest_meta_lead_event(
     supa: Client,
     *,
@@ -2081,6 +2304,17 @@ def ingest_meta_lead_event(
             },
             "custom_fields": parsed.get("custom_fields") or {},
             "raw_field_values": parsed.get("raw_field_values") or {},
+            "meta_ads_context": _build_meta_ads_context(
+                leadgen_id=leadgen_id,
+                form_id=_trim(lead_data.get("form_id")) or form_id,
+                campaign_name=_trim(lead_data.get("campaign_name")),
+                adset_name=_trim(lead_data.get("adset_name")),
+                ad_name=_trim(lead_data.get("ad_name")),
+                form_name=_trim(lead_data.get("form_name")),
+                platform=_trim(lead_data.get("platform")),
+                raw_field_values=_normalize_meta_extras(parsed.get("raw_field_values")),
+                custom_fields=parsed.get("custom_fields") or {},
+            ),
         }
         meta_lead_payload = {
             **parsed,
@@ -2102,6 +2336,20 @@ def ingest_meta_lead_event(
             lead_payload=meta_lead_payload,
             actor_id=integration.get("created_by") or integration.get("updated_by"),
         )
+        diagnostic_row = upsert_meta_diagnostic_from_meta(
+            supa,
+            org_id=integration["org_id"],
+            lead_id=lead_row["id"],
+            leadgen_id=leadgen_id,
+            form_id=form_id,
+            lead_data=lead_data,
+            custom_fields=parsed.get("custom_fields") or {},
+            form_name=_trim(payload.get("form_name")) or integration.get("form_name"),
+            campaign_name=_trim(payload.get("campaign_name")),
+            adset_name=_trim(payload.get("adset_name")),
+            ad_name=_trim(payload.get("ad_name")),
+            platform=_trim(payload.get("platform")),
+        )
 
         publish_meta_lead_event_outbox(
             supa,
@@ -2118,6 +2366,7 @@ def ingest_meta_lead_event(
                 "action": action,
                 "raw_meta_payload": lead_payload_audit,
                 "custom_fields": parsed.get("custom_fields") or {},
+                "lead_diagnostic_id": diagnostic_row.get("id"),
             },
         )
 

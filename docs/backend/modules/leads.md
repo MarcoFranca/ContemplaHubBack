@@ -39,12 +39,13 @@ Regras observadas:
 
 - a organizacao nao vem do payload publico, e resolvida por `meta_lead_integrations`;
 - o backend usa `leadgen_id` para buscar o lead real na Meta;
-- a deduplicacao ocorre por `org_id + telefone/email` normalizados;
+- a deduplicacao ocorre por `leadgen_id` da Meta e por `org_id + telefone/email` normalizados;
 - quando o contato nao existe, o lead nasce com:
   - `etapa = novo`
   - `origem = meta_ads`
 - quando o contato ja existe, o backend atualiza metadados comerciais sem duplicar o cadastro;
 - se a integracao tiver `default_owner_id`, o lead recebe esse responsavel quando ainda nao houver um dono definido.
+- os campos customizados do formulario Meta sao preservados em `lead_diagnosticos.extras.meta_ads`, sem criar colunas novas no lead.
 
 ### Atualizacao de lead
 
@@ -82,8 +83,9 @@ Composicao atual:
 
 1. busca leads nas etapas solicitadas;
 2. busca interesse aberto mais recente em `lead_interesses`;
-3. busca scores em `lead_diagnosticos`;
-4. monta `LeadCard` com insight de interesse.
+3. busca scores e `extras` em `lead_diagnosticos`;
+4. expoe metadados de origem (`source_label`, `form_label`, `channel`, `utm_*`) quando existirem;
+5. monta `LeadCard` com insight de interesse e resumo compacto do formulario Meta quando houver.
 
 ## Regras de negocio importantes
 

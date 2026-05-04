@@ -67,6 +67,7 @@ Ele cobre:
 - eventos duplicados do mesmo webhook sao ignorados por `leadgen_id` da Meta e por hash de evento.
 - perguntas customizadas da Meta nao viram novas colunas em `leads`; o backend preserva os valores crus dentro de `meta_webhook_events.payload` e no payload tecnico de `event_outbox`.
 - o backend preserva `objetivo_consorcio_raw`, `valor_mensal_pretendido_raw` e `renda_mensal_raw` quando esses campos aparecerem no `field_data` da Meta.
+- apos o upsert do lead, o backend faz merge conservador em `lead_diagnosticos.extras.meta_ads` para preservar respostas do formulario sem apagar diagnostico manual existente.
 
 ## Operacao assistida
 

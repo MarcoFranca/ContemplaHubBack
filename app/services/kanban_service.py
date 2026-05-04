@@ -11,6 +11,7 @@ from app.schemas.kanban import KanbanSnapshot, LeadCard, Stage, KanbanMetrics
 from app.schemas.kanban import Interest
 from app.services.lead_address_service import LEAD_ADDRESS_SELECT
 from app.services.kanban_interest_insights import build_interest_insight
+from app.services.meta_leads_service import extract_meta_ads_summary
 
 
 def _empty_columns() -> Dict[Stage, List[LeadCard]]:
@@ -53,6 +54,7 @@ def build_kanban_snapshot(
         supa.table("leads")
         .select(
             "id, nome, etapa, telefone, email, origem, owner_id, created_at, first_contact_at, "
+            "source_label, form_label, channel, utm_campaign, utm_term, utm_content, "
             f"{LEAD_ADDRESS_SELECT}"
         )
         .eq("org_id", org_id)
@@ -114,7 +116,7 @@ def build_kanban_snapshot(
         d_resp = (
             supa.table("lead_diagnosticos")
             .select(
-                "lead_id, readiness_score, score_risco, prob_conversao"
+                "lead_id, readiness_score, score_risco, prob_conversao, objetivo, extras"
             )
             .eq("org_id", org_id)
             .in_("lead_id", lead_ids)
@@ -132,6 +134,8 @@ def build_kanban_snapshot(
                 "readiness_score": r.get("readiness_score"),
                 "score_risco": r.get("score_risco"),
                 "prob_conversao": r.get("prob_conversao"),
+                "objetivo": r.get("objetivo"),
+                "extras": r.get("extras"),
             }
 
     # ---------------------------------------------------------
@@ -147,6 +151,13 @@ def build_kanban_snapshot(
         interest = interests_by_lead.get(lid)
         diag = diag_by_lead.get(lid) or {}
         insight = build_interest_insight(interest, diag)
+        meta_ads_summary = extract_meta_ads_summary(diag.get("extras"))
+        meta_ads_form_answers = None
+        if meta_ads_summary:
+            extras = diag.get("extras") if isinstance(diag.get("extras"), dict) else {}
+            meta_ads = extras.get("meta_ads") if isinstance(extras.get("meta_ads"), dict) else {}
+            form_answers = meta_ads.get("form_answers") if isinstance(meta_ads.get("form_answers"), dict) else None
+            meta_ads_form_answers = form_answers
 
         card = LeadCard(
             id=lid,
@@ -168,11 +179,19 @@ def build_kanban_snapshot(
             created_at=row.get("created_at"),
             first_contact_at=row.get("first_contact_at"),
             address_updated_at=row.get("address_updated_at"),
+            source_label=row.get("source_label"),
+            form_label=row.get("form_label"),
+            channel=row.get("channel"),
+            utm_campaign=row.get("utm_campaign"),
+            utm_term=row.get("utm_term"),
+            utm_content=row.get("utm_content"),
             interest=interest,
             readiness_score=diag.get("readiness_score"),
             score_risco=diag.get("score_risco"),
             prob_conversao=diag.get("prob_conversao"),
             interest_insight=insight,
+            meta_ads_form_answers=meta_ads_form_answers,
+            meta_ads_summary=meta_ads_summary,
         )
         columns[etapa].append(card)
 
