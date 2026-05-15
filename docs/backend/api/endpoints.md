@@ -1131,6 +1131,41 @@ Atualiza acesso.
 
 Ativa/desativa acesso.
 
+## Importacao de carteira
+
+As rotas abaixo exigem autenticacao interna e papel `admin` ou `gestor`.
+
+### `POST /carteira/import/preview`
+
+Valida uma planilha tabulada colada pelo frontend antes de gravar qualquer entidade.
+
+Payload:
+
+- `raw_text`
+- `produto_padrao` (`imobiliario` ou `auto`)
+
+Resposta:
+
+- status por linha: `pronta`, `aviso`, `erro`, `ignorada`
+- resumo de clientes, administradoras, grupos, cotas, contratos, lances e contemplações previstos
+
+### `POST /carteira/import/confirm`
+
+Reexecuta a validacao e grava apenas as linhas válidas do lote.
+
+Payload:
+
+- `raw_text`
+- `produto_padrao` (`imobiliario` ou `auto`)
+
+Regras operacionais:
+
+- resolve `org_id` pela sessão autenticada;
+- não aceita `org_id` arbitrário do client;
+- garante `carteira_clientes` para o lead importado;
+- não duplica cota por `administradora_id + grupo_codigo + numero_cota` dentro da organização;
+- respeita a unicidade de uma contemplação por cota.
+
 ## Portal do parceiro
 
 Todas as rotas exigem autenticacao de parceiro.

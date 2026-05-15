@@ -14,6 +14,7 @@ from app.routers.contracts import router as contracts_router
 from app.routers.marketing_guide import router as marketing_guide_router
 from app.core.config import settings
 from app.routers.carteira import router as carteira_router
+from app.routers.carteira_import import router as carteira_import_router
 from app.routers.lances import router as lances_router
 from app.routers.comissoes import router as comissoes_router
 from app.routers.auth_debug import router as auth_debug_router
@@ -60,6 +61,7 @@ app.include_router(marketing_guide_router)
 app.include_router(marketing_guide.router)
 app.include_router(marketing_guide_pdf.router)
 app.include_router(carteira_router)
+app.include_router(carteira_import_router)
 app.include_router(lances_router)
 app.include_router(comissoes_router)
 app.include_router(partner_users_router)
