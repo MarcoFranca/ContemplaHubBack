@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -164,18 +166,33 @@ def _extract_money_or_percent(text: str | None) -> tuple[Decimal | None, Decimal
     return money, percent
 
 
-def _split_tsv(raw_text: str) -> tuple[list[str], list[list[str]]]:
+def _detect_delimiter(header_line: str) -> str:
+    if "\t" in header_line:
+        return "\t"
+    try:
+        dialect = csv.Sniffer().sniff(header_line, delimiters=",;\t")
+        return str(dialect.delimiter)
+    except csv.Error:
+        return ","
+
+
+def _parse_delimited_line(line: str, delimiter: str) -> list[str]:
+    return next(csv.reader(io.StringIO(line), delimiter=delimiter))
+
+
+def _split_delimited_rows(raw_text: str) -> tuple[list[str], list[list[str]]]:
     lines = [line for line in raw_text.splitlines()]
     if not lines:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cole um conteúdo tabulado com cabeçalho.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cole um conteúdo tabulado ou CSV com cabeçalho.")
 
     header_line = next((line for line in lines if _normalize_text(line)), "")
     if not header_line:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nenhuma linha com dados foi encontrada.")
 
-    headers = header_line.split("\t")
+    delimiter = _detect_delimiter(header_line)
+    headers = _parse_delimited_line(header_line, delimiter)
     header_index = lines.index(header_line)
-    rows = [line.split("\t") for line in lines[header_index + 1 :]]
+    rows = [_parse_delimited_line(line, delimiter) for line in lines[header_index + 1 :] if line is not None]
     return headers, rows
 
 
@@ -230,7 +247,7 @@ def _is_separator_like_row(mapped: dict[str, str]) -> bool:
 
 
 def parse_import_rows(raw_text: str, *, produto_padrao: ImportProduto) -> list[ParsedImportRow]:
-    headers, row_values = _split_tsv(raw_text)
+    headers, row_values = _split_delimited_rows(raw_text)
     parsed_rows: list[ParsedImportRow] = []
 
     for index, values in enumerate(row_values, start=2):

@@ -31,7 +31,7 @@ O fluxo foi desenhado para operar dentro do dominio atual do produto, sem criar 
 
 O preview:
 
-1. recebe texto tabulado colado pelo usuário;
+1. recebe texto colado pelo usuário em formato tabulado (`TSV`) ou `CSV`;
 2. normaliza cabeçalhos, nome do cliente, moeda BR, percentual, data BR e boolean;
 3. ignora linhas vazias e linhas separadoras compostas apenas por caracteres como `-`, `_`, `=` e `/`;
 4. identifica por linha:

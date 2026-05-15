@@ -74,6 +74,19 @@ def build_tsv(*rows: str) -> str:
     return "\n".join(["\t".join(HEADERS), *rows])
 
 
+def build_csv(*rows: list[str]) -> str:
+    rendered_rows = []
+    for row in rows:
+        escaped = []
+        for value in row:
+            text = value or ""
+            if any(token in text for token in [",", '"', "\n"]):
+                text = '"' + text.replace('"', '""') + '"'
+            escaped.append(text)
+        rendered_rows.append(",".join(escaped))
+    return "\n".join([",".join(HEADERS), *rendered_rows])
+
+
 def make_separator_row(token: str = "---") -> str:
     return "\t".join([token] * len(HEADERS))
 
@@ -265,6 +278,45 @@ def test_parse_import_rows_ignores_separator_lines_in_preview(profile: CurrentPr
     assert preview.summary.ignoradas == 1
     assert len(preview.rows) == 2
     assert all(row.cliente_nome != "---" for row in preview.rows)
+
+
+def test_parse_import_rows_accepts_csv_with_quoted_money_fields(profile: CurrentProfile, fake_sb: FakeSupabaseClient):
+    raw_text = build_csv(
+        [
+            "FALSE",
+            "TRUE",
+            "FALSE",
+            "TRUE",
+            "MARINA DA COSTA",
+            "FIXO",
+            "Rodobens",
+            "R$ 1.000.000,00",
+            "1880",
+            "344",
+            "216",
+            "BOLETO",
+            "INCC",
+            "6",
+            "Compra de imóvel",
+            "usar lance fixo com embutido",
+            "30%",
+            "10/09/2025",
+            "40%",
+            "R$ 100.000,00",
+            "R$ 700.000,00",
+            "R$ 4.581,34",
+        ]
+    )
+
+    parsed = service.parse_import_rows(raw_text, produto_padrao="imobiliario")
+    _, preview = service.build_import_preview(sb=fake_sb, profile=profile, raw_text=raw_text, produto_padrao="imobiliario")
+
+    assert len(parsed) == 1
+    assert parsed[0].cliente_nome == "MARINA DA COSTA"
+    assert parsed[0].valor_carta == Decimal("1000000.00")
+    assert parsed[0].valor_parcela == Decimal("4581.34")
+    assert preview.summary.total_rows == 1
+    assert len(preview.rows) == 1
 
 
 @pytest.mark.parametrize(
