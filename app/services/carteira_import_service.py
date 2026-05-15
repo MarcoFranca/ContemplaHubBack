@@ -239,6 +239,14 @@ def _build_import_notes(mapped: dict[str, str]) -> list[str]:
     return notes
 
 
+def _build_placeholder_email(profile: CurrentProfile, parsed: ParsedImportRow) -> str:
+    name_key = _normalize_lookup(parsed.cliente_nome or "cliente")
+    slug = re.sub(r"\s+", "-", name_key).strip("-") or "cliente"
+    slug = slug[:40]
+    org_fragment = re.sub(r"[^a-z0-9]+", "", (profile.org_id or "").lower())[:8] or "org"
+    return f"importacao-{org_fragment}-{parsed.row_number}-{slug}@sem-contato.local"
+
+
 def _is_separator_like_row(mapped: dict[str, str]) -> bool:
     values = [_normalize_text(value) for value in mapped.values() if _normalize_text(value)]
     if not values:
@@ -798,7 +806,7 @@ def _create_lead(sb: Client, profile: CurrentProfile, parsed: ParsedImportRow) -
             "org_id": profile.org_id,
             "nome": parsed.cliente_nome,
             "telefone": None,
-            "email": None,
+            "email": _build_placeholder_email(profile, parsed),
             "owner_id": profile.user_id,
             "etapa": "pos_venda",
         }

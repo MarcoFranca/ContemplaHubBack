@@ -65,6 +65,7 @@ Na confirmação:
 
 - cliente é buscado por nome normalizado dentro da organização;
 - se não existir lead correspondente, é criado lead já em `pos_venda` e garantida entrada em `carteira_clientes`;
+- quando a origem não trouxer telefone/email, a importação cria um email técnico temporário apenas para satisfazer a constraint operacional de contato mínimo em `leads`;
 - administradora é buscada primeiro nas acessíveis ao tenant e criada na org quando ausente;
 - grupo é buscado/criado por `administradora_id + codigo`;
 - a cota permanece gravando `grupo_codigo` em `cotas`, mas a importacao também cria/garante o registro em `grupos`;
