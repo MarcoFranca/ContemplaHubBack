@@ -1040,7 +1040,7 @@ def confirm_import(
                 supa=sb,
                 org_id=profile.org_id,
                 lead_id=str(lead["id"]),
-                origem_entrada="importacao_planilha",
+                origem_entrada="manual",
                 observacoes="Cliente importado por colagem de planilha",
             )
 
