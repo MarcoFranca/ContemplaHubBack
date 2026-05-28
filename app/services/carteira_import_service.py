@@ -34,6 +34,13 @@ HEADER_ALIASES = {
     "contemplada": "contemplada",
     "optin": "optin",
     "cliente": "cliente",
+    "telefone": "telefone",
+    "telefone 1": "telefone",
+    "celular": "telefone",
+    "phone": "telefone",
+    "email": "email",
+    "e mail": "email",
+    "e-mail": "email",
     "tipo de lance": "tipo_lance",
     "empresa": "empresa",
     "valor da cota": "valor_cota",
@@ -151,6 +158,22 @@ def _parse_date(value: str | None) -> str | None:
         except ValueError:
             continue
     return None
+
+
+def _normalize_email(value: str | None) -> str | None:
+    raw = _normalize_text(value).lower()
+    if not raw or "@" not in raw:
+        return None
+    return raw
+
+
+def _normalize_phone(value: str | None) -> str | None:
+    digits = re.sub(r"\D+", "", value or "")
+    if not digits:
+        return None
+    if len(digits) > 11 and digits.startswith("55"):
+        digits = digits[2:]
+    return digits[:11] or None
 
 
 def _extract_money_or_percent(text: str | None) -> tuple[Decimal | None, Decimal | None]:
@@ -289,6 +312,8 @@ def parse_import_rows(raw_text: str, *, produto_padrao: ImportProduto) -> list[P
         parsed = ParsedImportRow(
             row_number=index,
             cliente_nome=_normalize_text(mapped.get("cliente")) or None,
+            telefone=_normalize_phone(mapped.get("telefone")),
+            email=_normalize_email(mapped.get("email")),
             optin=_parse_bool(mapped.get("optin")),
             contemplada=bool(_parse_bool(mapped.get("contemplada"))),
             lance_feito=bool(_parse_bool(mapped.get("lance_feito"))),
@@ -805,8 +830,8 @@ def _create_lead(sb: Client, profile: CurrentProfile, parsed: ParsedImportRow) -
         {
             "org_id": profile.org_id,
             "nome": parsed.cliente_nome,
-            "telefone": None,
-            "email": _build_placeholder_email(profile, parsed),
+            "telefone": parsed.telefone,
+            "email": parsed.email or _build_placeholder_email(profile, parsed),
             "owner_id": profile.user_id,
             "etapa": "pos_venda",
         }

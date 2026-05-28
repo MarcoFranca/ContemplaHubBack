@@ -98,6 +98,8 @@ class CarteiraImportConfirmResponse(BaseModel):
 class ParsedImportRow(BaseModel):
     row_number: int
     cliente_nome: Optional[str] = None
+    telefone: Optional[str] = None
+    email: Optional[str] = None
     optin: Optional[bool] = None
     contemplada: bool = False
     lance_feito: bool = False
