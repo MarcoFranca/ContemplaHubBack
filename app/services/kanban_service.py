@@ -295,15 +295,22 @@ def move_lead_stage(
             "message": f"Falha ao atualizar etapa: {exc}",
         }
 
-    refreshed = (
-        supa.table("leads")
-        .select("id, org_id, etapa, first_contact_at, updated_at")
-        .eq("org_id", org_id)
-        .eq("id", lead_id)
-        .maybe_single()
-        .execute()
-    )
-    lead = refreshed.data
+    try:
+        refreshed = (
+            supa.table("leads")
+            .select("id, org_id, etapa, first_contact_at")
+            .eq("org_id", org_id)
+            .eq("id", lead_id)
+            .maybe_single()
+            .execute()
+        )
+        lead = refreshed.data
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "update_failed",
+            "message": f"Falha ao confirmar etapa atualizada: {exc}",
+        }
 
     if not lead:
         return {
