@@ -280,21 +280,44 @@ def move_lead_stage(
     # TODO: se quiser guardar reason em alguma coluna de observação / histórico, tratar aqui
 
     # 3) atualiza no Supabase
-    upd_resp = (
-        supa.table("leads")
-        .update(updates)
-        .eq("id", lead_id)
-        .execute()
-    )
-    rows = upd_resp.data or []
-    if not rows:
+    try:
+        (
+            supa.table("leads")
+            .update(updates)
+            .eq("org_id", org_id)
+            .eq("id", lead_id)
+            .execute()
+        )
+    except Exception as exc:
         return {
             "ok": False,
             "error": "update_failed",
-            "message": "Falha ao atualizar etapa",
+            "message": f"Falha ao atualizar etapa: {exc}",
         }
 
-    lead = rows[0]
+    refreshed = (
+        supa.table("leads")
+        .select("id, org_id, etapa, first_contact_at, updated_at")
+        .eq("org_id", org_id)
+        .eq("id", lead_id)
+        .maybe_single()
+        .execute()
+    )
+    lead = refreshed.data
+
+    if not lead:
+        return {
+            "ok": False,
+            "error": "update_failed",
+            "message": "Lead atualizado nao encontrado apos mover etapa",
+        }
+
+    if lead.get("etapa") != new_stage:
+        return {
+            "ok": False,
+            "error": "update_failed",
+            "message": "A etapa nao foi persistida com o valor solicitado",
+        }
 
     # TODO: se o histórico de etapas e outbox estiver por trigger, beleza.
     # Se não, aqui é o lugar de inserir em lead_stage_history e event_outbox.
