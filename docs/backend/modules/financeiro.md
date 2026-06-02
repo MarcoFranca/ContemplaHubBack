@@ -10,6 +10,13 @@ Responsabilidades atuais:
 - editar pagamento operacional
 - listar pagamentos por contrato
 - listar pagamentos por cota
+- listar contratos com contexto operacional para o frontend:
+  - cliente
+  - cota
+  - valor da carta
+  - administradora
+  - comissao ativa
+  - parceiro vinculado
 - reaproveitar o motor de competencias existente para:
   - atualizar `cota_pagamento_competencias`
   - disparar geracao de comissao

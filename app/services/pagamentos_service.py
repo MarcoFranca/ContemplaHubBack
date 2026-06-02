@@ -41,6 +41,8 @@ def _get_contract_or_404(supa: Client, org_id: str, contrato_id: str) -> Dict[st
                 numero_cota,
                 grupo_codigo,
                 valor_carta,
+                administradora_id,
+                administradoras ( id, nome ),
                 lead_id,
                 leads ( id, nome )
             )
@@ -125,6 +127,8 @@ def _enrich_pagamento_rows(
                     numero_cota,
                     grupo_codigo,
                     valor_carta,
+                    administradora_id,
+                    administradoras ( id, nome ),
                     lead_id,
                     leads ( id, nome )
                 )
@@ -299,6 +303,8 @@ def list_financeiro_contrato_options(
                 numero_cota,
                 grupo_codigo,
                 valor_carta,
+                administradora_id,
+                administradoras ( id, nome ),
                 lead_id,
                 leads ( id, nome )
             )
@@ -312,17 +318,39 @@ def list_financeiro_contrato_options(
 
     config_resp = (
         supa.table("cota_comissao_config")
-        .select("cota_id")
+        .select("cota_id, percentual_total, modo")
         .eq("org_id", org_id)
         .eq("ativo", True)
         .execute()
     )
-    cotas_com_comissao = {row["cota_id"] for row in _safe_rows(config_resp)}
+    config_by_cota = {
+        row["cota_id"]: row
+        for row in _safe_rows(config_resp)
+        if row.get("cota_id")
+    }
+
+    parceiros_resp = (
+        supa.table("cota_comissao_parceiros")
+        .select("cota_id, parceiro_id, percentual_parceiro, ativo, parceiros_corretores ( id, nome, ativo )")
+        .eq("org_id", org_id)
+        .eq("ativo", True)
+        .execute()
+    )
+    parceiros_by_cota: Dict[str, Dict[str, Any]] = {}
+    for row in _safe_rows(parceiros_resp):
+        cota_id = row.get("cota_id")
+        parceiro = row.get("parceiros_corretores") or {}
+        if not cota_id or not parceiro or not parceiro.get("ativo", True):
+            continue
+        parceiros_by_cota.setdefault(cota_id, row)
 
     items = []
     for row in contratos:
         cota = row.get("cotas") or {}
         lead = cota.get("leads") or {}
+        administradora = cota.get("administradoras") or {}
+        config = config_by_cota.get(row.get("cota_id"))
+        parceiro = parceiros_by_cota.get(row.get("cota_id"))
         items.append(
             {
                 "contrato_id": row["id"],
@@ -333,7 +361,13 @@ def list_financeiro_contrato_options(
                 "grupo_codigo": cota.get("grupo_codigo"),
                 "valor_carta": cota.get("valor_carta"),
                 "cliente_nome": lead.get("nome"),
-                "possui_comissao_ativa": row.get("cota_id") in cotas_com_comissao,
+                "administradora_nome": administradora.get("nome"),
+                "possui_comissao_ativa": bool(config),
+                "percentual_comissao": (config or {}).get("percentual_total"),
+                "modo_comissao": (config or {}).get("modo"),
+                "parceiro_vinculado": bool(parceiro),
+                "parceiro_nome": ((parceiro or {}).get("parceiros_corretores") or {}).get("nome"),
+                "parceiro_percentual": (parceiro or {}).get("percentual_parceiro"),
             }
         )
 

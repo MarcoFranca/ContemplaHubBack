@@ -62,7 +62,13 @@ class FinanceiroContratoOption(BaseModel):
     grupo_codigo: Optional[str] = None
     valor_carta: Optional[Decimal] = None
     cliente_nome: Optional[str] = None
+    administradora_nome: Optional[str] = None
     possui_comissao_ativa: bool = False
+    percentual_comissao: Optional[Decimal] = None
+    modo_comissao: Optional[str] = None
+    parceiro_vinculado: bool = False
+    parceiro_nome: Optional[str] = None
+    parceiro_percentual: Optional[Decimal] = None
 
 
 class FinanceiroContratoOptionsResponse(BaseModel):
