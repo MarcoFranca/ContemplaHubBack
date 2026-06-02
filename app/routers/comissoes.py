@@ -399,6 +399,9 @@ def atualizar_status_lancamento(
 ):
     org_id = require_org_id(x_org_id)
     lanc = get_org_record_or_404(supa, "comissao_lancamentos", org_id, lancamento_id)
+    if lanc.get("status") == "pago" and body.status != "pago":
+        raise HTTPException(409, "Lançamento pago não pode ser alterado de forma destrutiva")
+
     payload: Dict[str, Any] = {
         "status": body.status,
         "updated_at": datetime.utcnow().isoformat(),
@@ -407,6 +410,14 @@ def atualizar_status_lancamento(
         payload["competencia_real"] = body.competencia_real.isoformat()
     if body.status == "pago":
         payload["pago_em"] = datetime.utcnow().isoformat()
+        if lanc.get("beneficiario_tipo") == "parceiro":
+            payload["repasse_status"] = lanc.get("repasse_status") or "pendente"
+    elif body.status == "cancelado" and lanc.get("beneficiario_tipo") == "parceiro":
+        if lanc.get("repasse_status") == "pago":
+            raise HTTPException(409, "Repasse já pago não pode ser cancelado por alteração destrutiva do lançamento")
+        payload["repasse_status"] = "cancelado"
+        payload["repasse_previsto_em"] = None
+        payload["repasse_pago_em"] = None
     if body.observacoes is not None:
         payload["observacoes"] = body.observacoes
 
@@ -420,7 +431,6 @@ def atualizar_status_lancamento(
     data = getattr(resp, "data", None) or []
     return {"ok": True, "previous": lanc, "item": data[0] if data else None}
 
-
 @router.patch("/lancamentos/{lancamento_id}/repasse")
 def atualizar_repasse(
     lancamento_id: str,
@@ -432,6 +442,12 @@ def atualizar_repasse(
     lanc = get_org_record_or_404(supa, "comissao_lancamentos", org_id, lancamento_id)
     if lanc["beneficiario_tipo"] != "parceiro":
         raise HTTPException(400, "Repasse só se aplica a lançamentos de parceiro")
+    if lanc.get("status") not in {"disponivel", "pago"} and body.repasse_status in {"pendente", "pago"}:
+        raise HTTPException(409, "Repasse só pode avançar quando a comissão correspondente estiver disponível ou paga")
+    if body.repasse_status == "pago" and lanc.get("status") != "pago":
+        raise HTTPException(409, "Repasse só pode ser marcado como pago quando a comissão correspondente estiver paga")
+    if lanc.get("repasse_status") == "pago" and body.repasse_status != "pago":
+        raise HTTPException(409, "Repasse já pago não pode regredir de forma destrutiva")
 
     payload: Dict[str, Any] = {
         "repasse_status": body.repasse_status,
@@ -453,7 +469,6 @@ def atualizar_repasse(
     )
     data = getattr(resp, "data", None) or []
     return {"ok": True, "previous": lanc, "item": data[0] if data else None}
-
 
 @router.get("/contratos/{contrato_id}/competencias")
 def get_competencias_contrato(
@@ -516,3 +531,5 @@ def get_timeline_contrato(
         org_id=org_id,
         contrato_id=contrato_id,
     )
+
+

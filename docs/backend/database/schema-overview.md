@@ -238,6 +238,42 @@ Campos confirmados:
 - `status`
 - `public_hash` `UNIQUE`
 - `payload` `jsonb`
+
+### 4. Financeiro operacional
+
+Tabela principal: `pagamentos`
+
+Campos confirmados:
+
+- `id`
+- `org_id`
+- `contrato_id`
+- `tipo`
+- `competencia`
+- `valor`
+- `status`
+- `vencimento`
+- `pago_em`
+- `referencia`
+- `origem`
+- `observacoes`
+- `payload`
+- `created_at`
+
+Relacionamentos usados:
+
+- `pagamentos.contrato_id -> contratos.id`
+- tenancy por `pagamentos.org_id`
+
+Regras criticas:
+
+- a tabela `pagamentos` e a entrada operacional do fluxo:
+  - pagamento
+  - competencia
+  - comissao
+- `cota_pagamento_competencias` e derivada de `pagamentos`;
+- o motor financeiro nao deve depender do payload JSON de `lances`;
+- toda escrita filtra e valida `org_id`.
 - `pdf_url`
 - `created_at`
 - `created_by`

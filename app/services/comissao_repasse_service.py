@@ -49,6 +49,10 @@ def marcar_repasse_pago(
 
     if lanc.get("status") == "cancelado":
         raise HTTPException(400, "Lançamento cancelado não pode ser pago")
+    if lanc.get("status") != "pago":
+        raise HTTPException(409, "Repasse só pode ser marcado como pago quando a comissão correspondente estiver paga")
+    if lanc.get("repasse_status") == "pago":
+        return {"ok": True, "item": lanc, "already_paid": True}
 
     repasse_pago_em = pago_em or datetime.utcnow().isoformat()
 

@@ -19,9 +19,12 @@ from app.schemas.comissoes import (
     ComissaoRegraIn,
 )
 from app.services.comissao_service import (
+    fetch_config_by_cota,
+    fetch_parceiros_da_cota,
+    fetch_regras,
     upsert_config_for_cota,
-    generate_lancamentos_for_contrato,
 )
+from app.services.comissao_competencia_service import reprocessar_comissoes_contrato
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 
@@ -580,17 +583,64 @@ def _setup_comissao_for_contract(
         payload=config_payload,
     )
 
-    lancamentos_result = generate_lancamentos_for_contrato(
+    lancamentos_result = reprocessar_comissoes_contrato(
         supa=supa,
         org_id=org_id,
         contrato_id=contrato_id,
-        sobrescrever=True,
+        actor_id=None,
     )
 
     return {
         "config": config_result,
         "lancamentos": lancamentos_result,
     }
+
+
+def _ensure_comissao_config_for_contract(
+    supa: Client,
+    *,
+    org_id: str,
+    cota_id: str,
+    contrato_id: str,
+    percentual_comissao: Decimal,
+    parceiro_id: Optional[str],
+    repasse_percentual_comissao: Optional[Decimal],
+    imposto_retido_pct: Decimal,
+    comissao_observacoes: Optional[str],
+) -> Dict[str, Any]:
+    existing_config = fetch_config_by_cota(supa, org_id, cota_id)
+    if existing_config:
+        config_result: Dict[str, Any] = {
+            "ok": True,
+            "config": existing_config,
+            "regras": fetch_regras(supa, org_id, existing_config["id"]),
+            "parceiros": fetch_parceiros_da_cota(supa, org_id, cota_id),
+            "initialized_from_contract": False,
+        }
+        lancamentos_result = reprocessar_comissoes_contrato(
+            supa=supa,
+            org_id=org_id,
+            contrato_id=contrato_id,
+            actor_id=None,
+        )
+        return {
+            "config": config_result,
+            "lancamentos": lancamentos_result,
+        }
+
+    result = _setup_comissao_for_contract(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        contrato_id=contrato_id,
+        percentual_comissao=percentual_comissao,
+        parceiro_id=parceiro_id,
+        repasse_percentual_comissao=repasse_percentual_comissao,
+        imposto_retido_pct=imposto_retido_pct,
+        comissao_observacoes=comissao_observacoes,
+    )
+    result["config"]["initialized_from_contract"] = True
+    return result
 
 
 def _finalize_contract_creation(
@@ -671,7 +721,7 @@ def create_contract_from_lead(
         ),
     )
 
-    comissao_result = _setup_comissao_for_contract(
+    comissao_result = _ensure_comissao_config_for_contract(
         supa,
         org_id=org_id,
         cota_id=cota_id,
@@ -756,7 +806,7 @@ def register_existing_contract(
         ),
     )
 
-    comissao_result = _setup_comissao_for_contract(
+    comissao_result = _ensure_comissao_config_for_contract(
         supa,
         org_id=org_id,
         cota_id=cota_id,

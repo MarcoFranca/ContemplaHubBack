@@ -40,6 +40,115 @@ Resposta:
 
 - `200 OK` com payload simples `pendente de confirmacao do corpo exato`
 
+## Financeiro
+
+### `GET /financeiro/contratos-options`
+
+Lista contratos elegiveis para operacao manual de pagamentos no tenant autenticado.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Regras:
+
+- cruza `X-Org-Id` com o contexto autenticado;
+- retorna apenas contratos da org autenticada;
+- inclui resumo da cota e do cliente para popular seletores operacionais.
+
+### `POST /financeiro/pagamentos`
+
+Cria um pagamento operacional.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Payload:
+
+- `contrato_id`
+- `competencia`
+- `valor`
+- `vencimento` opcional
+- `status`
+- `pago_em` opcional
+- `observacoes` opcional
+- `tipo` default `parcela_mensal`
+- `origem` default `manual`
+- `referencia` opcional
+- `payload` opcional
+
+Regras:
+
+- valida pertencimento do contrato a org autenticada;
+- grava em `public.pagamentos`;
+- reaproveita `processar_pagamento_para_comissao(...)` para atualizar `cota_pagamento_competencias` e disparar o motor de comissao;
+- se `status = pago` e `pago_em` vier vazio, preenche timestamp atual.
+
+### `PUT /financeiro/pagamentos/{pagamento_id}`
+
+Atualiza um pagamento operacional.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Payload:
+
+- mesmo contrato do `POST`
+
+Regras:
+
+- nao permite operacao cross-org;
+- reaproveita o mesmo pipeline de competencia e comissao apos o update;
+- se o status deixar de ser `pago`, limpa `pago_em`.
+
+### `GET /financeiro/contratos/{contrato_id}/pagamentos`
+
+Lista pagamentos do contrato.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Resposta:
+
+- lista ordenada por `competencia desc`, `created_at desc`
+- inclui metadados da cota e do cliente enriquecidos pelo service
+
+### `GET /financeiro/cotas/{cota_id}/pagamentos`
+
+Lista pagamentos da cota via seus contratos.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
 ## Leads
 
 ### `POST /leads`

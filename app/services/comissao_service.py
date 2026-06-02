@@ -12,7 +12,6 @@ from supabase import Client
 from app.schemas.comissoes import CotaComissaoConfigUpsertIn
 from app.services.contract_partner_sync_service import (
     remove_synced_partner_links_for_cota,
-    sync_contrato_parceiros_for_contract,
     sync_contrato_parceiros_for_cota,
 )
 
@@ -134,6 +133,55 @@ def fetch_parceiros_da_cota(supa: Client, org_id: str, cota_id: str) -> List[Dic
         .execute()
     )
     return getattr(resp, "data", None) or []
+
+
+def fetch_regras_with_usage(supa: Client, org_id: str, config_id: str) -> List[Dict[str, Any]]:
+    regras = fetch_regras(supa, org_id, config_id)
+    if not regras:
+        return []
+
+    regra_ids = [row["id"] for row in regras]
+    usage_resp = (
+        supa.table("comissao_lancamentos")
+        .select("regra_id")
+        .eq("org_id", org_id)
+        .in_("regra_id", regra_ids)
+        .execute()
+    )
+    usage_rows = getattr(usage_resp, "data", None) or []
+    usage_by_regra: Dict[str, int] = {}
+    for row in usage_rows:
+        regra_id = row.get("regra_id")
+        if regra_id:
+            usage_by_regra[regra_id] = usage_by_regra.get(regra_id, 0) + 1
+
+    return [{**row, "_usage_count": usage_by_regra.get(row["id"], 0)} for row in regras]
+
+
+def fetch_parceiros_da_cota_with_usage(supa: Client, org_id: str, cota_id: str) -> List[Dict[str, Any]]:
+    parceiros = fetch_parceiros_da_cota(supa, org_id, cota_id)
+    if not parceiros:
+        return []
+
+    parceiro_ids = [row["parceiro_id"] for row in parceiros if row.get("parceiro_id")]
+    if not parceiro_ids:
+        return parceiros
+
+    usage_resp = (
+        supa.table("comissao_lancamentos")
+        .select("parceiro_id")
+        .eq("org_id", org_id)
+        .in_("parceiro_id", parceiro_ids)
+        .execute()
+    )
+    usage_rows = getattr(usage_resp, "data", None) or []
+    usage_by_partner: Dict[str, int] = {}
+    for row in usage_rows:
+        parceiro_id = row.get("parceiro_id")
+        if parceiro_id:
+            usage_by_partner[parceiro_id] = usage_by_partner.get(parceiro_id, 0) + 1
+
+    return [{**row, "_usage_count": usage_by_partner.get(row["parceiro_id"], 0)} for row in parceiros]
 
 
 def get_delete_comissao_check(supa: Client, org_id: str, cota_id: str) -> Dict[str, Any]:
@@ -525,6 +573,146 @@ def summarize_lancamentos(lancamentos: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _reconcile_regras_for_config(
+    supa: Client,
+    *,
+    org_id: str,
+    config_id: str,
+    payload: CotaComissaoConfigUpsertIn,
+) -> None:
+    existing_regras = fetch_regras_with_usage(supa, org_id, config_id)
+    existing_by_ordem = {int(row["ordem"]): row for row in existing_regras}
+    payload_ordens = {int(item.ordem) for item in payload.regras}
+
+    for item in sorted(payload.regras, key=lambda row: row.ordem):
+        regra_payload = {
+            "tipo_evento": item.tipo_evento,
+            "offset_meses": item.offset_meses,
+            "percentual_comissao": str(_pct(item.percentual_comissao)),
+            "descricao": item.descricao,
+        }
+        existing = existing_by_ordem.get(int(item.ordem))
+        if existing:
+            (
+                supa.table("cota_comissao_regras")
+                .update(regra_payload)
+                .eq("org_id", org_id)
+                .eq("id", existing["id"])
+                .execute()
+            )
+            continue
+
+        (
+            supa.table("cota_comissao_regras")
+            .insert(
+                {
+                    "org_id": org_id,
+                    "cota_comissao_config_id": config_id,
+                    "ordem": item.ordem,
+                    **regra_payload,
+                }
+            )
+            .execute()
+        )
+
+    regras_obsoletas = [row for row in existing_regras if int(row["ordem"]) not in payload_ordens]
+    regras_referenciadas = [row for row in regras_obsoletas if int(row.get("_usage_count", 0)) > 0]
+    if regras_referenciadas:
+        ordens = ", ".join(str(row["ordem"]) for row in regras_referenciadas)
+        raise HTTPException(
+            409,
+            f"Não é possível remover regras já usadas em lançamentos financeiros. Ordens bloqueadas: {ordens}",
+        )
+
+    for row in regras_obsoletas:
+        (
+            supa.table("cota_comissao_regras")
+            .delete()
+            .eq("org_id", org_id)
+            .eq("id", row["id"])
+            .execute()
+        )
+
+
+def _reconcile_parceiros_for_cota(
+    supa: Client,
+    *,
+    org_id: str,
+    cota_id: str,
+    payload: CotaComissaoConfigUpsertIn,
+) -> None:
+    now_iso = datetime.utcnow().isoformat()
+    existing_parceiros = fetch_parceiros_da_cota_with_usage(supa, org_id, cota_id)
+    existing_by_partner = {
+        row["parceiro_id"]: row
+        for row in existing_parceiros
+        if row.get("parceiro_id")
+    }
+    payload_partner_ids = {item.parceiro_id for item in payload.parceiros}
+
+    for item in payload.parceiros:
+        parceiro_payload = {
+            "percentual_parceiro": str(_pct(item.percentual_parceiro)),
+            "imposto_retido_pct": str(_pct(item.imposto_retido_pct)),
+            "ativo": item.ativo,
+            "observacoes": item.observacoes,
+            "updated_at": now_iso,
+        }
+        existing = existing_by_partner.get(item.parceiro_id)
+        if existing:
+            (
+                supa.table("cota_comissao_parceiros")
+                .update(parceiro_payload)
+                .eq("org_id", org_id)
+                .eq("id", existing["id"])
+                .execute()
+            )
+            continue
+
+        (
+            supa.table("cota_comissao_parceiros")
+            .insert(
+                {
+                    "org_id": org_id,
+                    "cota_id": cota_id,
+                    "parceiro_id": item.parceiro_id,
+                    "created_at": now_iso,
+                    **parceiro_payload,
+                }
+            )
+            .execute()
+        )
+
+    parceiros_obsoletos = [
+        row for row in existing_parceiros if row.get("parceiro_id") not in payload_partner_ids
+    ]
+    for row in parceiros_obsoletos:
+        if int(row.get("_usage_count", 0)) > 0:
+            (
+                supa.table("cota_comissao_parceiros")
+                .update(
+                    {
+                        "ativo": False,
+                        "updated_at": now_iso,
+                        "observacoes": row.get("observacoes")
+                        or "Desativado automaticamente após remoção da configuração ativa.",
+                    }
+                )
+                .eq("org_id", org_id)
+                .eq("id", row["id"])
+                .execute()
+            )
+            continue
+
+        (
+            supa.table("cota_comissao_parceiros")
+            .delete()
+            .eq("org_id", org_id)
+            .eq("id", row["id"])
+            .execute()
+        )
+
+
 def upsert_config_for_cota(supa: Client, org_id: str, cota_id: str, payload: CotaComissaoConfigUpsertIn) -> Dict[str, Any]:
     cota = fetch_cota_context(supa, org_id, cota_id)
     validate_partner_ids(supa, org_id, payload)
@@ -565,38 +753,18 @@ def upsert_config_for_cota(supa: Client, org_id: str, cota_id: str, payload: Cot
             raise HTTPException(500, "Erro ao criar configuração de comissão")
         config_id = data[0]["id"]
 
-    supa.table("cota_comissao_regras").delete().eq("org_id", org_id).eq("cota_comissao_config_id", config_id).execute()
-    supa.table("cota_comissao_parceiros").delete().eq("org_id", org_id).eq("cota_id", cota_id).execute()
-
-    regras_rows = [
-        {
-            "org_id": org_id,
-            "cota_comissao_config_id": config_id,
-            "ordem": item.ordem,
-            "tipo_evento": item.tipo_evento,
-            "offset_meses": item.offset_meses,
-            "percentual_comissao": str(_pct(item.percentual_comissao)),
-            "descricao": item.descricao,
-        }
-        for item in sorted(payload.regras, key=lambda r: r.ordem)
-    ]
-    supa.table("cota_comissao_regras").insert(regras_rows).execute()
-
-    if payload.parceiros:
-        parceiros_rows = [
-            {
-                "org_id": org_id,
-                "cota_id": cota_id,
-                "parceiro_id": item.parceiro_id,
-                "percentual_parceiro": str(_pct(item.percentual_parceiro)),
-                "imposto_retido_pct": str(_pct(item.imposto_retido_pct)),
-                "ativo": item.ativo,
-                "observacoes": item.observacoes,
-                "updated_at": datetime.utcnow().isoformat(),
-            }
-            for item in payload.parceiros
-        ]
-        supa.table("cota_comissao_parceiros").insert(parceiros_rows).execute()
+    _reconcile_regras_for_config(
+        supa,
+        org_id=org_id,
+        config_id=config_id,
+        payload=payload,
+    )
+    _reconcile_parceiros_for_cota(
+        supa,
+        org_id=org_id,
+        cota_id=cota_id,
+        payload=payload,
+    )
 
     config = fetch_config_by_cota(supa, org_id, cota_id)
     regras = fetch_regras(supa, org_id, config_id)
@@ -630,21 +798,6 @@ def generate_lancamentos_for_contrato(supa: Client, org_id: str, contrato_id: st
     regras = fetch_regras(supa, org_id, config["id"])
     parceiros = fetch_parceiros_da_cota(supa, org_id, cota["id"])
 
-    existing_resp = (
-        supa.table("comissao_lancamentos")
-        .select("id")
-        .eq("org_id", org_id)
-        .eq("contrato_id", contrato_id)
-        .limit(1)
-        .execute()
-    )
-    existing = getattr(existing_resp, "data", None) or []
-    if existing and not sobrescrever:
-        raise HTTPException(409, "Já existem lançamentos para este contrato. Use sobrescrever=true para recriar")
-
-    if existing and sobrescrever:
-        supa.table("comissao_lancamentos").delete().eq("org_id", org_id).eq("contrato_id", contrato_id).execute()
-
     launches = build_launches_payload(
         supa=supa,
         org_id=org_id,
@@ -654,29 +807,29 @@ def generate_lancamentos_for_contrato(supa: Client, org_id: str, contrato_id: st
         regras=regras,
         parceiros=parceiros,
     )
-
-    created = supa.table("comissao_lancamentos").insert(launches, returning="representation").execute()
-    data = getattr(created, "data", None) or []
-
-    # NOVO: garante sincronização do vínculo parceiro<->contrato
-    partner_sync = sync_contrato_parceiros_for_contract(
-        supa,
-        org_id=org_id,
-        contract_id=contrato_id,
-        actor_id=None,
+    existing_resp = (
+        supa.table("comissao_lancamentos")
+        .select("id, status, repasse_status, beneficiario_tipo, competencia_id, regra_id")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .execute()
     )
+    existing = getattr(existing_resp, "data", None) or []
 
     return {
         "ok": True,
         "contrato": contrato,
         "cota": cota,
         "config": config,
-        "gerados": len(data),
-        "lancamentos": data,
-        "resumo": summarize_lancamentos(data),
-        "partner_sync": partner_sync,
+        "projection_only": True,
+        "deprecated_write_flow": True,
+        "sobrescrever_ignored": sobrescrever,
+        "gerados": 0,
+        "lancamentos": launches,
+        "resumo": summarize_lancamentos(launches),
+        "existing_lancamentos": existing,
+        "detail": "Fluxo antigo de geração massiva foi convertido para projeção segura. Use o motor por competência para executar lançamentos.",
     }
-
 
 def sync_eventos_contrato(supa: Client, org_id: str, contrato_id: str) -> Dict[str, Any]:
     contrato = fetch_contrato_context(supa, org_id, contrato_id)
@@ -804,3 +957,4 @@ def delete_partner_if_allowed(
         "deleted": True,
         "item": data[0] if data else {"id": parceiro_id},
     }
+
