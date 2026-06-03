@@ -378,10 +378,12 @@ def _find_matching_regra_for_competencia(
             matches.append(regra)
 
     if len(matches) > 1:
-        raise HTTPException(
-            409,
-            f"Mais de uma regra de comissão corresponde à competência {competencia.isoformat()} para a cota {cota['id']}",
-        )
+        # Mais de uma regra aponta para a mesma competência.
+        # Isso indica sobreposição na configuração de cronograma (ex.: adesao+0 e
+        # proxima_cobranca+0 caindo no mesmo mês). Usamos a regra de menor ordem
+        # em vez de bloquear a operação — o usuário pode corrigir a config depois.
+        matches.sort(key=lambda r: int(r.get("ordem") or 0))
+        return matches[0]
     return matches[0] if matches else None
 
 

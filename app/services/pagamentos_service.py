@@ -722,10 +722,12 @@ def gerar_cronograma_pagamentos_contrato(
             continue
         competencia_key = competencia.isoformat()
         if competencia_key in competencias_vistas:
-            raise HTTPException(
-                409,
-                f"Mais de uma regra comercial caiu na mesma competencia {competencia_key}. Revise o cronograma configurado.",
-            )
+            # Sobreposição de datas: duas regras resolvem para o mesmo mês.
+            # Isso indica configuração inconsistente (ex.: adesao+0 e proxima_cobranca+0
+            # apontando para o mesmo mês). A primeira regra (por ordem) já foi processada,
+            # então pulamos esta para não criar parcelas duplicadas.
+            # O usuário deve corrigir as regras de comissão para eliminar a sobreposição.
+            continue
         competencias_vistas.add(competencia_key)
 
         percentual = Decimal(str(regra.get("percentual_comissao") or 0))
