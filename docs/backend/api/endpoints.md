@@ -44,7 +44,7 @@ Resposta:
 
 ### `GET /financeiro/contratos-options`
 
-Lista contratos elegiveis para operacao manual de pagamentos no tenant autenticado.
+Lista contratos/cotas elegiveis para operacao financeira e configuracao operacional de comissao no tenant autenticado.
 
 Autenticacao:
 
@@ -59,7 +59,37 @@ Regras:
 
 - cruza `X-Org-Id` com o contexto autenticado;
 - retorna apenas contratos da org autenticada;
-- inclui resumo da cota e do cliente para popular seletores operacionais.
+- inclui resumo da cota e do cliente para popular seletores operacionais;
+- inclui contexto comercial:
+  - status do contrato;
+  - status da cota;
+  - comissao ativa;
+  - percentual da comissao;
+  - modo da comissao;
+  - parceiro vinculado.
+
+### `PUT /financeiro/contratos/{contrato_id}/numero`
+
+Atualiza o numero do contrato dentro do fluxo operacional financeiro.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Payload:
+
+- `numero_contrato`
+
+Regras:
+
+- valida pertencimento do contrato a org autenticada;
+- bloqueia operacao cross-org;
+- bloqueia numero duplicado dentro da mesma org.
 
 ### `POST /financeiro/pagamentos`
 

@@ -38,6 +38,7 @@ def _get_contract_or_404(supa: Client, org_id: str, contrato_id: str) -> Dict[st
             cota_id,
             cotas (
                 id,
+                status,
                 numero_cota,
                 grupo_codigo,
                 valor_carta,
@@ -300,6 +301,7 @@ def list_financeiro_contrato_options(
             cota_id,
             cotas (
                 id,
+                status,
                 numero_cota,
                 grupo_codigo,
                 valor_carta,
@@ -356,6 +358,7 @@ def list_financeiro_contrato_options(
                 "contrato_id": row["id"],
                 "contrato_numero": row.get("numero"),
                 "contrato_status": row.get("status"),
+                "cota_status": cota.get("status"),
                 "cota_id": row.get("cota_id"),
                 "numero_cota": cota.get("numero_cota"),
                 "grupo_codigo": cota.get("grupo_codigo"),
@@ -372,3 +375,52 @@ def list_financeiro_contrato_options(
         )
 
     return {"ok": True, "items": items}
+
+
+def update_contrato_numero(
+    supa: Client,
+    *,
+    org_id: str,
+    contrato_id: str,
+    actor_id: str,
+    numero_contrato: str,
+) -> Dict[str, Any]:
+    contrato = _get_contract_or_404(supa, org_id, contrato_id)
+    numero = (numero_contrato or "").strip()
+    if not numero:
+        raise HTTPException(400, "Numero do contrato e obrigatorio")
+
+    duplicate_resp = (
+        supa.table("contratos")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("numero", numero)
+        .neq("id", contrato_id)
+        .limit(1)
+        .execute()
+    )
+    if _safe_rows(duplicate_resp):
+        raise HTTPException(409, "Ja existe outro contrato com esse numero nesta organizacao")
+
+    payload = {
+        "numero": numero,
+    }
+
+    updated_resp = (
+        supa.table("contratos")
+        .update(payload)
+        .eq("org_id", org_id)
+        .eq("id", contrato["id"])
+        .execute()
+    )
+    updated = _safe_one(updated_resp)
+    if not updated:
+        raise HTTPException(500, "Erro ao atualizar numero do contrato")
+
+    return {
+        "ok": True,
+        "item": {
+            "contrato_id": updated["id"],
+            "contrato_numero": updated.get("numero"),
+        },
+    }

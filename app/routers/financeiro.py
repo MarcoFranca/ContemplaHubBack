@@ -5,6 +5,7 @@ from supabase import Client
 
 from app.deps import get_supabase_admin
 from app.schemas.financeiro import (
+    ContratoNumeroUpdateIn,
     FinanceiroContratoOptionsResponse,
     PagamentoListResponse,
     PagamentoUpsertIn,
@@ -16,6 +17,7 @@ from app.services.pagamentos_service import (
     list_financeiro_contrato_options,
     list_pagamentos_by_contrato,
     list_pagamentos_by_cota,
+    update_contrato_numero,
     update_pagamento,
 )
 
@@ -89,3 +91,21 @@ def get_pagamentos_cota(
 ):
     org_id = _resolve_org_id(ctx, x_org_id)
     return list_pagamentos_by_cota(supa, org_id=org_id, cota_id=cota_id)
+
+
+@router.put("/contratos/{contrato_id}/numero")
+def put_contrato_numero(
+    contrato_id: str,
+    body: ContratoNumeroUpdateIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return update_contrato_numero(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        actor_id=ctx.user_id,
+        numero_contrato=body.numero_contrato,
+    )

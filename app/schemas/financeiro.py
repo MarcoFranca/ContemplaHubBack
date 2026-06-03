@@ -57,6 +57,7 @@ class FinanceiroContratoOption(BaseModel):
     contrato_id: str
     contrato_numero: Optional[str] = None
     contrato_status: Optional[str] = None
+    cota_status: Optional[str] = None
     cota_id: str
     numero_cota: Optional[str] = None
     grupo_codigo: Optional[str] = None
@@ -74,3 +75,7 @@ class FinanceiroContratoOption(BaseModel):
 class FinanceiroContratoOptionsResponse(BaseModel):
     ok: bool = True
     items: list[FinanceiroContratoOption] = Field(default_factory=list)
+
+
+class ContratoNumeroUpdateIn(BaseModel):
+    numero_contrato: str = Field(min_length=1, max_length=120)

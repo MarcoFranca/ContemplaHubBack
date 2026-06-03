@@ -2,7 +2,10 @@
 
 ## Responsabilidade
 
-O modulo financeiro operacional registra pagamentos manuais e alimenta o motor de competencias e comissoes.
+O modulo financeiro operacional agora cobre duas camadas complementares:
+
+- operacao de pagamentos em `public.pagamentos`;
+- orquestracao operacional da tela de comissao em `/app/financeiro/pagamentos`.
 
 Responsabilidades atuais:
 
@@ -10,6 +13,7 @@ Responsabilidades atuais:
 - editar pagamento operacional
 - listar pagamentos por contrato
 - listar pagamentos por cota
+- atualizar numero de contrato sem sair do fluxo financeiro
 - listar contratos com contexto operacional para o frontend:
   - cliente
   - cota
@@ -17,9 +21,15 @@ Responsabilidades atuais:
   - administradora
   - comissao ativa
   - parceiro vinculado
+- status do contrato e da cota
 - reaproveitar o motor de competencias existente para:
   - atualizar `cota_pagamento_competencias`
   - disparar geracao de comissao
+- reaproveitar a fonte de verdade comercial da comissao:
+  - `cota_comissao_config`
+  - `cota_comissao_regras`
+  - `cota_comissao_parceiros`
+- permitir previsao segura do cronograma via projeção do backend, sem gerar lancamentos financeiros massivos
 
 ## Principais pontos de codigo
 
@@ -40,10 +50,14 @@ Responsabilidades atuais:
 - `app/services/comissao_competencia_service.py`
   - `processar_pagamento_para_comissao`
   - `upsert_competencia_from_pagamento`
+- `app/services/comissao_service.py`
+  - `upsert_config_for_cota`
+  - `generate_lancamentos_for_contrato` (projecao segura)
 
 ## Endpoints principais
 
 - `GET /financeiro/contratos-options`
+- `PUT /financeiro/contratos/{contrato_id}/numero`
 - `POST /financeiro/pagamentos`
 - `PUT /financeiro/pagamentos/{pagamento_id}`
 - `GET /financeiro/contratos/{contrato_id}/pagamentos`
@@ -58,3 +72,9 @@ Responsabilidades atuais:
 - nao duplica logica do motor de comissao;
 - registra `payload.source_module = financeiro_operacional` para rastreabilidade.
 - pagamentos com `origem = manual` passam a valer como entrada financeira elegivel para competencia/comissao, desde que o status final do pagamento permita liberacao.
+- a tela `/app/financeiro/pagamentos` deixou de ser um CRUD puro de parcelas e passou a operar o fluxo:
+  - carta/cota vendida
+  - configuracao da comissao
+  - cronograma previsto
+  - parceiro/repasse
+  - consulta dos lancamentos financeiros ja gerados por competencia
