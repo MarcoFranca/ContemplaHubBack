@@ -147,6 +147,67 @@ Regras:
 - nao permite operacao cross-org;
 - reaproveita o mesmo pipeline de competencia e comissao apos o update;
 - se o status deixar de ser `pago`, limpa `pago_em`.
+- aceita `inadimplente` como status operacional para bloquear a comissao daquela competencia.
+
+### `POST /financeiro/contratos/{contrato_id}/cronograma`
+
+Confirma o cronograma operacional da comissao e persiste as parcelas previstas em `public.pagamentos`.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Regras:
+
+- usa a configuracao oficial de `cota_comissao_config`, `cota_comissao_regras` e `cota_comissao_parceiros`;
+- gera ou atualiza pagamentos previstos por competencia;
+- nao sobrescreve pagamentos ja pagos de forma destrutiva;
+- reprocessa `cota_pagamento_competencias` e `comissao_lancamentos` usando o motor existente;
+- cancela parcelas previstas antigas que sairem do cronograma apos reconfiguracao.
+
+### `POST /financeiro/pagamentos/{pagamento_id}/pular`
+
+Pula manualmente a competencia selecionada e empurra as parcelas futuras para frente.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Regras:
+
+- atua apenas em parcelas do cronograma operacional da comissao;
+- nao move parcelas ja pagas ou canceladas;
+- rejeita conflito com competencias fechadas;
+- reprocessa competencia e comissao apos o deslocamento.
+
+### `POST /financeiro/pagamentos/{pagamento_id}/cancelar-futuro`
+
+Cancela a parcela selecionada e todas as futuras do cronograma operacional da carta.
+
+Autenticacao:
+
+- manager autenticado
+
+Headers:
+
+- `Authorization: Bearer <token>`
+- `X-Org-Id`
+
+Regras:
+
+- preserva parcelas ja pagas;
+- interrompe os recebimentos futuros da carta;
+- reprocessa competencia e comissao apos o cancelamento.
 
 ### `GET /financeiro/contratos/{contrato_id}/pagamentos`
 

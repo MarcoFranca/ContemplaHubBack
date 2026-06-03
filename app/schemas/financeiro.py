@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-PagamentoStatus = Literal["previsto", "emitido", "pago", "atrasado", "cancelado"]
+PagamentoStatus = Literal["previsto", "emitido", "pago", "atrasado", "inadimplente", "cancelado"]
 PagamentoOrigem = Literal["parcela", "adesao", "comissao", "taxa", "manual"]
 PagamentoTipo = Literal["parcela_mensal", "lance", "taxa", "outro"]
 
@@ -45,6 +45,16 @@ class PagamentoOut(BaseModel):
     origem: Optional[str] = None
     observacoes: Optional[str] = None
     payload: dict = Field(default_factory=dict)
+    competencia_id: Optional[str] = None
+    competencia_status: Optional[str] = None
+    gera_comissao: Optional[bool] = None
+    participou_assembleia: Optional[bool] = None
+    lancamentos_total: int = 0
+    lancamentos_previstos: int = 0
+    lancamentos_disponiveis: int = 0
+    lancamentos_pagos: int = 0
+    lancamentos_cancelados: int = 0
+    repasses_pendentes: int = 0
 
 
 class PagamentoListResponse(BaseModel):
@@ -81,3 +91,20 @@ class FinanceiroContratoOptionsResponse(BaseModel):
 
 class ContratoNumeroUpdateIn(BaseModel):
     numero_contrato: str = Field(min_length=1, max_length=120)
+
+
+class CronogramaContratoResponse(BaseModel):
+    ok: bool = True
+    contrato_id: str
+    pagamentos_processados: int = 0
+    pagamentos_criados: int = 0
+    pagamentos_atualizados: int = 0
+    pagamentos_cancelados: int = 0
+    competencias_processadas: int = 0
+
+
+class PagamentoOperacaoResponse(BaseModel):
+    ok: bool = True
+    pagamento_id: str
+    pagamentos_afetados: int = 0
+    message: Optional[str] = None

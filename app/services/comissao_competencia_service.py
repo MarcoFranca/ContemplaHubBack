@@ -123,6 +123,24 @@ def fetch_competencias_contrato(supa: Client, org_id: str, contrato_id: str) -> 
     return _safe_rows(resp)
 
 
+def _find_competencia_by_pagamento_id(
+    supa: Client,
+    *,
+    org_id: str,
+    pagamento_id: str,
+) -> Optional[Dict[str, Any]]:
+    resp = (
+        supa.table("cota_pagamento_competencias")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("pagamento_id", pagamento_id)
+        .limit(1)
+        .execute()
+    )
+    rows = _safe_rows(resp)
+    return rows[0] if rows else None
+
+
 def calc_participou_assembleia(
     *,
     competencia: date,
@@ -180,6 +198,58 @@ def _upsert_competencia_by_cota_competencia(
     if not rows:
         raise HTTPException(500, "Erro ao criar competência de pagamento")
     return rows[0]
+
+
+def _release_stale_competencia_for_pagamento(
+    supa: Client,
+    *,
+    org_id: str,
+    pagamento_id: str,
+    competencia_destino: date,
+) -> Optional[Dict[str, Any]]:
+    current = _find_competencia_by_pagamento_id(
+        supa,
+        org_id=org_id,
+        pagamento_id=pagamento_id,
+    )
+    if not current:
+        return None
+
+    competencia_atual = parse_date(current.get("competencia"))
+    if competencia_atual == competencia_destino:
+        return current
+
+    payload = {
+        "tem_boleto": False,
+        "boleto_previsto_em": None,
+        "boleto_valor": None,
+        "pagamento_id": None,
+        "pago": False,
+        "pago_em": None,
+        "valor_pago": None,
+        "vencimento": None,
+        "pago_no_prazo": None,
+        "participou_assembleia": False,
+        "motivo_nao_participacao": "Pagamento reprogramado para outra competencia.",
+        "gera_comissao": False,
+        "status": "sem_boleto",
+        "payload": {
+            **(current.get("payload") or {}),
+            "origem": "backend_pagamentos",
+            "status_pagamento": "reprogramado",
+            "motivo_reprogramacao": "Pagamento movido para outra competencia operacional.",
+            "pagamento_id_origem": pagamento_id,
+        },
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    updated = (
+        supa.table("cota_pagamento_competencias")
+        .update(payload)
+        .eq("org_id", org_id)
+        .eq("id", current["id"])
+        .execute()
+    )
+    return _safe_one(updated) or {**current, **payload}
 
 
 def fetch_active_cota_partners(supa: Client, org_id: str, cota_id: str) -> List[Dict[str, Any]]:
@@ -662,6 +732,12 @@ def upsert_competencia_from_pagamento(
     origem = pagamento.get("origem") or "parcela"
     status_pagamento = (pagamento.get("status") or "previsto").lower()
     tem_boleto = origem in {"parcela", "manual"}
+    stale_comp = _release_stale_competencia_for_pagamento(
+        supa,
+        org_id=org_id,
+        pagamento_id=pagamento_id,
+        competencia_destino=competencia,
+    )
 
     pago = status_pagamento == "pago" or pago_em is not None
     pago_no_prazo = None
@@ -728,6 +804,14 @@ def upsert_competencia_from_pagamento(
         competencia=competencia,
         payload=payload,
     )
+
+    if stale_comp and stale_comp.get("id") != comp.get("id"):
+        processar_comissao_competencia(
+            supa,
+            org_id=org_id,
+            competencia_id=stale_comp["id"],
+            actor_id=actor_id,
+        )
 
     insert_audit_log(
         supa,

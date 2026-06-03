@@ -6,17 +6,22 @@ from supabase import Client
 from app.deps import get_supabase_admin
 from app.schemas.financeiro import (
     ContratoNumeroUpdateIn,
+    CronogramaContratoResponse,
     FinanceiroContratoOptionsResponse,
     PagamentoListResponse,
+    PagamentoOperacaoResponse,
     PagamentoUpsertIn,
 )
 from app.security.auth import AuthContext
 from app.security.permissions import require_manager
 from app.services.pagamentos_service import (
+    cancelar_pagamentos_futuros,
     create_pagamento,
+    gerar_cronograma_pagamentos_contrato,
     list_financeiro_contrato_options,
     list_pagamentos_by_contrato,
     list_pagamentos_by_cota,
+    pular_competencia_pagamento,
     update_contrato_numero,
     update_pagamento,
 )
@@ -53,6 +58,22 @@ def post_pagamento(
     return create_pagamento(supa, org_id=org_id, actor_id=ctx.user_id, body=body)
 
 
+@router.post("/contratos/{contrato_id}/cronograma", response_model=CronogramaContratoResponse)
+def post_cronograma_contrato(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return gerar_cronograma_pagamentos_contrato(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        actor_id=ctx.user_id,
+    )
+
+
 @router.put("/pagamentos/{pagamento_id}")
 def put_pagamento(
     pagamento_id: str,
@@ -68,6 +89,38 @@ def put_pagamento(
         actor_id=ctx.user_id,
         pagamento_id=pagamento_id,
         body=body,
+    )
+
+
+@router.post("/pagamentos/{pagamento_id}/pular", response_model=PagamentoOperacaoResponse)
+def post_pular_pagamento(
+    pagamento_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return pular_competencia_pagamento(
+        supa,
+        org_id=org_id,
+        pagamento_id=pagamento_id,
+        actor_id=ctx.user_id,
+    )
+
+
+@router.post("/pagamentos/{pagamento_id}/cancelar-futuro", response_model=PagamentoOperacaoResponse)
+def post_cancelar_futuro_pagamento(
+    pagamento_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return cancelar_pagamentos_futuros(
+        supa,
+        org_id=org_id,
+        pagamento_id=pagamento_id,
+        actor_id=ctx.user_id,
     )
 
 
