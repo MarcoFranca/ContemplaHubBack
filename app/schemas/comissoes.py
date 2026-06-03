@@ -160,7 +160,8 @@ class GerarLancamentosIn(BaseModel):
 
 
 class LancamentoStatusUpdateIn(BaseModel):
-    status: Literal["disponivel", "pago", "cancelado"]
+    # "previsto" é aceito para reverter um lançamento marcado incorretamente.
+    status: Literal["previsto", "disponivel", "pago", "cancelado"]
     competencia_real: Optional[date] = None
     observacoes: Optional[str] = None
 

@@ -399,8 +399,15 @@ def atualizar_status_lancamento(
 ):
     org_id = require_org_id(x_org_id)
     lanc = get_org_record_or_404(supa, "comissao_lancamentos", org_id, lancamento_id)
-    if lanc.get("status") == "pago" and body.status != "pago":
+
+    # Bloqueia transições destrutivas a partir de "pago",
+    # exceto revert explícito para "previsto" (correção operacional).
+    if lanc.get("status") == "pago" and body.status not in ("pago", "previsto"):
         raise HTTPException(409, "Lançamento pago não pode ser alterado de forma destrutiva")
+
+    # Bloqueia revert quando o repasse do parceiro já foi pago.
+    if body.status == "previsto" and lanc.get("repasse_status") == "pago":
+        raise HTTPException(409, "Não é possível reverter: o repasse deste lançamento já foi pago ao parceiro")
 
     payload: Dict[str, Any] = {
         "status": body.status,
@@ -408,16 +415,26 @@ def atualizar_status_lancamento(
     }
     if body.competencia_real:
         payload["competencia_real"] = body.competencia_real.isoformat()
+
     if body.status == "pago":
         payload["pago_em"] = datetime.utcnow().isoformat()
         if lanc.get("beneficiario_tipo") == "parceiro":
             payload["repasse_status"] = lanc.get("repasse_status") or "pendente"
+
+    elif body.status == "previsto":
+        # Revert: limpa campos de pagamento para restaurar estado original.
+        payload["pago_em"] = None
+        if lanc.get("beneficiario_tipo") == "parceiro":
+            payload["repasse_status"] = "pendente"
+            payload["repasse_pago_em"] = None
+
     elif body.status == "cancelado" and lanc.get("beneficiario_tipo") == "parceiro":
         if lanc.get("repasse_status") == "pago":
             raise HTTPException(409, "Repasse já pago não pode ser cancelado por alteração destrutiva do lançamento")
         payload["repasse_status"] = "cancelado"
         payload["repasse_previsto_em"] = None
         payload["repasse_pago_em"] = None
+
     if body.observacoes is not None:
         payload["observacoes"] = body.observacoes
 
