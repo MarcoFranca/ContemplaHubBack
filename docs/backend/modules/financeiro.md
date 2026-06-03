@@ -15,9 +15,13 @@ Responsabilidades atuais:
 - listar pagamentos por cota
 - atualizar numero de contrato sem sair do fluxo financeiro
 - listar contratos com contexto operacional para o frontend:
-  - cliente
-  - cota
-  - valor da carta
+- listar cartas/cotas mesmo sem contrato completo:
+  - com contrato existente;
+  - com numero pendente;
+  - sem contrato ainda cadastrado;
+- cliente
+- cota
+- valor da carta
   - administradora
   - comissao ativa
   - parceiro vinculado
@@ -78,3 +82,4 @@ Responsabilidades atuais:
   - cronograma previsto
   - parceiro/repasse
   - consulta dos lancamentos financeiros ja gerados por competencia
+- a selecao operacional nasce da `cota`; quando nao existe contrato, a carta continua aparecendo para configuracao, mas projecao definitiva e lancamentos reais continuam dependentes do contrato.

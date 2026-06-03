@@ -291,32 +291,41 @@ def list_financeiro_contrato_options(
     *,
     org_id: str,
 ) -> Dict[str, Any]:
-    resp = (
-        supa.table("contratos")
+    cotas_resp = (
+        supa.table("cotas")
         .select(
             """
             id,
-            numero,
             status,
-            cota_id,
-            cotas (
-                id,
-                status,
-                numero_cota,
-                grupo_codigo,
-                valor_carta,
-                administradora_id,
-                administradoras ( id, nome ),
-                lead_id,
-                leads ( id, nome )
-            )
+            numero_cota,
+            grupo_codigo,
+            valor_carta,
+            administradora_id,
+            administradoras ( id, nome ),
+            lead_id,
+            leads ( id, nome )
             """
         )
         .eq("org_id", org_id)
         .order("created_at", desc=True)
         .execute()
     )
-    contratos = _safe_rows(resp)
+    cotas = _safe_rows(cotas_resp)
+
+    contratos_resp = (
+        supa.table("contratos")
+        .select("id, numero, status, cota_id, created_at")
+        .eq("org_id", org_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    contratos = _safe_rows(contratos_resp)
+    contrato_by_cota: Dict[str, Dict[str, Any]] = {}
+    for contrato in contratos:
+        cota_id = contrato.get("cota_id")
+        if not cota_id or cota_id in contrato_by_cota:
+            continue
+        contrato_by_cota[cota_id] = contrato
 
     config_resp = (
         supa.table("cota_comissao_config")
@@ -347,19 +356,22 @@ def list_financeiro_contrato_options(
         parceiros_by_cota.setdefault(cota_id, row)
 
     items = []
-    for row in contratos:
-        cota = row.get("cotas") or {}
+    for cota in cotas:
         lead = cota.get("leads") or {}
         administradora = cota.get("administradoras") or {}
-        config = config_by_cota.get(row.get("cota_id"))
-        parceiro = parceiros_by_cota.get(row.get("cota_id"))
+        contrato = contrato_by_cota.get(cota.get("id"))
+        config = config_by_cota.get(cota.get("id"))
+        parceiro = parceiros_by_cota.get(cota.get("id"))
+        selection_id = contrato["id"] if contrato else f"cota:{cota['id']}"
         items.append(
             {
-                "contrato_id": row["id"],
-                "contrato_numero": row.get("numero"),
-                "contrato_status": row.get("status"),
+                "selection_id": selection_id,
+                "tem_contrato": bool(contrato),
+                "contrato_id": contrato["id"] if contrato else "",
+                "contrato_numero": (contrato or {}).get("numero"),
+                "contrato_status": (contrato or {}).get("status"),
                 "cota_status": cota.get("status"),
-                "cota_id": row.get("cota_id"),
+                "cota_id": cota.get("id"),
                 "numero_cota": cota.get("numero_cota"),
                 "grupo_codigo": cota.get("grupo_codigo"),
                 "valor_carta": cota.get("valor_carta"),

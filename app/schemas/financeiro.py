@@ -54,6 +54,8 @@ class PagamentoListResponse(BaseModel):
 
 
 class FinanceiroContratoOption(BaseModel):
+    selection_id: str
+    tem_contrato: bool = False
     contrato_id: str
     contrato_numero: Optional[str] = None
     contrato_status: Optional[str] = None
