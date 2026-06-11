@@ -1006,6 +1006,25 @@ Regras:
 - `alocado` e `contemplado` movem lead para `pos_venda`;
 - `cancelado` move lead para `perdido`.
 
+### `PATCH /contracts/{contract_id}/dados`
+
+Atualiza dados cadastrais do contrato (tabela `contratos`), fora do fluxo de status.
+
+Headers:
+
+- `X-Org-Id`
+
+Payload (`ContractDadosUpdateIn`, todos opcionais, `model_fields_set` define o que e atualizado):
+
+- `numero`
+- `data_assinatura`
+
+Regras:
+
+- exige ao menos um campo informado;
+- valida que o contrato pertence a `org_id` do header;
+- usado pelo sheet de edicao de dados da cota/contrato em `/app/contratos/[contratoId]`.
+
 ## Documentos de contrato
 
 Todas as rotas abaixo exigem `Authorization` e `AuthContext`.
@@ -1101,7 +1120,11 @@ Detalhe operacional da carta por competencia.
 
 ### `PATCH /lances/cartas/{cota_id}`
 
-Atualiza configuracao operacional da cota.
+Atualiza configuracao operacional da cota (`AtualizarCartaPayload`, `model_fields_set` define o que e atualizado).
+
+Campos suportados incluem: `grupo_codigo`, `numero_cota`, `produto`, `valor_carta`, `valor_parcela`, `parcela_reduzida`, `percentual_reducao`, `valor_parcela_sem_redutor`, `taxa_admin_percentual`, `taxa_admin_valor_mensal`, `observacoes`, `fundo_reserva_percentual`, `fundo_reserva_valor_mensal`, `seguro_prestamista_*`, `taxa_admin_antecipada_*`, `prazo`, `assembleia_dia`, `data_adesao`, `autorizacao_gestao`, `embutido_permitido`, `embutido_max_percent`, `fgts_permitido`, `tipo_lance_preferencial`, `estrategia`, `objetivo`, `opcoes_lance_fixo`.
+
+Usado tanto pelo `EditCartaSheet` (`/app/lances`) quanto pelo `EditCotaSheet` (`/app/contratos/[contratoId]`).
 
 ### `POST /lances/cartas/{cota_id}/controle-mensal`
 
