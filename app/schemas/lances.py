@@ -30,6 +30,12 @@ class AtualizarCartaPayload(BaseModel):
     produto: Optional[Produto] = None
     valor_carta: Optional[Decimal] = None
     valor_parcela: Optional[Decimal] = None
+    parcela_reduzida: Optional[bool] = None
+    percentual_reducao: Optional[Decimal] = None
+    valor_parcela_sem_redutor: Optional[Decimal] = None
+    taxa_admin_percentual: Optional[Decimal] = None
+    taxa_admin_valor_mensal: Optional[Decimal] = None
+    observacoes: Optional[str] = None
     fundo_reserva_percentual: Optional[Decimal] = None
     fundo_reserva_valor_mensal: Optional[Decimal] = None
     seguro_prestamista_ativo: Optional[bool] = None

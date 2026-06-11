@@ -168,6 +168,17 @@ class ContractStatusUpdateIn(BaseModel):
     observacao: Optional[str] = None
 
 
+class ContractDadosUpdateIn(BaseModel):
+    numero: Optional[str] = None
+    data_assinatura: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_non_empty_payload(self) -> "ContractDadosUpdateIn":
+        if not self.model_fields_set:
+            raise ValueError("Informe ao menos um campo para atualização")
+        return self
+
+
 def _parse_money(raw: Optional[str]) -> Optional[float]:
     if not raw:
         return None
@@ -1000,3 +1011,46 @@ def update_contract_status(
         "lead_afetado": lead_id,
         "lead_movido_para": lead_stage_target,
     }
+
+
+@router.patch("/{contract_id}/dados")
+def update_contract_dados(
+    contract_id: str,
+    body: ContractDadosUpdateIn,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _ensure_org_header(x_org_id)
+
+    resp = (
+        supa.table("contratos")
+        .select("id, org_id")
+        .eq("id", contract_id)
+        .single()
+        .execute()
+    )
+    contrato = getattr(resp, "data", None)
+
+    if not contrato:
+        raise HTTPException(404, "Contrato não encontrado")
+
+    if contrato["org_id"] != org_id:
+        raise HTTPException(403, "Contrato pertence a outra organização")
+
+    fields = body.model_fields_set
+    update_payload: Dict[str, Any] = {}
+
+    if "numero" in fields:
+        update_payload["numero"] = body.numero
+
+    if "data_assinatura" in fields:
+        update_payload["data_assinatura"] = body.data_assinatura
+
+    (
+        supa.table("contratos")
+        .update(update_payload)
+        .eq("id", contract_id)
+        .execute()
+    )
+
+    return {"ok": True, "contrato_id": contract_id}

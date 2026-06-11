@@ -514,6 +514,24 @@ def atualizar_carta(
     if "valor_parcela" in fields:
         update_payload["valor_parcela"] = to_jsonable(payload.valor_parcela)
 
+    if "parcela_reduzida" in fields:
+        update_payload["parcela_reduzida"] = payload.parcela_reduzida
+
+    if "percentual_reducao" in fields:
+        update_payload["percentual_reducao"] = to_jsonable(payload.percentual_reducao)
+
+    if "valor_parcela_sem_redutor" in fields:
+        update_payload["valor_parcela_sem_redutor"] = to_jsonable(payload.valor_parcela_sem_redutor)
+
+    if "taxa_admin_percentual" in fields:
+        update_payload["taxa_admin_percentual"] = to_jsonable(payload.taxa_admin_percentual)
+
+    if "taxa_admin_valor_mensal" in fields:
+        update_payload["taxa_admin_valor_mensal"] = to_jsonable(payload.taxa_admin_valor_mensal)
+
+    if "observacoes" in fields:
+        update_payload["observacoes"] = payload.observacoes
+
     if "fundo_reserva_percentual" in fields:
         update_payload["fundo_reserva_percentual"] = to_jsonable(payload.fundo_reserva_percentual)
 
