@@ -86,6 +86,21 @@ Validacoes adicionais:
 - bloqueia duplicidade de contrato por numero dentro da organizacao;
 - bloqueia duplicidade operacional de cota por administradora, grupo e numero dentro da organizacao.
 
+### Completar cadastro de cota ja existente (`existing_cota_id`)
+
+`POST /contracts/register-existing` aceita um campo opcional `existing_cota_id`.
+
+Cenario de uso: a cota ja foi importada/cadastrada (ex.: importacao de carteira) mas ainda nao tem contrato formalizado. O usuario abre a cota pela carteira, completa os dados operacionais e formaliza o contrato usando o mesmo formulario de "registrar contrato existente".
+
+Diferencas de comportamento quando `existing_cota_id` e enviado:
+
+- valida que a cota pertence a `org_id` e ao `lead_id` do payload (`_ensure_cota_in_org`);
+- a checagem de duplicidade de cota (`administradora_id + grupo_codigo + numero_cota`) ignora a propria cota em edicao (`exclude_cota_id`), ja que ela legitimamente ja existe;
+- em vez de `INSERT` em `cotas`, executa `UPDATE` na cota informada (`_update_cota`), preservando o `id` original;
+- o restante do fluxo (contrato, comissao, lance fixo, carteira, parceiros) e identico ao cadastro de cota nova.
+
+Sem `existing_cota_id`, o comportamento permanece o de sempre (cria nova cota).
+
 Datas operacionais:
 
 - `data_assinatura` continua obrigatoria para o contrato;

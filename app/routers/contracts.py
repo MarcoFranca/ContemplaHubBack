@@ -119,6 +119,7 @@ class ContractFromLeadIn(ContractBaseIn):
 
 class RegisterExistingContractIn(ContractBaseIn):
     lead_id: str
+    existing_cota_id: Optional[str] = None
     prazo: int
     valor_parcela: str
     data_adesao: str
@@ -359,6 +360,48 @@ def _create_cota(supa: Client, *, payload: Dict[str, Any]) -> Dict[str, Any]:
     return cota_resp.data[0]
 
 
+def _ensure_cota_in_org(
+    supa: Client,
+    *,
+    cota_id: str,
+    org_id: str,
+    lead_id: str,
+) -> Dict[str, Any]:
+    resp = (
+        supa.table("cotas")
+        .select("id, org_id, lead_id")
+        .eq("id", cota_id)
+        .limit(1)
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        raise HTTPException(404, "Cota não encontrada")
+
+    cota = rows[0]
+    if cota.get("org_id") != org_id:
+        raise HTTPException(403, "Cota pertence a outra organização")
+    if cota.get("lead_id") != lead_id:
+        raise HTTPException(403, "Cota pertence a outro lead")
+    return cota
+
+
+def _update_cota(
+    supa: Client, *, cota_id: str, org_id: str, payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    cota_resp = (
+        supa.table("cotas")
+        .update(payload, returning="representation")
+        .eq("id", cota_id)
+        .eq("org_id", org_id)
+        .execute()
+    )
+    rows = getattr(cota_resp, "data", None) or []
+    if not rows:
+        raise HTTPException(500, "Erro ao atualizar cota")
+    return rows[0]
+
+
 def _save_opcoes_lance_fixo(
     supa: Client,
     *,
@@ -475,6 +518,7 @@ def _ensure_no_duplicate_operational_registration(
     grupo_codigo: str,
     numero_cota: str,
     numero_contrato: str,
+    exclude_cota_id: Optional[str] = None,
 ) -> None:
     contrato_resp = (
         supa.table("contratos")
@@ -504,6 +548,8 @@ def _ensure_no_duplicate_operational_registration(
     cotas = getattr(cota_resp, "data", None) or []
     if cotas:
         existing = cotas[0]
+        if exclude_cota_id and existing.get("id") == exclude_cota_id:
+            return
         if existing.get("lead_id") == lead_id:
             raise HTTPException(
                 409,
@@ -768,6 +814,15 @@ def register_existing_contract(
     )
     _ensure_parceiro_in_org(supa, parceiro_id=body.parceiro_id, org_id=org_id)
     _validate_opcoes_lance_fixo(body.opcoes_lance_fixo)
+
+    if body.existing_cota_id:
+        _ensure_cota_in_org(
+            supa,
+            cota_id=body.existing_cota_id,
+            org_id=org_id,
+            lead_id=body.lead_id,
+        )
+
     _ensure_no_duplicate_operational_registration(
         supa,
         org_id=org_id,
@@ -776,6 +831,7 @@ def register_existing_contract(
         grupo_codigo=body.grupo_codigo,
         numero_cota=body.numero_cota,
         numero_contrato=body.numero_contrato,
+        exclude_cota_id=body.existing_cota_id,
     )
 
     cota_payload = _build_cota_payload(
@@ -784,7 +840,16 @@ def register_existing_contract(
         lead_id=body.lead_id,
         cota_status=body.cota_situacao,
     )
-    cota = _create_cota(supa, payload=cota_payload)
+
+    if body.existing_cota_id:
+        cota = _update_cota(
+            supa,
+            cota_id=body.existing_cota_id,
+            org_id=org_id,
+            payload=cota_payload,
+        )
+    else:
+        cota = _create_cota(supa, payload=cota_payload)
     cota_id = cota["id"]
 
     _save_opcoes_lance_fixo(

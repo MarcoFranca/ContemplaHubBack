@@ -56,6 +56,10 @@ No fluxo `register-existing`:
   - pode ser global quando `administradoras.org_id` estiver nulo/vazio;
 - o cadastro nao preenche automaticamente `data_alocacao` ou `data_contemplacao` por simples inferencia a partir da assinatura do contrato.
 
+### Completar cadastro de cota ja existente sem contrato
+
+Quando `register-existing` recebe `existing_cota_id`, a cota informada nao e recriada: o payload normalizado e aplicado via `UPDATE` sobre a `cotas` existente (mesmo `id`, validada por `org_id` + `lead_id`). Esse e o caminho usado para "completar o cadastro" de uma cota que ja existe (por exemplo, vinda de importacao de carteira) mas ainda nao tem `contratos` associado.
+
 ### Atualizacao operacional da cota
 
 `PATCH /lances/cartas/{cota_id}`

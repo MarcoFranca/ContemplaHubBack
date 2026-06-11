@@ -953,6 +953,7 @@ Campos adicionais:
 - `cota_situacao`
 - `parceiro_id` opcional
 - `repasse_percentual_comissao` opcional
+- `existing_cota_id` opcional
 
 Validacoes:
 
@@ -962,6 +963,7 @@ Validacoes:
   - aceita administradora global, quando o registro nao estiver vinculado a uma organizacao especifica
   - rejeita administradora vinculada a outra organizacao
 - valida parceiro na `org_id`, quando informado
+- quando `existing_cota_id` e informado, valida que a cota pertence a `org_id` e ao `lead_id` informado
 - valida `contract_status` separadamente de `cota_situacao`
 - rejeita estados iniciais invalidos, por exemplo:
   - contrato `contemplado` com cota nao `contemplada`
@@ -971,6 +973,12 @@ Validacoes:
   - contrato duplicado por `numero_contrato` dentro da organizacao
   - cota duplicada por `administradora_id + grupo_codigo + numero_cota` dentro da organizacao
   - registro repetido do mesmo lead para a mesma combinacao operacional
+  - quando `existing_cota_id` e informado e corresponde exatamente a cota encontrada na checagem de duplicidade, essa checagem e ignorada (a cota em edicao nao conta como duplicata dela mesma)
+
+Efeitos:
+
+- sem `existing_cota_id`: cria uma nova `cotas` (comportamento padrao, igual a `from-lead`)
+- com `existing_cota_id`: atualiza a `cotas` existente (`UPDATE` por `id` + `org_id`) em vez de criar uma nova linha; o restante do fluxo (contrato, comissao, lance fixo, carteira, parceiros) segue igual
 
 Resposta:
 
