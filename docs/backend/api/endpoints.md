@@ -1303,6 +1303,8 @@ Cada item de `items` agora inclui (via join em `contratos`/`cotas`/`leads`):
 
 Usado nas telas de Operação mensal e Repasses para identificar a qual cliente/cota/grupo cada lançamento pertence.
 
+Além disso, para cada item com `beneficiario_tipo: "empresa"`, se existir(em) lançamento(s) `beneficiario_tipo: "parceiro"` com o mesmo `cota_id` e `ordem`, o item recebe um campo extra `repasse_parceiros`: lista de `{ nome, valor_bruto, valor_liquido, repasse_status }`, um por parceiro associado àquele evento/cota. `valor_bruto` do lançamento da empresa é o valor cheio recebido da operadora; `repasse_parceiros` representa o quanto disso deve ser repassado. Usado em Operação mensal para mostrar "bruto · a repassar · líquido empresa".
+
 #### `PATCH /comissoes/lancamentos/{lancamento_id}/status`
 
 Headers:

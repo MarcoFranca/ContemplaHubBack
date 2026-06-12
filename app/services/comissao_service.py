@@ -547,6 +547,36 @@ def fetch_lancamentos(supa: Client, org_id: str, **filters: Any) -> List[Dict[st
         row["numero_cota"] = cota.get("numero_cota")
         row["grupo_codigo"] = cota.get("grupo_codigo")
         row["cliente_nome"] = lead.get("nome")
+
+    empresa_keys = {
+        (row["cota_id"], row["ordem"])
+        for row in rows
+        if row.get("beneficiario_tipo") == "empresa"
+    }
+    if empresa_keys:
+        cota_ids = list({key[0] for key in empresa_keys})
+        parc_resp = (
+            supa.table("comissao_lancamentos")
+            .select("cota_id, ordem, valor_bruto, valor_liquido, repasse_status, parceiros_corretores(nome)")
+            .eq("org_id", org_id)
+            .eq("beneficiario_tipo", "parceiro")
+            .in_("cota_id", cota_ids)
+            .execute()
+        )
+        parc_map: Dict[Any, List[Dict[str, Any]]] = {}
+        for p in getattr(parc_resp, "data", None) or []:
+            key = (p["cota_id"], p["ordem"])
+            if key in empresa_keys:
+                parceiro = p.pop("parceiros_corretores", None) or {}
+                p["nome"] = parceiro.get("nome")
+                parc_map.setdefault(key, []).append(p)
+
+        for row in rows:
+            if row.get("beneficiario_tipo") == "empresa":
+                key = (row["cota_id"], row["ordem"])
+                if key in parc_map:
+                    row["repasse_parceiros"] = parc_map[key]
+
     return rows
 
 
