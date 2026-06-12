@@ -85,3 +85,17 @@ Responsabilidades atuais:
   - parceiro/repasse
   - consulta dos lancamentos financeiros ja gerados por competencia
 - a selecao operacional nasce da `cota`; quando nao existe contrato, a carta continua aparecendo para configuracao, mas cronograma persistido e lancamentos reais continuam dependentes do contrato.
+
+## Reprocessamento de cronograma e `comissao_lancamentos`
+
+- `_upsert_lancamento` (em `comissao_competencia_service.py`) localiza o lancamento existente por
+  `(contrato_id, ordem, beneficiario_tipo, parceiro_id)`, que e exatamente a constraint unica
+  `unq_comissao_lancamento_regra_benef` da tabela `comissao_lancamentos`.
+- Isso e necessario porque `competencia_id` e `regra_id` podem mudar quando a regra comercial e
+  reconfigurada (ex.: trocar de "a vista" para "parcelado em 12x" gera novas linhas em
+  `cota_comissao_regras` com novos ids, mas mantendo `ordem` 1..N). Buscar pelo `regra_id`/`competencia_id`
+  antigos faria o insert do novo lancamento colidir com a linha antiga (mesmo `ordem`/`beneficiario_tipo`),
+  retornando `23505 duplicate key value violates unique constraint`.
+- Ao reconfigurar a comissao de uma carta (numero de parcelas, parceiros, percentuais) e usar
+  "Reprocessar cronograma", o lancamento existente para o mesmo `ordem`/`beneficiario_tipo`/`parceiro_id`
+  e atualizado (remapeado para a nova `regra_id`/`competencia_id`), preservando historico de pagamento/repasse.
