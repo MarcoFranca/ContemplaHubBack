@@ -609,13 +609,16 @@ def _upsert_lancamento(
     org_id: str,
     payload: Dict[str, Any],
 ) -> Dict[str, Any]:
+    # O lookup precisa seguir a constraint unq_comissao_lancamento_regra_benef
+    # (contrato_id, ordem, beneficiario_tipo, parceiro_id), e não competencia_id/regra_id —
+    # esses podem mudar quando a regra de comissão é reconfigurada (ex.: à vista -> parcelado),
+    # e buscar pelos valores antigos faria o insert colidir com o lançamento já existente.
     query = (
         supa.table("comissao_lancamentos")
         .select("*")
         .eq("org_id", org_id)
         .eq("contrato_id", payload["contrato_id"])
-        .eq("competencia_id", payload["competencia_id"])
-        .eq("regra_id", payload["regra_id"])
+        .eq("ordem", payload["ordem"])
         .eq("beneficiario_tipo", payload["beneficiario_tipo"])
     )
 

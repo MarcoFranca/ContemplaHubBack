@@ -1352,7 +1352,11 @@ Cria ou atualiza acesso e envia convite Supabase.
 
 ### `POST /partner-users/{partner_user_id}/resend-invite`
 
-Reenvia convite.
+Reenvia convite/acesso ao parceiro via Supabase Auth.
+
+- tenta `invite_user_by_email` (fluxo de convite normal, usuário ainda não existe no Auth);
+- se o Supabase responder que o usuário já está registrado, faz fallback automático para `generate_link` com `type: "magiclink"`, reenviando um link de acesso para o usuário existente;
+- atualiza `invited_at`/`invite_sent_at`, reativa o acesso (`ativo=true`, limpa `disabled_at`/`disabled_reason`).
 
 ### `PATCH /partner-users/{partner_user_id}`
 

@@ -106,40 +106,16 @@ def _extract_auth_user_from_invite_response(resp: Any) -> tuple[Optional[str], O
     return user_id, user_email
 
 
-def _send_supabase_invite(
+def _send_magiclink(
     supa: Client,
     email: str,
     redirect_to: Optional[str],
     metadata: dict,
 ) -> tuple[Optional[str], Optional[str]]:
     try:
-        resp = supa.auth.admin.invite_user_by_email(
-            email,
-            {
-                "redirect_to": redirect_to,
-                "data": metadata,
-            },
-        )
-        return _extract_auth_user_from_invite_response(resp)
-    except TypeError:
-        try:
-            resp = supa.auth.admin.invite_user_by_email(
-                email=email,
-                options={
-                    "redirect_to": redirect_to,
-                    "data": metadata,
-                },
-            )
-            return _extract_auth_user_from_invite_response(resp)
-        except TypeError:
-            pass
-    except Exception as e:
-        raise HTTPException(400, f"Erro ao enviar convite do parceiro: {str(e)}")
-
-    try:
         resp = supa.auth.admin.generate_link(
             {
-                "type": "invite",
+                "type": "magiclink",
                 "email": email,
                 "options": {
                     "redirect_to": redirect_to,
@@ -149,18 +125,51 @@ def _send_supabase_invite(
         )
         return _extract_auth_user_from_invite_response(resp)
     except TypeError:
+        resp = supa.auth.admin.generate_link(
+            {
+                "type": "magiclink",
+                "email": email,
+                "redirect_to": redirect_to,
+                "data": metadata,
+            }
+        )
+        return _extract_auth_user_from_invite_response(resp)
+
+
+def _send_supabase_invite(
+    supa: Client,
+    email: str,
+    redirect_to: Optional[str],
+    metadata: dict,
+) -> tuple[Optional[str], Optional[str]]:
+    try:
         try:
-            resp = supa.auth.admin.generate_link(
+            resp = supa.auth.admin.invite_user_by_email(
+                email,
                 {
-                    "type": "invite",
-                    "email": email,
                     "redirect_to": redirect_to,
                     "data": metadata,
-                }
+                },
             )
             return _extract_auth_user_from_invite_response(resp)
-        except Exception as e:
-            raise HTTPException(400, f"Erro ao gerar link de convite do parceiro: {str(e)}")
+        except TypeError:
+            resp = supa.auth.admin.invite_user_by_email(
+                email=email,
+                options={
+                    "redirect_to": redirect_to,
+                    "data": metadata,
+                },
+            )
+            return _extract_auth_user_from_invite_response(resp)
+    except Exception as e:
+        if "already" not in str(e).lower():
+            raise HTTPException(400, f"Erro ao enviar convite do parceiro: {str(e)}")
+
+    # Usuário já registrado no Supabase Auth: convite "invite" não pode ser
+    # reenviado (Supabase recusa com "User already registered"). Nesse caso,
+    # reenviamos acesso via magic link, que funciona para usuários existentes.
+    try:
+        return _send_magiclink(supa, email=email, redirect_to=redirect_to, metadata=metadata)
     except Exception as e:
         raise HTTPException(400, f"Erro ao gerar link de convite do parceiro: {str(e)}")
 
