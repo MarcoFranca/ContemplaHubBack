@@ -519,7 +519,11 @@ def build_launches_payload(
 def fetch_lancamentos(supa: Client, org_id: str, **filters: Any) -> List[Dict[str, Any]]:
     query = (
         supa.table("comissao_lancamentos")
-        .select("*, parceiros_corretores(id, nome)")
+        .select(
+            "*, parceiros_corretores(id, nome),"
+            " contratos(numero),"
+            " cotas(numero_cota, grupo_codigo, leads(nome))"
+        )
         .eq("org_id", org_id)
     )
 
@@ -534,7 +538,16 @@ def fetch_lancamentos(supa: Client, org_id: str, **filters: Any) -> List[Dict[st
             query = query.eq(key, value)
 
     resp = query.order("competencia_prevista").order("ordem").execute()
-    return getattr(resp, "data", None) or []
+    rows = getattr(resp, "data", None) or []
+    for row in rows:
+        contrato = row.pop("contratos", None) or {}
+        cota = row.pop("cotas", None) or {}
+        lead = (cota or {}).get("leads") or {}
+        row["contrato_numero"] = contrato.get("numero")
+        row["numero_cota"] = cota.get("numero_cota")
+        row["grupo_codigo"] = cota.get("grupo_codigo")
+        row["cliente_nome"] = lead.get("nome")
+    return rows
 
 
 def summarize_lancamentos(lancamentos: List[Dict[str, Any]]) -> Dict[str, Any]:

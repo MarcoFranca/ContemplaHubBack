@@ -1294,6 +1294,15 @@ Filtros:
 - `competencia_de`
 - `competencia_ate`
 
+Cada item de `items` agora inclui (via join em `contratos`/`cotas`/`leads`):
+
+- `contrato_numero`
+- `numero_cota`
+- `grupo_codigo`
+- `cliente_nome`
+
+Usado nas telas de Operação mensal e Repasses para identificar a qual cliente/cota/grupo cada lançamento pertence.
+
 #### `PATCH /comissoes/lancamentos/{lancamento_id}/status`
 
 Headers:
