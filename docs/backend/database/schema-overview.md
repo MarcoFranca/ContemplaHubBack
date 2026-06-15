@@ -366,7 +366,7 @@ Campos observados no codigo:
 - `data_adesao`
 - `assembleia_dia`
 - `furo_meses`
-- `tipo_lance_preferencial`
+- `tipo_lance_preferencial` (enum `lance_tipo`: `livre`, `fixo`, `embutido`, `sorteio`)
 - `estrategia`
 - `objetivo`
 - `status`
