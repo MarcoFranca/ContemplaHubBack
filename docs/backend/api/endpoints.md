@@ -1110,7 +1110,7 @@ Query params:
 - `administradora_id`
 - `produto`
 - `somente_autorizadas`
-- `q`
+- `q` (busca por `numero_cota`, `grupo_codigo` ou nome do cliente/lead)
 - `page`
 - `page_size`
 
@@ -1303,7 +1303,7 @@ Cada item de `items` agora inclui (via join em `contratos`/`cotas`/`leads`):
 
 Usado nas telas de Operação mensal e Repasses para identificar a qual cliente/cota/grupo cada lançamento pertence.
 
-Além disso, para cada item com `beneficiario_tipo: "empresa"`, se existir(em) lançamento(s) `beneficiario_tipo: "parceiro"` com o mesmo `cota_id` e `ordem`, o item recebe um campo extra `repasse_parceiros`: lista de `{ nome, valor_bruto, valor_liquido, repasse_status }`, um por parceiro associado àquele evento/cota. `valor_bruto` do lançamento da empresa é o valor cheio recebido da operadora; `repasse_parceiros` representa o quanto disso deve ser repassado. Usado em Operação mensal para mostrar "bruto · a repassar · líquido empresa".
+Além disso, para cada item com `beneficiario_tipo: "empresa"`, se existir(em) lançamento(s) `beneficiario_tipo: "parceiro"` com o mesmo `cota_id` e `ordem`, o item recebe um campo extra `repasse_parceiros`: lista de `{ nome, valor_bruto, valor_liquido, repasse_status }`, um por parceiro associado àquele evento/cota. `valor_bruto` do lançamento da empresa é apenas a parte da empresa; o valor total recebido da operadora = `valor_bruto` (empresa) + soma de `repasse_parceiros[].valor_bruto`. Usado em Operação mensal para preencher as colunas "Total" (valor total recebido da operadora) e "Empresa" (o que fica para a empresa).
 
 #### `PATCH /comissoes/lancamentos/{lancamento_id}/status`
 

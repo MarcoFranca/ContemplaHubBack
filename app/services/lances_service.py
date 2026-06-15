@@ -689,9 +689,24 @@ def list_cartas_operacao(
     if somente_autorizadas:
         query = query.eq("autorizacao_gestao", True)
 
-    # busca simples pelo número da cota ou grupo
+    # busca pelo número da cota, grupo ou nome do cliente
     if q:
-        query = query.or_(f"numero_cota.ilike.%{q}%,grupo_codigo.ilike.%{q}%")
+        q_safe = q.replace(",", "").replace("(", "").replace(")", "").strip()
+
+        or_filters = [f"numero_cota.ilike.%{q_safe}%", f"grupo_codigo.ilike.%{q_safe}%"]
+
+        leads_resp = (
+            sb.table("leads")
+            .select("id")
+            .eq("org_id", profile.org_id)
+            .ilike("nome", f"%{q_safe}%")
+            .execute()
+        )
+        lead_ids = [row["id"] for row in (getattr(leads_resp, "data", None) or [])]
+        if lead_ids:
+            or_filters.append(f"lead_id.in.({','.join(lead_ids)})")
+
+        query = query.or_(",".join(or_filters))
 
     start = (page - 1) * page_size
     end = start + page_size - 1
