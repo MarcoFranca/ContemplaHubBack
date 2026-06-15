@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 CotaStatus = Literal["ativa", "contemplada", "cancelada"]
 StatusMes = Literal["pendente", "planejado", "feito", "sem_lance", "contemplada", "cancelada"]
 LanceTipo = Literal["livre", "fixo"]
+LancePreferencial = Literal["livre", "fixo", "embutido", "sorteio"]
 LanceBaseCalculo = Literal["saldo_devedor", "valor_carta"]
 ContemplacaoMotivo = Literal["lance", "sorteio", "outro"]
 Produto = Literal["imobiliario", "auto"]
@@ -54,7 +55,7 @@ class AtualizarCartaPayload(BaseModel):
     embutido_permitido: Optional[bool] = None
     embutido_max_percent: Optional[Decimal] = None
     fgts_permitido: Optional[bool] = None
-    tipo_lance_preferencial: Optional[Literal["livre", "fixo"]] = None
+    tipo_lance_preferencial: Optional[LancePreferencial] = None
     estrategia: Optional[str] = None
     objetivo: Optional[str] = None
     opcoes_lance_fixo: Optional[list[CotaLanceFixoOpcaoUpdateIn]] = None

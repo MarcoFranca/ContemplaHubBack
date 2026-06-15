@@ -1124,6 +1124,8 @@ Atualiza configuracao operacional da cota (`AtualizarCartaPayload`, `model_field
 
 Campos suportados incluem: `grupo_codigo`, `numero_cota`, `produto`, `valor_carta`, `valor_parcela`, `parcela_reduzida`, `percentual_reducao`, `valor_parcela_sem_redutor`, `taxa_admin_percentual`, `taxa_admin_valor_mensal`, `observacoes`, `fundo_reserva_percentual`, `fundo_reserva_valor_mensal`, `seguro_prestamista_*`, `taxa_admin_antecipada_*`, `prazo`, `assembleia_dia`, `data_adesao`, `autorizacao_gestao`, `embutido_permitido`, `embutido_max_percent`, `fgts_permitido`, `tipo_lance_preferencial`, `estrategia`, `objetivo`, `opcoes_lance_fixo`.
 
+`tipo_lance_preferencial` aceita `livre`, `fixo`, `embutido` ou `sorteio` (`LancePreferencial`), refletindo as 4 preferências de lance usadas na UI de lances.
+
 Usado tanto pelo `EditCartaSheet` (`/app/lances`) quanto pelo `EditCotaSheet` (`/app/contratos/[contratoId]`).
 
 ### `POST /lances/cartas/{cota_id}/controle-mensal`
