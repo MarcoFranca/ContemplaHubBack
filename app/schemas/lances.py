@@ -179,6 +179,7 @@ class LanceCartaListItem(BaseModel):
     taxa_admin_antecipada_valor_total: Optional[Decimal] = None
     taxa_admin_antecipada_valor_parcela: Optional[Decimal] = None
     prazo: Optional[int] = None
+    data_adesao: Optional[date] = None
     status: str
     autorizacao_gestao: bool
     embutido_permitido: bool

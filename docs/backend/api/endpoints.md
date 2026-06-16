@@ -1118,6 +1118,8 @@ Query params:
 - `page`
 - `page_size`
 
+Cada item (`LanceCartaListItem`) inclui `data_adesao` (necessário para o formulário "Editar carta" pré-carregar a data já cadastrada).
+
 ### `GET /lances/cartas/{cota_id}`
 
 Detalhe operacional da carta por competencia.
