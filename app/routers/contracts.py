@@ -5,6 +5,7 @@ from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, ConfigDict, AliasChoices, model_validator
 from supabase import Client
+from postgrest.exceptions import APIError
 
 from app.routers.carteira import ensure_carteira_cliente
 from app.deps import get_supabase_admin
@@ -502,6 +503,21 @@ def _maybe_link_parceiro_to_contract(
     if not parceiro_id:
         return 0
 
+    # Idempotente: o vínculo pode já existir (trigger/fluxo anterior). A constraint
+    # contrato_parceiros_unique (org_id, contrato_id, parceiro_id) faria o insert
+    # estourar 23505 e derrubar todo o cadastro com 500.
+    existing = (
+        supa.table("contrato_parceiros")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contract_id)
+        .eq("parceiro_id", parceiro_id)
+        .limit(1)
+        .execute()
+    )
+    if getattr(existing, "data", None):
+        return 0
+
     payload = {
         "org_id": org_id,
         "contrato_id": contract_id,
@@ -511,11 +527,18 @@ def _maybe_link_parceiro_to_contract(
         "observacoes": "Vínculo criado no cadastro inicial do contrato existente",
     }
 
-    resp = (
-        supa.table("contrato_parceiros")
-        .insert(payload, returning="representation")
-        .execute()
-    )
+    try:
+        resp = (
+            supa.table("contrato_parceiros")
+            .insert(payload, returning="representation")
+            .execute()
+        )
+    except APIError as exc:
+        # Corrida: outro processo criou o vínculo entre o select e o insert.
+        if getattr(exc, "code", None) == "23505":
+            return 0
+        raise
+
     rows = getattr(resp, "data", None) or []
     return len(rows)
 

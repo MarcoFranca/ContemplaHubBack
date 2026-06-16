@@ -929,6 +929,10 @@ Efeitos:
 
 Registra contrato ja existente.
 
+O vínculo opcional do parceiro (`contrato_parceiros`) é idempotente: se o vínculo
+(`org_id, contrato_id, parceiro_id`) já existir — por trigger/fluxo anterior — o cadastro
+não falha (antes estourava `23505` e retornava 500 mesmo com o contrato já criado).
+
 Headers:
 
 - `X-Org-Id`
