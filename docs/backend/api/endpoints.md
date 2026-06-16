@@ -1118,13 +1118,21 @@ Query params:
 
 Detalhe operacional da carta por competencia.
 
+`historico_lances` traz os lances registrados (tabela `lances`) **e** os meses marcados
+explicitamente como "sem lance" (registros de `cota_lance_competencias` com
+`status_mes = "sem_lance"`), ordenados por assembleia (mais recente primeiro). Os eventos
+"sem lance" vêm com `id` prefixado por `sem-lance-`, `origem = "sem_lance"`,
+`resultado = "sem_lance"` e `tipo/percentual/valor = null`. Isso permite distinguir, em
+análise posterior, sorteio intencional (mês marcado como "sem lance") de esquecimento
+(assembleia passada sem qualquer registro / `pendente`).
+
 ### `PATCH /lances/cartas/{cota_id}`
 
 Atualiza configuracao operacional da cota (`AtualizarCartaPayload`, `model_fields_set` define o que e atualizado).
 
 Campos suportados incluem: `grupo_codigo`, `numero_cota`, `produto`, `valor_carta`, `valor_parcela`, `parcela_reduzida`, `percentual_reducao`, `valor_parcela_sem_redutor`, `taxa_admin_percentual`, `taxa_admin_valor_mensal`, `observacoes`, `fundo_reserva_percentual`, `fundo_reserva_valor_mensal`, `seguro_prestamista_*`, `taxa_admin_antecipada_*`, `prazo`, `assembleia_dia`, `data_adesao`, `autorizacao_gestao`, `embutido_permitido`, `embutido_max_percent`, `fgts_permitido`, `tipo_lance_preferencial`, `estrategia`, `objetivo`, `opcoes_lance_fixo`.
 
-`tipo_lance_preferencial` aceita `livre`, `fixo`, `embutido` ou `sorteio` (`LancePreferencial`), refletindo as 4 preferências de lance usadas na UI de lances. A coluna `cotas.tipo_lance_preferencial` é o enum Postgres `lance_tipo`, que originalmente só tinha `livre`/`fixo` (salvar `embutido`/`sorteio` causava 500 por violação do enum); a migration `0012_add_sorteio_lance_tipo.sql` adicionou `embutido` e `sorteio` ao enum.
+`tipo_lance_preferencial` aceita `livre`, `fixo`, `embutido` ou `sorteio` (`LancePreferencial`), refletindo as 4 preferências de lance usadas na UI de lances. A coluna `cotas.tipo_lance_preferencial` era o enum Postgres `lance_tipo` (só `livre`/`fixo`); salvar `embutido`/`sorteio` causava 500 (22P02). Como o cache de schema do PostgREST não reconhecia novos valores do enum sem restart do serviço, a migration `0012_add_sorteio_lance_tipo.sql` converteu a coluna para `text` — a validação dos 4 valores passa a ser feita exclusivamente no backend via o Literal `LancePreferencial`.
 
 Usado tanto pelo `EditCartaSheet` (`/app/lances`) quanto pelo `EditCotaSheet` (`/app/contratos/[contratoId]`).
 

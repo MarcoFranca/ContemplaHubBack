@@ -357,6 +357,52 @@ def get_historico_lances(*, sb: Client, org_id: str, cota_id: str) -> list[dict[
     return getattr(resp, "data", None) or []
 
 
+def get_sem_lance_eventos(*, sb: Client, org_id: str, cota_id: str) -> list[dict[str, Any]]:
+    """Meses marcados explicitamente como "sem lance" (foi para sorteio intencionalmente).
+
+    Diferente de um mês esquecido (sem nenhum registro/`pendente`), o "sem lance" é uma
+    decisão operacional registrada em `cota_lance_competencias`. Exposto no histórico como
+    um evento para análise posterior (sorteio intencional x esquecimento).
+    """
+    resp = (
+        sb.table("cota_lance_competencias")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .eq("status_mes", "sem_lance")
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    eventos: list[dict[str, Any]] = []
+    for r in rows:
+        eventos.append(
+            {
+                "id": f"sem-lance-{r.get('id')}",
+                "assembleia_data": r.get("assembleia_prevista") or r.get("competencia"),
+                "tipo": None,
+                "percentual": None,
+                "valor": None,
+                "origem": "sem_lance",
+                "resultado": "sem_lance",
+                "pagamento": None,
+                "created_at": r.get("created_at"),
+                "observacoes": r.get("observacoes"),
+            }
+        )
+    return eventos
+
+
+def get_historico_completo(*, sb: Client, org_id: str, cota_id: str) -> list[dict[str, Any]]:
+    """Histórico de lances + meses sem lance, ordenado da assembleia mais recente para a mais antiga."""
+    historico = get_historico_lances(sb=sb, org_id=org_id, cota_id=cota_id)
+    historico += get_sem_lance_eventos(sb=sb, org_id=org_id, cota_id=cota_id)
+    historico.sort(
+        key=lambda x: (x.get("assembleia_data") or "", x.get("created_at") or ""),
+        reverse=True,
+    )
+    return historico
+
+
 def get_contemplacao(*, sb: Client, org_id: str, cota_id: str) -> Optional[dict[str, Any]]:
     resp = (
         sb.table("contemplacoes")
@@ -844,7 +890,7 @@ def get_carta_detalhe(
         "administradora": administradora,
         "regra_assembleia": regra,
         "controle_mes_atual": controle,
-        "historico_lances": get_historico_lances(sb=sb, org_id=profile.org_id, cota_id=cota_id),
+        "historico_lances": get_historico_completo(sb=sb, org_id=profile.org_id, cota_id=cota_id),
         "contemplacao": get_contemplacao(sb=sb, org_id=profile.org_id, cota_id=cota_id),
         "diagnostico": get_latest_diagnostico(sb=sb, org_id=profile.org_id, lead_id=cota.get("lead_id")),
         "opcoes_lance_fixo": get_opcoes_lance_fixo(

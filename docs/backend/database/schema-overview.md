@@ -366,7 +366,7 @@ Campos observados no codigo:
 - `data_adesao`
 - `assembleia_dia`
 - `furo_meses`
-- `tipo_lance_preferencial` (enum `lance_tipo`: `livre`, `fixo`, `embutido`, `sorteio`)
+- `tipo_lance_preferencial` (`text`; valores aceitos `livre`, `fixo`, `embutido`, `sorteio`, validados no backend via `LancePreferencial`. Era enum `lance_tipo`, convertido para `text` na migration `0012` por incompatibilidade com o cache de schema do PostgREST)
 - `estrategia`
 - `objetivo`
 - `status`
