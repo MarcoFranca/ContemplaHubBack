@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from supabase import Client
 
 from app.deps import get_supabase_admin
+from app.services.porto_pdf_parser import parse_porto_pdf
 from app.schemas.lances import (
     AtualizarCartaPayload,
     AtualizarResultadoLancePayload,
@@ -34,6 +35,40 @@ from app.services.lances_service import (
 )
 
 router = APIRouter(prefix="/lances", tags=["lances"])
+
+
+@router.post("/cartas/importar-documento")
+async def importar_documento_carta(
+    file: UploadFile = File(...),
+    profile: CurrentProfile = Depends(get_current_profile),
+):
+    """Extrai dados de um PDF da Porto (extrato ou proposta) para pré-preencher o cadastro.
+
+    Não persiste nada — devolve apenas a sugestão de campos para o usuário revisar.
+    """
+    if (file.content_type or "") not in ("application/pdf", "application/octet-stream") and not (
+        file.filename or ""
+    ).lower().endswith(".pdf"):
+        raise HTTPException(400, "Envie um arquivo PDF.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Arquivo vazio.")
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(400, "Arquivo muito grande (máx. 15MB).")
+
+    try:
+        resultado = parse_porto_pdf(content)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(422, f"Não foi possível ler o PDF: {exc}")
+
+    if not resultado.get("tipo_documento"):
+        raise HTTPException(
+            422,
+            "Documento não reconhecido como extrato ou proposta da Porto Seguro.",
+        )
+
+    return resultado
 
 
 @router.get("/cartas", response_model=LanceCartaListResponse)

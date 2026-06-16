@@ -1103,6 +1103,20 @@ Payload:
 
 Todas as rotas de lances usam autenticacao interna por `Authorization` e `profiles`.
 
+### `POST /lances/cartas/importar-documento`
+
+Recebe um PDF da Porto Seguro (multipart `file`) e devolve uma **sugestão** de campos para
+pré-preencher o cadastro/edição da carta. **Não persiste nada.**
+
+- Detecta o tipo: `extrato` (Extrato do Consorciado) ou `proposta` (Proposta/Contrato de
+  Participação). Outros documentos → 422.
+- Extração via `app/services/porto_pdf_parser.py` (lib `pypdf`), best-effort sobre o layout
+  fixo da Porto. Campos retornados em `dados` (ex.: `grupo_codigo`, `numero_cota`,
+  `numero_contrato`, `produto`, `valor_carta`, `valor_parcela`, `prazo`, `data_adesao`,
+  `taxa_admin_percentual`, `fundo_reserva_percentual`, `assembleia_dia`,
+  `embutido_max_percent`, `cliente_nome`, `cliente_cpf`, `cliente_nascimento`) + `avisos`.
+- Limite de 15MB. Requer autenticação (perfil/org).
+
 ### `GET /lances/cartas`
 
 Lista cartas/cotas para operacao de lances.
