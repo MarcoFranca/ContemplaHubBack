@@ -125,13 +125,17 @@ def _parse_extrato(text: str) -> dict[str, Any]:
 
     # "...45,0000 2,0000 IMV" → antes do produto vêm, em sequência,
     # "% Cob. Contemp" (redutor de parcela) e o "Fundo de Reserva".
-    m_taxas = re.search(r"(\d{1,3},\d{3,4})(\d{1,2},\d{3,4})(?:IMV|AUTO|IMOVEL|IMÓVEL)", text)
+    # Tolerante a espaços/quebras entre os números e o produto (a extração do PDF
+    # pode variar entre ambientes). Ex.: "45,0000 2,0000 IMV" ou "45,00002,0000IMV".
+    m_taxas = re.search(
+        r"(\d{1,3},\d{3,4})\s*(\d{1,2},\d{3,4})\s*(?:IMV|AUTO|IMOVEL|IMÓVEL)", text
+    )
     if m_taxas:
         out["percentual_reducao"] = _percent(m_taxas.group(1))
         out["fundo_reserva_percentual"] = _percent(m_taxas.group(2))
     else:
         out["fundo_reserva_percentual"] = _percent(
-            _search(r"(\d{1,2},\d{3,4})(?:IMV|AUTO|IMOVEL|IMÓVEL)", text)
+            _search(r"(\d{1,2},\d{3,4})\s*(?:IMV|AUTO|IMOVEL|IMÓVEL)", text)
         )
     if out.get("percentual_reducao"):
         out["parcela_reduzida"] = True
