@@ -120,8 +120,18 @@ def _parse_extrato(text: str) -> dict[str, Any]:
             _search(r"Ades[ãa�]?o[:\s]*?(\d{2}/\d{2}/\d{4})", text)
         )
 
-    # "...45,0000 2,0000 IMV" → fundo é o número logo antes do produto (2,0000)
-    out["fundo_reserva_percentual"] = _percent(_search(r"(\d{1,2},\d{3,4})(?:IMV|AUTO|IMOVEL)", text))
+    # "...45,0000 2,0000 IMV" → antes do produto vêm, em sequência,
+    # "% Cob. Contemp" (redutor de parcela) e o "Fundo de Reserva".
+    m_taxas = re.search(r"(\d{1,3},\d{3,4})(\d{1,2},\d{3,4})(?:IMV|AUTO|IMOVEL|IMÓVEL)", text)
+    if m_taxas:
+        out["percentual_reducao"] = _percent(m_taxas.group(1))
+        out["fundo_reserva_percentual"] = _percent(m_taxas.group(2))
+    else:
+        out["fundo_reserva_percentual"] = _percent(
+            _search(r"(\d{1,2},\d{3,4})(?:IMV|AUTO|IMOVEL|IMÓVEL)", text)
+        )
+    if out.get("percentual_reducao"):
+        out["parcela_reduzida"] = True
     out["produto"] = _produto_from(_search(r"\d(IMV|AUTO|IMOVEL|IMÓVEL)", text))
 
     out["prazo"] = int(_search(r"Prazo do grupo:\s*(\d+)\s*meses", text) or 0) or None
@@ -158,6 +168,10 @@ def _parse_proposta(text: str) -> dict[str, Any]:
         _search(r"([\d.,]+)%\s*TX\s+DE\s*\n\s*ADM\.\s+TOTAL", text)
     )
     out["fundo_reserva_percentual"] = _percent(_search(r"([\d.,]+)%\s*FUNDO", text))
+    reducao = _percent(_search(r"([\d.,]+)%\s*PERCENTUAL DE", text))
+    if reducao:
+        out["percentual_reducao"] = reducao
+        out["parcela_reduzida"] = True
     embutido = _percent(_search(r"([\d.,]+)%\s*LANCE EMBUTIDO", text))
     out["embutido_max_percent"] = embutido
     out["embutido_permitido"] = bool(embutido and embutido > 0)
