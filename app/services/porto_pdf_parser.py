@@ -6,6 +6,9 @@ Suporta dois documentos:
 
 Saída: dicionário de SUGESTÃO para pré-preencher o formulário. O usuário sempre revisa
 antes de salvar — extração é best-effort sobre o layout fixo da Porto.
+
+Inclui extração de taxa de administração, fundo de reserva e redutor de parcela
+(% cob. contemp.) além de grupo, cota, contrato, valores, prazo e data de adesão.
 """
 
 from __future__ import annotations
