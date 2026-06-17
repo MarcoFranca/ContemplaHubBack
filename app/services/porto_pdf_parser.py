@@ -102,17 +102,23 @@ def _parse_extrato(text: str) -> dict[str, Any]:
     out["cliente_cpf"] = _search(r"CPF/CNPJ:\s*(\d{11,14})", text)
     out["cliente_nascimento"] = _date_iso(_search(r"Nascimento:\s*(\d{2}/\d{2}/\d{4})", text))
 
-    # Bloco "Dados do Plano": valores aparecem concatenados em ordem fixa após "Valor Cr�dito:"
-    # Ex.: "Valor Cr�dito:19,5000 13/03/2026 20/03/2026 200 16/03/2026 45,0000 2,0000 IMV 700.000,00 008"
-    out["taxa_admin_percentual"] = _percent(
-        _search(r"Valor\s*Cr[éeê�]?dito:\s*([\d.,]+?)\d{2}/\d{2}/\d{4}", text)
+    # Bloco "Dados do Plano": no template a taxa de adm. (ex.: 19,5000) vem colada na
+    # data de adesão, seguida da 1ª assembleia e da data de venda. Ex.:
+    # "...19,5000 13/03/2026 20/03/2026 200 16/03/2026..."
+    # Âncora independente de acento (não depende da palavra "Crédito").
+    m_plano = re.search(
+        r"(\d{1,2},\d{3,4})\s*(\d{2}/\d{2}/\d{4})\s*(\d{2})/\d{2}/\d{4}",
+        text,
     )
-    out["data_adesao"] = _date_iso(
-        _search(r"Valor\s*Cr[éeê�]?dito:\s*[\d.,]+(\d{2}/\d{2}/\d{4})", text)
-    )
-    # 1ª assembleia (segunda data do bloco) → dia da assembleia
-    asm = _search(r"Valor\s*Cr[éeê�]?dito:\s*[\d.,]+\d{2}/\d{2}/\d{4}\s*(\d{2})/\d{2}/\d{4}", text)
-    out["assembleia_dia"] = int(asm) if asm else None
+    if m_plano:
+        out["taxa_admin_percentual"] = _percent(m_plano.group(1))
+        out["data_adesao"] = _date_iso(m_plano.group(2))
+        out["assembleia_dia"] = int(m_plano.group(3))
+    else:
+        # Fallback: data de adesão pela proximidade do rótulo "Ades"
+        out["data_adesao"] = _date_iso(
+            _search(r"Ades[ãa�]?o[:\s]*?(\d{2}/\d{2}/\d{4})", text)
+        )
 
     # "...45,0000 2,0000 IMV" → fundo é o número logo antes do produto (2,0000)
     out["fundo_reserva_percentual"] = _percent(_search(r"(\d{1,2},\d{3,4})(?:IMV|AUTO|IMOVEL)", text))
