@@ -55,6 +55,7 @@ class AtualizarCartaPayload(BaseModel):
     embutido_permitido: Optional[bool] = None
     embutido_max_percent: Optional[Decimal] = None
     fgts_permitido: Optional[bool] = None
+    forma_pagamento: Optional[Literal["cartao", "boleto", "debito_conta"]] = None
     tipo_lance_preferencial: Optional[LancePreferencial] = None
     estrategia: Optional[str] = None
     objetivo: Optional[str] = None

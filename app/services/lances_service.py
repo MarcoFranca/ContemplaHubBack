@@ -634,6 +634,9 @@ def atualizar_carta(
     if "fgts_permitido" in fields:
         update_payload["fgts_permitido"] = payload.fgts_permitido
 
+    if "forma_pagamento" in fields:
+        update_payload["forma_pagamento"] = payload.forma_pagamento
+
     if "tipo_lance_preferencial" in fields:
         update_payload["tipo_lance_preferencial"] = payload.tipo_lance_preferencial
 
