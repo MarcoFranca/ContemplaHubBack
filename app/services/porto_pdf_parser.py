@@ -104,6 +104,8 @@ def _parse_extrato(text: str) -> dict[str, Any]:
     out["cliente_nome"] = re.sub(r"\s{2,}", " ", nome).strip() if nome else None
     out["cliente_cpf"] = _search(r"CPF/CNPJ:\s*(\d{11,14})", text)
     out["cliente_nascimento"] = _date_iso(_search(r"Nascimento:\s*(\d{2}/\d{2}/\d{4})", text))
+    out["cliente_rg"] = _search(r"Documento:\s*(\d+)", text)
+    out["cliente_profissao"] = _search(r"Profiss\S*o:\s*([A-ZÀ-Ú][A-ZÀ-Ú ]+?)(?:Dados|\n)", text)
 
     # Bloco "Dados do Plano": no template a taxa de adm. (ex.: 19,5000) vem colada na
     # data de adesão, seguida da 1ª assembleia e da data de venda. Ex.:
@@ -163,10 +165,10 @@ def _parse_proposta(text: str) -> dict[str, Any]:
     out["cliente_cpf"] = _search(r"CPF\s*\n\s*(\d{3}\.\d{3}\.\d{3}-\d{2})", text)
     out["cliente_nascimento"] = _date_iso(_search(r"NASCIMENTO\s*\n\s*(\d{2}/\d{2}/\d{4})", text))
 
-    # Documento de identidade (RG)
-    out["cliente_rg"] = _search(r"N[ºo°]\s*DO\s*DOCUMENTO\s*\n\s*([\dA-Za-z.\-]+?)ORG[ÃA]O", text)
+    # Documento de identidade (RG) — âncoras ASCII (tolerante a acento na extração)
+    out["cliente_rg"] = _search(r"DO\s*DOCUMENTO\s*\n\s*([\dA-Za-z.\-]+?)\s*ORG", text)
     out["cliente_rg_orgao"] = _search(
-        r"ORG[ÃA]O\s*EMISSOR/UF\s*\n\s*(.+?)DATA\s*DE\s*EMISS", text
+        r"EMISSOR/UF\s*\n\s*(.+?)DATA\s*DE\s*EMISS", text
     )
     out["cliente_rg_emissao"] = _date_iso(
         _search(r"DATA\s*DE\s*EMISS[ÃA]O\s*\n\s*(\d{2}/\d{2}/\d{4})", text)
