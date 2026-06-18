@@ -165,26 +165,24 @@ def _parse_proposta(text: str) -> dict[str, Any]:
     out["cliente_cpf"] = _search(r"CPF\s*\n\s*(\d{3}\.\d{3}\.\d{3}-\d{2})", text)
     out["cliente_nascimento"] = _date_iso(_search(r"NASCIMENTO\s*\n\s*(\d{2}/\d{2}/\d{4})", text))
 
-    # Documento de identidade (RG) — âncoras ASCII (tolerante a acento na extração)
+    # Documento de identidade (RG). Os campos "entre rótulos" usam [\s\S] porque o servidor
+    # pode inserir quebras de linha onde localmente não há (e "." não cruza \n).
     out["cliente_rg"] = _search(r"DO\s*DOCUMENTO\s*\n\s*([\dA-Za-z.\-]+?)\s*ORG", text)
-    out["cliente_rg_orgao"] = _search(
-        r"EMISSOR/UF\s*\n\s*(.+?)DATA\s*DE\s*EMISS", text
-    )
+    out["cliente_rg_orgao"] = _search(r"EMISSOR/UF\s*([\s\S]{1,40}?)\s*DATA\s*DE\s*EMISS", text)
     out["cliente_rg_emissao"] = _date_iso(
         _search(r"DATA\s*DE\s*EMISS[ÃA]O\s*\n\s*(\d{2}/\d{2}/\d{4})", text)
     )
 
     # Filiação / nascimento / renda
     out["cliente_local_nascimento"] = _search(
-        r"LOCAL\s*DE\s*NASCIMENTO\s*\n\s*(.+?)NACIONALIDADE", text
+        r"LOCAL\s*DE\s*NASCIMENTO\s*([\s\S]{1,40}?)\s*NACIONALIDADE", text
     )
     out["cliente_nome_mae"] = _search(r"NOME\s*DA\s*M[ÃA]E\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+)", text)
     out["cliente_renda"] = _money(_search(r"RENDA\s*COMPROVADA[^\n]*\n\s*([\d.,]+)", text))
-    # "CÔNJUGE" tem acento que pode variar na extração — ancora em ASCII (C...NJUGE)
-    out["cliente_nome_conjuge"] = _search(r"NOME\s*C\S*NJUGE\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+?)CPF", text)
+    # "CÔNJUGE" — acento + possível quebra de linha
+    out["cliente_nome_conjuge"] = _search(r"NOME\s*C\S*NJUGE\s*([\s\S]{2,60}?)\s*CPF", text)
     out["cliente_cpf_conjuge"] = _search(
-        r"NOME\s*C\S*NJUGE\s*\n\s*[A-ZÀ-Ú][A-ZÀ-Ú \.]+?CPF\s*\n\s*(\d{3}\.\d{3}\.\d{3}-\d{2})",
-        text,
+        r"NOME\s*C\S*NJUGE[\s\S]{1,120}?(\d{3}\.\d{3}\.\d{3}-\d{2})", text
     )
 
     # Estado civil: o código selecionado vem logo antes da legenda "S - SOLTEIRO"
@@ -192,12 +190,11 @@ def _parse_proposta(text: str) -> dict[str, Any]:
     _ec = _search(r"ESTADO\s*CIVIL\s*\n\s*([A-Z])\s?S\s*-\s*SOLTEIRO", text)
     out["cliente_estado_civil"] = _ec_map.get(_ec) if _ec else None
 
-    # Endereço residencial
+    # Endereço residencial (bairro/cidade/uf tolerantes a quebra de linha do servidor)
     out["cliente_cep"] = _search(r"\nCEP\s*\n\s*(\d{2}\.?\d{3}-?\d{3})", text)
     out["cliente_endereco"] = _search(r"ENDERE[ÇC]O RESIDENCIAL[^\n]*\n\s*(.+?)\nBAIRRO", text)
-    out["cliente_bairro"] = _search(r"\nBAIRRO\s*\n\s*(.+?)CIDADE", text)
-    # "RIO DE JANEIROUF\nRJ" — cidade e UF colados; captura ambos a partir de CIDADE
-    m_cid = re.search(r"CIDADE\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú ]+?)UF\s*\n\s*([A-Z]{2})", text)
+    out["cliente_bairro"] = _search(r"BAIRRO\s*\n\s*([\s\S]{2,40}?)\s*CIDADE", text)
+    m_cid = re.search(r"CIDADE\s*\n\s*([\s\S]{2,40}?)\s*UF\s*\n?\s*([A-Z]{2})", text)
     if m_cid:
         out["cliente_cidade"] = m_cid.group(1).strip()
         out["cliente_uf"] = m_cid.group(2)
