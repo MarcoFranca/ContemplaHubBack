@@ -180,9 +180,10 @@ def _parse_proposta(text: str) -> dict[str, Any]:
     )
     out["cliente_nome_mae"] = _search(r"NOME\s*DA\s*M[ÃA]E\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+)", text)
     out["cliente_renda"] = _money(_search(r"RENDA\s*COMPROVADA[^\n]*\n\s*([\d.,]+)", text))
-    out["cliente_nome_conjuge"] = _search(r"NOME\s*C[ÔO]NJUGE\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+?)CPF", text)
+    # "CÔNJUGE" tem acento que pode variar na extração — ancora em ASCII (C...NJUGE)
+    out["cliente_nome_conjuge"] = _search(r"NOME\s*C\S*NJUGE\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+?)CPF", text)
     out["cliente_cpf_conjuge"] = _search(
-        r"NOME\s*C[ÔO]NJUGE\s*\n\s*[A-ZÀ-Ú][A-ZÀ-Ú \.]+?CPF\s*\n\s*(\d{3}\.\d{3}\.\d{3}-\d{2})",
+        r"NOME\s*C\S*NJUGE\s*\n\s*[A-ZÀ-Ú][A-ZÀ-Ú \.]+?CPF\s*\n\s*(\d{3}\.\d{3}\.\d{3}-\d{2})",
         text,
     )
 
