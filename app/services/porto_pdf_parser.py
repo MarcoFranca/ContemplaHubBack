@@ -163,6 +163,33 @@ def _parse_proposta(text: str) -> dict[str, Any]:
     out["cliente_cpf"] = _search(r"CPF\s*\n\s*(\d{3}\.\d{3}\.\d{3}-\d{2})", text)
     out["cliente_nascimento"] = _date_iso(_search(r"NASCIMENTO\s*\n\s*(\d{2}/\d{2}/\d{4})", text))
 
+    # Documento de identidade (RG)
+    out["cliente_rg"] = _search(r"N[ºo°]\s*DO\s*DOCUMENTO\s*\n\s*([\dA-Za-z.\-]+?)ORG[ÃA]O", text)
+    out["cliente_rg_orgao"] = _search(
+        r"ORG[ÃA]O\s*EMISSOR/UF\s*\n\s*(.+?)DATA\s*DE\s*EMISS", text
+    )
+    out["cliente_rg_emissao"] = _date_iso(
+        _search(r"DATA\s*DE\s*EMISS[ÃA]O\s*\n\s*(\d{2}/\d{2}/\d{4})", text)
+    )
+
+    # Filiação / nascimento / renda
+    out["cliente_local_nascimento"] = _search(
+        r"LOCAL\s*DE\s*NASCIMENTO\s*\n\s*(.+?)NACIONALIDADE", text
+    )
+    out["cliente_nome_mae"] = _search(r"NOME\s*DA\s*M[ÃA]E\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+)", text)
+    out["cliente_renda"] = _money(_search(r"RENDA\s*COMPROVADA[^\n]*\n\s*([\d.,]+)", text))
+    out["cliente_nome_conjuge"] = _search(r"NOME\s*C[ÔO]NJUGE\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+?)CPF", text)
+
+    # Endereço residencial
+    out["cliente_cep"] = _search(r"\nCEP\s*\n\s*(\d{2}\.?\d{3}-?\d{3})", text)
+    out["cliente_endereco"] = _search(r"ENDERE[ÇC]O RESIDENCIAL[^\n]*\n\s*(.+?)\nBAIRRO", text)
+    out["cliente_bairro"] = _search(r"\nBAIRRO\s*\n\s*(.+?)CIDADE", text)
+    # "RIO DE JANEIROUF\nRJ" — cidade e UF colados; captura ambos a partir de CIDADE
+    m_cid = re.search(r"CIDADE\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú ]+?)UF\s*\n\s*([A-Z]{2})", text)
+    if m_cid:
+        out["cliente_cidade"] = m_cid.group(1).strip()
+        out["cliente_uf"] = m_cid.group(2)
+
     # Produto a partir do código do bem (ex.: "IMV_CRA+_08"), não do corpo do texto
     # (evita casar "AUTO" dentro de "AUTORIZADO").
     out["produto"] = (
