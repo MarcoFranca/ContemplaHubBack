@@ -895,6 +895,21 @@ Autenticacao:
 
 - `pendente de confirmacao`; rota nao exige token/contexto hoje
 
+### `GET /lead-cadastros/by-lead/{lead_id}/pf`
+
+Carrega o **cadastro PF único do cliente** (lead). Aceita header `X-Org-Id` para escopo
+multi-tenant. Retorna `{ cadastro, pf }` (ambos `null` se ainda não houver cadastro).
+
+### `PATCH /lead-cadastros/by-lead/{lead_id}/pf`
+
+Cria (se necessário) e atualiza o cadastro PF único do lead — usado pelo "Editar cliente".
+Body `LeadCadastroPFByLeadInput` (todos os campos opcionais; salvamento progressivo:
+nome_completo, cpf, data_nascimento, estado_civil, cônjuge, rg_*, cidade_nascimento,
+nome_mae, profissao, renda_mensal, endereço (cep/endereco/bairro/cidade/uf), email,
+telefone_celular, observacoes). Se o lead ainda não tem `lead_cadastros`, cria um
+(`tipo_cliente = pf`, `token_publico` gerado), e faz `upsert` em `lead_cadastros_pf`
+(`on_conflict = cadastro_id`). Cadastro **único por lead** (sem duplicidade).
+
 ## Contratos e cotas
 
 ### `POST /contracts/from-lead`
@@ -1132,7 +1147,7 @@ Query params:
 - `page`
 - `page_size`
 
-Cada item (`LanceCartaListItem`) inclui `data_adesao` (necessário para o formulário "Editar carta" pré-carregar a data já cadastrada).
+Cada item (`LanceCartaListItem`) inclui `data_adesao` e `forma_pagamento` (necessários para o formulário "Editar carta" pré-carregar os valores já cadastrados e não sobrescrevê-los ao salvar).
 
 ### `GET /lances/cartas/{cota_id}`
 
@@ -1151,6 +1166,8 @@ análise posterior, sorteio intencional (mês marcado como "sem lance") de esque
 Atualiza configuracao operacional da cota (`AtualizarCartaPayload`, `model_fields_set` define o que e atualizado).
 
 Campos suportados incluem: `grupo_codigo`, `numero_cota`, `produto`, `valor_carta`, `valor_parcela`, `parcela_reduzida`, `percentual_reducao`, `valor_parcela_sem_redutor`, `taxa_admin_percentual`, `taxa_admin_valor_mensal`, `observacoes`, `fundo_reserva_percentual`, `fundo_reserva_valor_mensal`, `seguro_prestamista_*`, `taxa_admin_antecipada_*`, `prazo`, `assembleia_dia`, `data_adesao`, `autorizacao_gestao`, `embutido_permitido`, `embutido_max_percent`, `fgts_permitido`, `tipo_lance_preferencial`, `estrategia`, `objetivo`, `opcoes_lance_fixo`.
+
+`forma_pagamento` aceita `cartao`, `boleto` ou `debito_conta`.
 
 `tipo_lance_preferencial` aceita `livre`, `fixo`, `embutido` ou `sorteio` (`LancePreferencial`), refletindo as 4 preferências de lance usadas na UI de lances. A coluna `cotas.tipo_lance_preferencial` era o enum Postgres `lance_tipo` (só `livre`/`fixo`); salvar `embutido`/`sorteio` causava 500 (22P02). Como o cache de schema do PostgREST não reconhecia novos valores do enum sem restart do serviço, a migration `0012_add_sorteio_lance_tipo.sql` converteu a coluna para `text` — a validação dos 4 valores passa a ser feita exclusivamente no backend via o Literal `LancePreferencial`.
 

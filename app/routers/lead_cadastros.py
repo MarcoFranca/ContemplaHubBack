@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid as _uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from supabase import Client
 
@@ -61,6 +62,142 @@ class LeadCadastroPFInput(BaseModel):
 
     # CAMPO LIVRE
     observacoes: Optional[str] = None
+
+
+# --------------------------------------------------
+# MODELO: edição PF a partir do cliente (lead) — salvamento progressivo
+# (todos opcionais; o cadastro é único por lead)
+# --------------------------------------------------
+class LeadCadastroPFByLeadInput(BaseModel):
+    nome_completo: Optional[str] = None
+    cpf: Optional[str] = None
+    data_nascimento: Optional[str] = None
+    estado_civil: Optional[str] = None
+    cpf_conjuge: Optional[str] = None
+    nome_conjuge: Optional[str] = None
+    email: Optional[str] = None
+    telefone_fixo: Optional[str] = None
+    telefone_celular: Optional[str] = None
+    rg_numero: Optional[str] = None
+    rg_orgao_emissor: Optional[str] = None
+    rg_data_emissao: Optional[str] = None
+    cidade_nascimento: Optional[str] = None
+    nome_mae: Optional[str] = None
+    profissao: Optional[str] = None
+    renda_mensal: Optional[float] = None
+    cep: Optional[str] = None
+    endereco: Optional[str] = None
+    bairro: Optional[str] = None
+    cidade: Optional[str] = None
+    uf: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
+def _build_pf_payload(cadastro_id: str, body: "LeadCadastroPFByLeadInput") -> Dict[str, Any]:
+    return {
+        "cadastro_id": cadastro_id,
+        "nome_completo": body.nome_completo,
+        "cpf": body.cpf,
+        "data_nascimento": body.data_nascimento,
+        "estado_civil": body.estado_civil,
+        "nome_conjuge": body.nome_conjuge,
+        "cpf_conjuge": body.cpf_conjuge,
+        "nome_mae": body.nome_mae,
+        "cidade_nascimento": body.cidade_nascimento,
+        "email": body.email,
+        "telefone_fixo": body.telefone_fixo,
+        "celular": body.telefone_celular,
+        "cep": body.cep,
+        "endereco": body.endereco,
+        "bairro": body.bairro,
+        "cidade": body.cidade,
+        "uf": body.uf,
+        "rg_numero": body.rg_numero,
+        "rg_orgao_emissor": body.rg_orgao_emissor,
+        "rg_data_emissao": body.rg_data_emissao,
+        "profissao": body.profissao,
+        "renda_mensal": body.renda_mensal,
+        "extra_json": {"observacoes": body.observacoes},
+    }
+
+
+def _get_or_create_cadastro_for_lead(
+    supa: Client, lead_id: str, org_id: Optional[str]
+) -> Dict[str, Any]:
+    """Retorna o cadastro PF único do lead, criando se necessário (org-scoped)."""
+    q = supa.table("lead_cadastros").select("*").eq("lead_id", lead_id)
+    if org_id:
+        q = q.eq("org_id", org_id)
+    resp = q.order("created_at", desc=False).limit(1).execute()
+    rows = getattr(resp, "data", None) or []
+    if rows:
+        return rows[0]
+
+    resolved_org = org_id
+    if not resolved_org:
+        lead_resp = supa.table("leads").select("org_id").eq("id", lead_id).limit(1).execute()
+        lead_rows = getattr(lead_resp, "data", None) or []
+        if not lead_rows:
+            raise HTTPException(404, "Lead não encontrado.")
+        resolved_org = lead_rows[0].get("org_id")
+
+    novo = {
+        "org_id": resolved_org,
+        "lead_id": lead_id,
+        "tipo_cliente": "pf",
+        "status": "em_preenchimento",
+        "token_publico": str(_uuid.uuid4()),
+    }
+    ins = supa.table("lead_cadastros").insert(novo, returning="representation").execute()
+    created = getattr(ins, "data", None) or []
+    if not created:
+        raise HTTPException(500, "Não foi possível criar o cadastro do cliente.")
+    return created[0]
+
+
+@router.get("/by-lead/{lead_id}/pf")
+def api_get_cadastro_pf_by_lead(
+    lead_id: str,
+    x_org_id: Optional[str] = Header(default=None, alias="X-Org-Id"),
+    supa: Client = Depends(get_supabase_admin),
+) -> Dict[str, Any]:
+    q = supa.table("lead_cadastros").select("*").eq("lead_id", lead_id)
+    if x_org_id:
+        q = q.eq("org_id", x_org_id)
+    resp = q.order("created_at", desc=False).limit(1).execute()
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        return {"cadastro": None, "pf": None}
+
+    cadastro = rows[0]
+    pf_resp = (
+        supa.table("lead_cadastros_pf")
+        .select("*")
+        .eq("cadastro_id", cadastro["id"])
+        .limit(1)
+        .execute()
+    )
+    pf_rows = getattr(pf_resp, "data", None) or []
+    return {"cadastro": cadastro, "pf": pf_rows[0] if pf_rows else None}
+
+
+@router.patch("/by-lead/{lead_id}/pf")
+def api_patch_cadastro_pf_by_lead(
+    lead_id: str,
+    body: LeadCadastroPFByLeadInput,
+    x_org_id: Optional[str] = Header(default=None, alias="X-Org-Id"),
+    supa: Client = Depends(get_supabase_admin),
+) -> Dict[str, Any]:
+    cadastro = _get_or_create_cadastro_for_lead(supa, lead_id, x_org_id)
+    cadastro_id = cadastro["id"]
+
+    payload = _build_pf_payload(cadastro_id, body)
+    try:
+        supa.table("lead_cadastros_pf").upsert(payload, on_conflict="cadastro_id").execute()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"Erro ao salvar dados pessoais (PF): {e}")
+
+    return {"ok": True, "cadastro_id": cadastro_id}
 
 
 # --------------------------------------------------

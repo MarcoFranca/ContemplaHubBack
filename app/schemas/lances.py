@@ -186,6 +186,7 @@ class LanceCartaListItem(BaseModel):
     embutido_permitido: bool
     embutido_max_percent: Optional[Decimal] = None
     fgts_permitido: bool
+    forma_pagamento: Optional[str] = None
     tipo_lance_preferencial: Optional[str] = None
     estrategia: Optional[str] = None
     assembleia_dia_origem: Optional[str] = None
