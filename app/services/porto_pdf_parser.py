@@ -181,6 +181,15 @@ def _parse_proposta(text: str) -> dict[str, Any]:
     out["cliente_nome_mae"] = _search(r"NOME\s*DA\s*M[ÃA]E\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+)", text)
     out["cliente_renda"] = _money(_search(r"RENDA\s*COMPROVADA[^\n]*\n\s*([\d.,]+)", text))
     out["cliente_nome_conjuge"] = _search(r"NOME\s*C[ÔO]NJUGE\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Ú \.]+?)CPF", text)
+    out["cliente_cpf_conjuge"] = _search(
+        r"NOME\s*C[ÔO]NJUGE\s*\n\s*[A-ZÀ-Ú][A-ZÀ-Ú \.]+?CPF\s*\n\s*(\d{3}\.\d{3}\.\d{3}-\d{2})",
+        text,
+    )
+
+    # Estado civil: o código selecionado vem logo antes da legenda "S - SOLTEIRO"
+    _ec_map = {"S": "solteiro", "C": "casado", "R": "divorciado", "V": "viuvo", "U": "uniao_estavel"}
+    _ec = _search(r"ESTADO\s*CIVIL\s*\n\s*([A-Z])\s?S\s*-\s*SOLTEIRO", text)
+    out["cliente_estado_civil"] = _ec_map.get(_ec) if _ec else None
 
     # Endereço residencial
     out["cliente_cep"] = _search(r"\nCEP\s*\n\s*(\d{2}\.?\d{3}-?\d{3})", text)
