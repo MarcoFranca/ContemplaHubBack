@@ -145,7 +145,7 @@ def _get_or_create_cadastro_for_lead(
         "org_id": resolved_org,
         "lead_id": lead_id,
         "tipo_cliente": "pf",
-        "status": "em_preenchimento",
+        "status": "pendente_dados",
         "token_publico": str(_uuid.uuid4()),
     }
     ins = supa.table("lead_cadastros").insert(novo, returning="representation").execute()
