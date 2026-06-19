@@ -1358,6 +1358,16 @@ Headers:
 
 - `X-Org-Id`
 
+#### `POST /comissoes/lancamentos/{lancamento_id}/pular`
+
+Exige manager e `X-Org-Id`.
+
+Pula a competência a partir de um lançamento de comissão: resolve o pagamento
+correspondente (mesmo contrato + competência, `source_module=financeiro_cronograma_comissao`)
+e delega para `pular_competencia_pagamento`, empurrando as competências futuras +1 mês e
+reprocessando as comissões. Retorna `409` quando não há cronograma de pagamentos gerado para
+a competência (oriente a gerar/confirmar o cronograma no Financeiro antes).
+
 #### `PATCH /comissoes/lancamentos/{lancamento_id}/repasse`
 
 Headers:

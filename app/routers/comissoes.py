@@ -20,6 +20,7 @@ from app.schemas.comissoes import (
 
 from app.schemas.comissoes import MarcarRepassePagoIn
 from app.services.comissao_repasse_service import marcar_repasse_pago
+from app.services.pagamentos_service import pular_competencia_por_lancamento
 from app.services.comissao_competencia_service import timeline_contrato
 from app.services.comissao_competencia_service import (
     listar_competencias_contrato,
@@ -76,6 +77,22 @@ def processar_pagamento_comissao(
         supa,
         org_id=org_id,
         pagamento_id=pagamento_id,
+        actor_id=ctx.user_id,
+    )
+
+
+@router.post("/lancamentos/{lancamento_id}/pular")
+def pular_competencia_lancamento(
+    lancamento_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return pular_competencia_por_lancamento(
+        supa,
+        org_id=org_id,
+        lancamento_id=lancamento_id,
         actor_id=ctx.user_id,
     )
 

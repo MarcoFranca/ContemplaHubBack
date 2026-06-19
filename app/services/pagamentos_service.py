@@ -3,7 +3,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from supabase import Client
@@ -873,6 +873,72 @@ def pular_competencia_pagamento(
         "pagamentos_afetados": afetados,
         "message": "Competência pulada e parcelas futuras reprogramadas.",
     }
+
+
+def _resolve_pagamento_id_por_competencia(
+    supa: Client, org_id: str, contrato_id: str, competencia: date
+) -> Optional[str]:
+    """Localiza o pagamento (cronograma de comissão) de um contrato em uma competência."""
+    resp = (
+        supa.table("pagamentos")
+        .select("id, competencia, payload")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .eq("tipo", "parcela_mensal")
+        .execute()
+    )
+    for row in _safe_rows(resp):
+        payload = row.get("payload") or {}
+        comp = _parse_date(row.get("competencia"))
+        if payload.get("source_module") != "financeiro_cronograma_comissao" or not comp:
+            continue
+        if comp.year == competencia.year and comp.month == competencia.month:
+            return row.get("id")
+    return None
+
+
+def pular_competencia_por_lancamento(
+    supa: Client,
+    *,
+    org_id: str,
+    lancamento_id: str,
+    actor_id: str,
+) -> Dict[str, Any]:
+    """Pula a competência a partir de um lançamento de comissão.
+
+    Resolve o pagamento correspondente (contrato + competência) e delega para
+    ``pular_competencia_pagamento``, reaproveitando o deslocamento/reprocessamento.
+    """
+    resp = (
+        supa.table("comissao_lancamentos")
+        .select("id, contrato_id, competencia_prevista, status")
+        .eq("org_id", org_id)
+        .eq("id", lancamento_id)
+        .limit(1)
+        .execute()
+    )
+    rows = _safe_rows(resp)
+    if not rows:
+        raise HTTPException(404, "Lançamento não encontrado")
+    lanc = rows[0]
+    contrato_id = lanc.get("contrato_id")
+    competencia = _parse_date(lanc.get("competencia_prevista"))
+    if not contrato_id or not competencia:
+        raise HTTPException(400, "Lançamento sem competência/contrato para reprogramar")
+
+    pagamento_id = _resolve_pagamento_id_por_competencia(supa, org_id, contrato_id, competencia)
+    if not pagamento_id:
+        raise HTTPException(
+            409,
+            "Não há cronograma de pagamentos gerado para esta competência. "
+            "Gere/confirme o cronograma no Financeiro antes de pular a competência.",
+        )
+    return pular_competencia_pagamento(
+        supa,
+        org_id=org_id,
+        pagamento_id=pagamento_id,
+        actor_id=actor_id,
+    )
 
 
 def cancelar_pagamentos_futuros(
