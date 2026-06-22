@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -43,6 +43,7 @@ from app.services.comissao_service import (
     get_delete_comissao_check,
     get_org_record_or_404,
     get_partner_delete_check,
+    parceiros_ranking,
     summarize_lancamentos,
     sync_eventos_contrato,
     upsert_config_for_cota,
@@ -249,6 +250,22 @@ def toggle_parceiro(
         ativo=body.ativo,
         disabled_reason=body.disabled_reason,
     )
+
+
+@router.get("/parceiros/ranking")
+def get_parceiros_ranking(
+    competencia_de: Optional[date] = Query(default=None),
+    competencia_ate: Optional[date] = Query(default=None),
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    items = parceiros_ranking(supa, ctx.org_id, competencia_de, competencia_ate)
+    return {
+        "ok": True,
+        "items": items,
+        "competencia_de": competencia_de.isoformat() if competencia_de else None,
+        "competencia_ate": competencia_ate.isoformat() if competencia_ate else None,
+    }
 
 
 @router.get("/parceiros/{parceiro_id}/extrato")

@@ -616,6 +616,107 @@ def summarize_lancamentos(lancamentos: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _ranking_pdate(value: Any) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def parceiros_ranking(
+    supa: Client,
+    org_id: str,
+    competencia_de: Optional[date] = None,
+    competencia_ate: Optional[date] = None,
+) -> List[Dict[str, Any]]:
+    """Agrega métricas gerenciais por parceiro.
+
+    - vendas: cartas/cotas com `data_adesao` dentro do período
+    - volume_cartas: soma de `valor_carta` dessas vendas
+    - taxa_cancelamento: % de cotas canceladas sobre o total de cotas do parceiro (carteira, vitalício)
+    - repasse_pago / repasse_pendente: somas de `valor_liquido` por status, no período
+    """
+    resp = (
+        supa.table("comissao_lancamentos")
+        .select(
+            "parceiro_id, cota_id, repasse_status, valor_liquido, competencia_prevista,"
+            " parceiros_corretores(nome),"
+            " cotas(status, valor_carta, data_adesao)"
+        )
+        .eq("org_id", org_id)
+        .eq("beneficiario_tipo", "parceiro")
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+
+    def _in_period(d: Optional[date]) -> bool:
+        if d is None:
+            return False
+        if competencia_de and d < competencia_de:
+            return False
+        if competencia_ate and d > competencia_ate:
+            return False
+        return True
+
+    parceiros: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        pid = row.get("parceiro_id")
+        if not pid:
+            continue
+        acc = parceiros.setdefault(
+            pid,
+            {
+                "parceiro_id": pid,
+                "nome": (row.get("parceiros_corretores") or {}).get("nome") or "Parceiro",
+                "cotas": {},  # cota_id -> {status, valor_carta, data_adesao}
+                "repasse_pago": Decimal("0"),
+                "repasse_pendente": Decimal("0"),
+            },
+        )
+        cota = row.get("cotas") or {}
+        cota_id = row.get("cota_id")
+        if cota_id and cota_id not in acc["cotas"]:
+            acc["cotas"][cota_id] = {
+                "status": (cota.get("status") or "").lower(),
+                "valor_carta": _dec(cota.get("valor_carta")),
+                "data_adesao": _ranking_pdate(cota.get("data_adesao")),
+            }
+        comp = _ranking_pdate(row.get("competencia_prevista"))
+        if _in_period(comp):
+            val = _dec(row.get("valor_liquido"))
+            if row.get("repasse_status") == "pago":
+                acc["repasse_pago"] += val
+            elif row.get("repasse_status") == "pendente":
+                acc["repasse_pendente"] += val
+
+    result: List[Dict[str, Any]] = []
+    for acc in parceiros.values():
+        cotas = acc["cotas"]
+        total_cotas = len(cotas)
+        canceladas = sum(1 for c in cotas.values() if c["status"] == "cancelada")
+        vendas = [c for c in cotas.values() if _in_period(c["data_adesao"])]
+        volume = sum((c["valor_carta"] for c in vendas), Decimal("0"))
+        taxa = (Decimal(canceladas) / Decimal(total_cotas) * 100) if total_cotas else Decimal("0")
+        result.append(
+            {
+                "parceiro_id": acc["parceiro_id"],
+                "nome": acc["nome"],
+                "vendas": len(vendas),
+                "volume_cartas": str(_money(volume)),
+                "total_cotas": total_cotas,
+                "cotas_canceladas": canceladas,
+                "taxa_cancelamento": str(taxa.quantize(Decimal("0.1"))),
+                "repasse_pago": str(_money(acc["repasse_pago"])),
+                "repasse_pendente": str(_money(acc["repasse_pendente"])),
+            }
+        )
+
+    result.sort(key=lambda r: (r["vendas"], float(r["volume_cartas"])), reverse=True)
+    return result
+
+
 def _reconcile_regras_for_config(
     supa: Client,
     *,
