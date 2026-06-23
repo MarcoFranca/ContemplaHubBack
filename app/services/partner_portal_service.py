@@ -338,11 +338,29 @@ def _fetch_cotas_by_ids(
             taxa_admin_antecipada_valor_total,
             taxa_admin_antecipada_valor_parcela,
             prazo,
-            status
+            status,
+            tipo_lance_preferencial,
+            estrategia,
+            assembleia_dia
             """
         )
         .eq("org_id", org_id)
         .in_("id", cota_ids)
+        .execute()
+    )
+    return _safe_data(resp) or []
+
+
+def _fetch_lances_by_cota(supa: Client, *, org_id: str, cota_id: str) -> List[dict]:
+    if not cota_id:
+        return []
+    resp = (
+        supa.table("lances")
+        .select("id, cota_id, assembleia_data, tipo, percentual, valor, origem, resultado, created_at")
+        .eq("org_id", org_id)
+        .eq("cota_id", cota_id)
+        .order("assembleia_data", desc=True)
+        .order("created_at", desc=True)
         .execute()
     )
     return _safe_data(resp) or []
@@ -657,6 +675,7 @@ def get_partner_contract_detail(
 
     link = next((row for row in links if row["contrato_id"] == contract_id), None)
     cliente = _serialize_cliente_for_partner(lead, ctx.can_view_client_data)
+    lances = _fetch_lances_by_cota(supa, org_id=ctx.org_id, cota_id=cota["id"]) if cota else []
 
     insert_audit_log(
         supa,
@@ -677,6 +696,7 @@ def get_partner_contract_detail(
             "cliente": cliente,
             "commission_summary": summary,
             "commission_items": commission_items if ctx.can_view_commissions else [],
+            "lances": lances,
         },
     }
 
@@ -783,8 +803,30 @@ def list_partner_commissions(
     items = _sort_items(items, sort_by, sort_order, _commission_sort_value)
     paged_items, meta = _paginate(items, page, page_size)
 
+    # Enriquece os itens da página com número do contrato, cota e cliente
+    # (cliente apenas se o parceiro tiver permissão), evitando exibir UUIDs.
+    pg_contract_ids = [r.get("contrato_id") for r in paged_items if r.get("contrato_id")]
+    pg_cota_ids = [r.get("cota_id") for r in paged_items if r.get("cota_id")]
+    contratos_map = _to_map(
+        _fetch_contracts_by_ids(supa, org_id=ctx.org_id, contract_ids=pg_contract_ids), "id"
+    )
+    cotas_map = _to_map(_fetch_cotas_by_ids(supa, org_id=ctx.org_id, cota_ids=pg_cota_ids), "id")
+    pg_lead_ids = [c.get("lead_id") for c in cotas_map.values() if c.get("lead_id")]
+    leads_map = _to_map(_fetch_leads_by_ids(supa, org_id=ctx.org_id, lead_ids=pg_lead_ids), "id")
+
+    for row in paged_items:
+        contrato = contratos_map.get(row.get("contrato_id")) or {}
+        cota = cotas_map.get(row.get("cota_id")) or {}
+        lead = leads_map.get(cota.get("lead_id")) if cota else None
+        row["contrato_numero"] = contrato.get("numero")
+        row["numero_cota"] = cota.get("numero_cota")
+        row["grupo_codigo"] = cota.get("grupo_codigo")
+        row["cliente_nome"] = (lead or {}).get("nome") if ctx.can_view_client_data else None
+
     total_bruto = 0.0
     total_liquido = 0.0
+    valor_liquido_pendente = 0.0
+    valor_liquido_pago = 0.0
     pagos = 0
     pendentes = 0
     repasse_pendente = 0
@@ -792,7 +834,8 @@ def list_partner_commissions(
 
     for row in items:
         total_bruto += float(row.get("valor_bruto") or 0)
-        total_liquido += float(row.get("valor_liquido") or 0)
+        liquido = float(row.get("valor_liquido") or 0)
+        total_liquido += liquido
 
         if row.get("status") == "pago":
             pagos += 1
@@ -801,8 +844,10 @@ def list_partner_commissions(
 
         if row.get("repasse_status") == "pendente":
             repasse_pendente += 1
+            valor_liquido_pendente += liquido
         elif row.get("repasse_status") == "pago":
             repasse_pago += 1
+            valor_liquido_pago += liquido
 
     insert_audit_log(
         supa,
@@ -836,6 +881,8 @@ def list_partner_commissions(
             "pendentes": pendentes,
             "repasse_pendente": repasse_pendente,
             "repasse_pago": repasse_pago,
+            "valor_liquido_pendente": valor_liquido_pendente,
+            "valor_liquido_pago": valor_liquido_pago,
         },
     }
 

@@ -1229,6 +1229,18 @@ Exige manager.
 
 Sincroniza status entre `parceiros_corretores` e `partner_users`.
 
+#### `GET /comissoes/parceiros/ranking`
+
+Exige manager. Query opcional: `competencia_de`, `competencia_ate` (datas `YYYY-MM-DD`).
+
+Visão gerencial agregada por parceiro. Retorna `{ ok, items[], competencia_de, competencia_ate }`,
+onde cada item tem: `parceiro_id`, `nome`, `vendas` (cartas com `data_adesao` no período),
+`volume_cartas` (soma de `valor_carta` das vendas), `total_cotas`, `cotas_canceladas`,
+`taxa_cancelamento` (% de cotas canceladas sobre a carteira vitalícia do parceiro),
+`repasse_pago` e `repasse_pendente` (somas de `valor_liquido` por status, no período).
+Ordenado por `vendas` desc (depois `volume_cartas`). Definido antes da rota dinâmica
+`/{parceiro_id}/extrato` para não colidir.
+
 #### `GET /comissoes/parceiros/{parceiro_id}/extrato`
 
 Exige manager.
@@ -1500,6 +1512,10 @@ Regras:
 - dados do cliente podem vir mascarados;
 - itens de comissao so aparecem se `can_view_commissions = true`.
 
+O `item` inclui tambem `lances` (registros da tabela `lances` da cota: `assembleia_data`, `tipo`,
+`percentual`, `valor`, `origem`, `resultado`) e a `cota` traz `tipo_lance_preferencial` e
+`estrategia` (estrategia de lance escolhida: sorteio / lance fixo / lance livre / embutido).
+
 ### `GET /partner/commissions`
 
 Lista lancamentos do parceiro.
@@ -1513,6 +1529,11 @@ Filtros:
 - `page_size`
 - `sort_by`
 - `sort_order`
+
+Cada item da pagina vem enriquecido com `contrato_numero`, `numero_cota`, `grupo_codigo` e
+`cliente_nome` (este ultimo apenas quando `can_view_client_data`), para evitar exibir UUIDs no
+portal. O `resumo` inclui, alem dos totais/contagens, `valor_liquido_pendente` e
+`valor_liquido_pago` (somas do liquido por status de repasse, para "a receber" x "recebido").
 
 ### `POST /partner/contracts/{contract_id}/document/signed-url`
 
