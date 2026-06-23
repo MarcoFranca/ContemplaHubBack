@@ -21,6 +21,13 @@ from app.schemas.comissoes import (
 from app.schemas.comissoes import MarcarRepassePagoIn
 from app.services.comissao_repasse_service import marcar_repasse_pago
 from app.services.pagamentos_service import pular_competencia_por_lancamento
+from app.schemas.comissoes import ComissaoModeloUpsertIn
+from app.services.comissao_modelos_service import (
+    create_modelo,
+    delete_modelo,
+    list_modelos,
+    update_modelo,
+)
 from app.services.comissao_competencia_service import timeline_contrato
 from app.services.comissao_competencia_service import (
     listar_competencias_contrato,
@@ -250,6 +257,50 @@ def toggle_parceiro(
         ativo=body.ativo,
         disabled_reason=body.disabled_reason,
     )
+
+
+@router.get("/modelos")
+def get_modelos(
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return {"ok": True, "items": list_modelos(supa, org_id)}
+
+
+@router.post("/modelos")
+def post_modelo(
+    body: ComissaoModeloUpsertIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return {"ok": True, "item": create_modelo(supa, org_id, body)}
+
+
+@router.patch("/modelos/{modelo_id}")
+def patch_modelo(
+    modelo_id: str,
+    body: ComissaoModeloUpsertIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return {"ok": True, "item": update_modelo(supa, org_id, modelo_id, body)}
+
+
+@router.delete("/modelos/{modelo_id}")
+def remove_modelo(
+    modelo_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return delete_modelo(supa, org_id, modelo_id)
 
 
 @router.get("/parceiros/ranking")

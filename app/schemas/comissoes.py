@@ -108,6 +108,32 @@ class ComissaoRegraIn(BaseModel):
     descricao: Optional[str] = None
 
 
+class ComissaoModeloUpsertIn(BaseModel):
+    nome: str = Field(min_length=1)
+    descricao: Optional[str] = None
+    percentual_total: Decimal = Field(gt=0)
+    ativo: bool = True
+    regras: list[ComissaoRegraIn]
+
+    @field_validator("regras")
+    @classmethod
+    def validate_regras_not_empty(cls, value: list[ComissaoRegraIn]) -> list[ComissaoRegraIn]:
+        if not value:
+            raise ValueError("Informe ao menos uma regra de comissão")
+        return value
+
+    @model_validator(mode="after")
+    def validate_consistencia(self) -> "ComissaoModeloUpsertIn":
+        ordens = [r.ordem for r in self.regras]
+        if len(ordens) != len(set(ordens)):
+            raise ValueError("Há ordens duplicadas nas regras do modelo")
+
+        total_regras = sum((r.percentual_comissao for r in self.regras), start=Decimal("0"))
+        if total_regras.quantize(Decimal("0.0001")) != self.percentual_total.quantize(Decimal("0.0001")):
+            raise ValueError("A soma das regras deve ser igual ao percentual total do modelo")
+        return self
+
+
 class CotaComissaoParceiroIn(BaseModel):
     parceiro_id: str
     percentual_parceiro: Decimal = Field(gt=0)

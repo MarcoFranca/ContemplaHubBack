@@ -1209,6 +1209,20 @@ Exclui carta/cota na operacao de lances.
 
 ### Gestao de parceiro
 
+#### Modelos de comissão (campanhas)
+
+CRUD de modelos reutilizáveis que pré-preenchem a configuração de comissão de uma carta.
+Tabela `comissao_modelos` (migration `009_comissao_modelos.sql`), desacoplada de
+`cota_comissao_config`/`comissao_lancamentos` — editar/excluir um modelo não afeta comissões já
+geradas. Todos exigem manager + `X-Org-Id`. Payload: `nome`, `descricao?`, `percentual_total`,
+`ativo`, `regras[]` (ordem, tipo_evento, offset_meses, percentual_comissao, descricao); a soma das
+regras deve bater com `percentual_total`.
+
+- `GET /comissoes/modelos` — lista os modelos da org.
+- `POST /comissoes/modelos` — cria.
+- `PATCH /comissoes/modelos/{modelo_id}` — edita.
+- `DELETE /comissoes/modelos/{modelo_id}` — exclui (hard delete; seguro pois é desacoplado).
+
 #### `GET /comissoes/parceiros`
 
 Exige manager.
