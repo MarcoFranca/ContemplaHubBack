@@ -108,29 +108,39 @@ class ComissaoRegraIn(BaseModel):
     descricao: Optional[str] = None
 
 
+class ComissaoModeloRegraIn(BaseModel):
+    ordem: int = Field(ge=1)
+    tipo_evento: ComissaoEvento
+    offset_meses: int = Field(default=0, ge=0)
+    # proporção da PARCELA sobre a COMISSÃO (não sobre a carta). As proporções somam 100%.
+    proporcao: Decimal = Field(gt=0)
+    descricao: Optional[str] = None
+
+
 class ComissaoModeloUpsertIn(BaseModel):
     nome: str = Field(min_length=1)
     descricao: Optional[str] = None
+    # total padrão da comissão (% da carta) usado ao aplicar; editável na hora da venda.
     percentual_total: Decimal = Field(gt=0)
     ativo: bool = True
-    regras: list[ComissaoRegraIn]
+    regras: list[ComissaoModeloRegraIn]
 
     @field_validator("regras")
     @classmethod
-    def validate_regras_not_empty(cls, value: list[ComissaoRegraIn]) -> list[ComissaoRegraIn]:
+    def validate_regras_not_empty(cls, value: list[ComissaoModeloRegraIn]) -> list[ComissaoModeloRegraIn]:
         if not value:
-            raise ValueError("Informe ao menos uma regra de comissão")
+            raise ValueError("Informe ao menos uma parcela no modelo")
         return value
 
     @model_validator(mode="after")
     def validate_consistencia(self) -> "ComissaoModeloUpsertIn":
         ordens = [r.ordem for r in self.regras]
         if len(ordens) != len(set(ordens)):
-            raise ValueError("Há ordens duplicadas nas regras do modelo")
+            raise ValueError("Há ordens duplicadas nas parcelas do modelo")
 
-        total_regras = sum((r.percentual_comissao for r in self.regras), start=Decimal("0"))
-        if total_regras.quantize(Decimal("0.0001")) != self.percentual_total.quantize(Decimal("0.0001")):
-            raise ValueError("A soma das regras deve ser igual ao percentual total do modelo")
+        total_prop = sum((r.proporcao for r in self.regras), start=Decimal("0"))
+        if total_prop.quantize(Decimal("0.01")) != Decimal("100.00"):
+            raise ValueError("A soma das proporções das parcelas deve ser 100%")
         return self
 
 

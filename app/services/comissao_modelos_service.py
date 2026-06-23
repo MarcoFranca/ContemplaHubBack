@@ -16,7 +16,7 @@ def _serialize_regras(payload: ComissaoModeloUpsertIn) -> List[Dict[str, Any]]:
             "ordem": r.ordem,
             "tipo_evento": r.tipo_evento,
             "offset_meses": r.offset_meses,
-            "percentual_comissao": float(r.percentual_comissao),
+            "proporcao": float(r.proporcao),
             "descricao": r.descricao,
         }
         for r in payload.regras

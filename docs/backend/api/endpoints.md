@@ -1214,9 +1214,11 @@ Exclui carta/cota na operacao de lances.
 CRUD de modelos reutilizáveis que pré-preenchem a configuração de comissão de uma carta.
 Tabela `comissao_modelos` (migration `009_comissao_modelos.sql`), desacoplada de
 `cota_comissao_config`/`comissao_lancamentos` — editar/excluir um modelo não afeta comissões já
-geradas. Todos exigem manager + `X-Org-Id`. Payload: `nome`, `descricao?`, `percentual_total`,
-`ativo`, `regras[]` (ordem, tipo_evento, offset_meses, percentual_comissao, descricao); a soma das
-regras deve bater com `percentual_total`.
+geradas. Todos exigem manager + `X-Org-Id`. Payload: `nome`, `descricao?`, `percentual_total` (total padrão
+da comissão, % da carta, usado ao aplicar), `ativo`, `regras[]` (ordem, tipo_evento, offset_meses,
+**`proporcao`** = % da PARCELA sobre a COMISSÃO, descricao). A soma das **proporções** deve ser
+**100%** (igual à tabela da operadora). Ao aplicar numa carta, o front converte cada parcela para
+% da carta = `total × proporcao / 100`, então o mesmo modelo serve para qualquer total (4%, 3%, etc.).
 
 - `GET /comissoes/modelos` — lista os modelos da org.
 - `POST /comissoes/modelos` — cria.
