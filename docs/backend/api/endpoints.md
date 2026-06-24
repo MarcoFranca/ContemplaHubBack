@@ -166,22 +166,31 @@ Regras:
 
 - usa a configuracao oficial de `cota_comissao_config`, `cota_comissao_regras` e `cota_comissao_parceiros`;
 - gera ou atualiza pagamentos previstos por competencia;
-- nao sobrescreve pagamentos ja pagos de forma destrutiva;
+- aplica os pulos persistidos (`cota_pagamento_pulos`);
+- **âncora de parcela paga**: regra que já tem parcela `pago` é preservada por regra (não recria,
+  não move, não reescreve o valor) — evita duplicidade (12 continua 12, não vira 13) e mantém o
+  realizado. Se a % nova divergir do valor pago, retorna em `divergencias_pagas` (não altera o pago);
 - reprocessa `cota_pagamento_competencias` e `comissao_lancamentos` usando o motor existente;
-- cancela parcelas previstas antigas que sairem do cronograma apos reconfiguracao.
+- cancela parcelas previstas antigas (não pagas) que sairem do cronograma apos reconfiguracao.
 
 ### `POST /financeiro/pagamentos/{pagamento_id}/pular`
 
-Pula manualmente a competencia selecionada e empurra as parcelas futuras para frente.
+Pula a competência selecionada. Em vez de mover linhas na unha, **registra a decisão de pulo**
+(tabela `cota_pagamento_pulos`, migration 010) e **regenera o cronograma** a partir das regras +
+pulos. Cada pulo em competência C empurra +1 mês tudo que cair em C ou depois; parcelas **pagas**
+(meses anteriores) não são afetadas e bloqueiam (não dá para pular competência já paga). Vantagens:
+o pulo **sobrevive a reprocessos**, é **idempotente** e fica **auditável**.
 
-Autenticacao:
+Autenticacao: manager autenticado. Headers: `Authorization: Bearer <token>`, `X-Org-Id`.
 
-- manager autenticado
+### `GET /financeiro/contratos/{contrato_id}/pulos`
 
-Headers:
+Lista as competências puladas do contrato (auditoria). Manager + `X-Org-Id`.
 
-- `Authorization: Bearer <token>`
-- `X-Org-Id`
+### `DELETE /financeiro/contratos/{contrato_id}/pulos/{competencia}`
+
+Desfaz um pulo (remove a decisão e regenera o cronograma). `competencia` no formato `YYYY-MM-DD`.
+Manager + `X-Org-Id`.
 
 Regras:
 

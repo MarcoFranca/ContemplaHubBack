@@ -678,6 +678,69 @@ def update_contrato_numero(
     }
 
 
+# ── Pulos de competência (decisão persistida + aplicada na geração) ───────────
+
+def _fetch_pulos(supa: Client, org_id: str, contrato_id: str) -> List[date]:
+    resp = (
+        supa.table("cota_pagamento_pulos")
+        .select("competencia")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .order("competencia")
+        .execute()
+    )
+    pulos = [_parse_date(r.get("competencia")) for r in _safe_rows(resp)]
+    return [p for p in pulos if p]
+
+
+def _aplicar_pulos(competencia: date, pulos: List[date]) -> date:
+    """Cada pulo em competência C empurra +1 mês tudo que cair em C ou depois.
+    Determinístico (pulos em ordem crescente) e idempotente na regeração."""
+    shifted = competencia
+    for pulo in pulos:
+        if pulo <= shifted:
+            shifted = _add_months(shifted, 1)
+    return shifted
+
+
+def _registrar_pulo(
+    supa: Client, *, org_id: str, contrato_id: str, competencia: date, actor_id: str, motivo: str
+) -> None:
+    supa.table("cota_pagamento_pulos").upsert(
+        {
+            "org_id": org_id,
+            "contrato_id": contrato_id,
+            "competencia": competencia.isoformat(),
+            "motivo": motivo,
+            "actor_id": actor_id,
+        },
+        on_conflict="org_id,contrato_id,competencia",
+    ).execute()
+
+
+def _find_paid_pagamento_for_regra(
+    supa: Client, *, org_id: str, contrato_id: str, regra_id: str
+) -> Dict[str, Any] | None:
+    """Parcela JÁ PAGA daquela regra (âncora imutável), independente da competência."""
+    resp = (
+        supa.table("pagamentos")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .eq("tipo", "parcela_mensal")
+        .eq("status", "pago")
+        .execute()
+    )
+    for row in _safe_rows(resp):
+        payload = row.get("payload") or {}
+        if (
+            payload.get("source_module") == "financeiro_cronograma_comissao"
+            and str(payload.get("regra_id")) == str(regra_id)
+        ):
+            return row
+    return None
+
+
 def gerar_cronograma_pagamentos_contrato(
     supa: Client,
     *,
@@ -708,8 +771,38 @@ def gerar_cronograma_pagamentos_contrato(
     touched_ids: List[str] = []
     processadas = 0
     competencias_vistas: set[str] = set()
+    pulos = _fetch_pulos(supa, org_id, contrato_id)
+    pagas_mantidas = 0
+    divergencias: List[Dict[str, Any]] = []
 
     for regra in sorted(regras, key=lambda row: int(row.get("ordem") or 0)):
+        # Âncora: se a regra já tem parcela PAGA, preserva-a (não recria, não move,
+        # não reescreve o valor) — evita duplicidade (12 vira 12, não 13) e mantém o realizado.
+        paga = _find_paid_pagamento_for_regra(
+            supa, org_id=org_id, contrato_id=contrato_id, regra_id=regra["id"]
+        )
+        if paga:
+            touched_ids.append(paga["id"])
+            comp_paga = _parse_date(paga.get("competencia"))
+            if comp_paga:
+                competencias_vistas.add(comp_paga.isoformat())
+            # Sinaliza divergência se a % nova daria um valor diferente do que foi pago.
+            percentual = Decimal(str(regra.get("percentual_comissao") or 0))
+            valor_recalc = _money(valor_carta * (percentual / Decimal("100")))
+            valor_pago = _money(Decimal(str(paga.get("valor") or 0)))
+            if valor_pago != valor_recalc:
+                divergencias.append(
+                    {
+                        "pagamento_id": paga["id"],
+                        "competencia": comp_paga.isoformat() if comp_paga else None,
+                        "ordem": int((paga.get("payload") or {}).get("ordem") or 0),
+                        "valor_pago": str(valor_pago),
+                        "valor_recalculado": str(valor_recalc),
+                    }
+                )
+            pagas_mantidas += 1
+            continue
+
         competencia = _resolve_regra_competencia_prevista(
             supa=supa,
             org_id=org_id,
@@ -720,6 +813,8 @@ def gerar_cronograma_pagamentos_contrato(
         )
         if not competencia:
             continue
+        # Aplica os pulos persistidos (desloca +1 mês por pulo em competência <= esta).
+        competencia = _aplicar_pulos(competencia, pulos)
         competencia_key = competencia.isoformat()
         if competencia_key in competencias_vistas:
             # Sobreposição de datas: duas regras resolvem para o mesmo mês.
@@ -779,6 +874,8 @@ def gerar_cronograma_pagamentos_contrato(
         "pagamentos_atualizados": updated,
         "pagamentos_cancelados": cancelled,
         "competencias_processadas": processadas,
+        "parcelas_pagas_mantidas": pagas_mantidas,
+        "divergencias_pagas": divergencias,
     }
 
 
@@ -795,72 +892,24 @@ def pular_competencia_pagamento(
     if not contrato_id or not competencia_base:
         raise HTTPException(400, "Pagamento inválido para reprogramação")
 
-    resp = (
-        supa.table("pagamentos")
-        .select("*")
-        .eq("org_id", org_id)
-        .eq("contrato_id", contrato_id)
-        .eq("tipo", "parcela_mensal")
-        .order("competencia")
-        .execute()
-    )
-    rows = _safe_rows(resp)
-    candidatos = []
-    competencias_imutaveis: set[str] = set()
-    for row in rows:
-        payload = row.get("payload") or {}
-        status = (row.get("status") or "").lower()
-        competencia = _parse_date(row.get("competencia"))
-        if payload.get("source_module") != "financeiro_cronograma_comissao" or not competencia:
-            continue
-        if competencia >= competencia_base and status not in {"pago", "cancelado"}:
-            candidatos.append(row)
-        else:
-            competencias_imutaveis.add(competencia.isoformat())
-
-    competencias_planejadas = {_add_months(_parse_date(row.get("competencia")), 1).isoformat() for row in candidatos if _parse_date(row.get("competencia"))}
-    conflitos = competencias_planejadas & competencias_imutaveis
-    if conflitos:
+    if (pagamento.get("status") or "").lower() == "pago":
         raise HTTPException(
             409,
-            f"Nao foi possivel pular a competencia porque o deslocamento entraria em conflito com competencias fechadas: {', '.join(sorted(conflitos))}.",
+            "Não é possível pular uma competência já paga. Reverta a baixa antes de pular.",
         )
 
-    afetados = 0
+    # Registra a decisão de pulo (idempotente) e regenera o cronograma a partir das
+    # regras + pulos. Assim o pulo sobrevive a reprocessos e fica auditável.
+    _registrar_pulo(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        competencia=competencia_base,
+        actor_id=actor_id,
+        motivo="Pulo manual de competência (ausência de assembleia/boleto).",
+    )
 
-    for row in sorted(candidatos, key=lambda item: str(item.get("competencia")), reverse=True):
-        payload = row.get("payload") or {}
-        competencia = _parse_date(row.get("competencia"))
-        if not competencia:
-            continue
-
-        novo_vencimento = _parse_date(row.get("vencimento"))
-        update_payload = {
-            "competencia": _add_months(competencia, 1).isoformat(),
-            "vencimento": _add_months(novo_vencimento, 1).isoformat() if novo_vencimento else None,
-            "payload": {
-                **payload,
-                "updated_by_financeiro": actor_id,
-                "updated_at_financeiro": _now_iso(),
-                "motivo_reprogramacao": "Pulo manual de competencia por ausencia de assembleia/boleto.",
-            },
-        }
-        (
-            supa.table("pagamentos")
-            .update(update_payload)
-            .eq("org_id", org_id)
-            .eq("id", row["id"])
-            .execute()
-        )
-        processar_pagamento_para_comissao(
-            supa,
-            org_id=org_id,
-            pagamento_id=row["id"],
-            actor_id=actor_id,
-        )
-        afetados += 1
-
-    reprocessar_comissoes_contrato(
+    resultado = gerar_cronograma_pagamentos_contrato(
         supa,
         org_id=org_id,
         contrato_id=contrato_id,
@@ -870,8 +919,47 @@ def pular_competencia_pagamento(
     return {
         "ok": True,
         "pagamento_id": pagamento_id,
-        "pagamentos_afetados": afetados,
-        "message": "Competência pulada e parcelas futuras reprogramadas.",
+        "competencia_pulada": competencia_base.isoformat(),
+        "pagamentos_afetados": resultado.get("pagamentos_processados", 0),
+        "message": "Competência pulada e cronograma regerado.",
+    }
+
+
+def listar_pulos_contrato(supa: Client, org_id: str, contrato_id: str) -> List[Dict[str, Any]]:
+    resp = (
+        supa.table("cota_pagamento_pulos")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .order("competencia")
+        .execute()
+    )
+    return _safe_rows(resp)
+
+
+def desfazer_pulo_competencia(
+    supa: Client, *, org_id: str, contrato_id: str, competencia: str, actor_id: str
+) -> Dict[str, Any]:
+    """Remove um pulo e regenera o cronograma (desfaz o deslocamento daquela competência)."""
+    comp = _parse_date(competencia)
+    if not comp:
+        raise HTTPException(400, "Competência inválida")
+    (
+        supa.table("cota_pagamento_pulos")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .eq("competencia", comp.isoformat())
+        .execute()
+    )
+    resultado = gerar_cronograma_pagamentos_contrato(
+        supa, org_id=org_id, contrato_id=contrato_id, actor_id=actor_id
+    )
+    return {
+        "ok": True,
+        "competencia": comp.isoformat(),
+        "pagamentos_afetados": resultado.get("pagamentos_processados", 0),
+        "message": "Pulo desfeito e cronograma regerado.",
     }
 
 

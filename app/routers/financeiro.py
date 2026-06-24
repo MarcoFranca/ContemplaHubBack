@@ -17,10 +17,12 @@ from app.security.permissions import require_manager
 from app.services.pagamentos_service import (
     cancelar_pagamentos_futuros,
     create_pagamento,
+    desfazer_pulo_competencia,
     gerar_cronograma_pagamentos_contrato,
     list_financeiro_contrato_options,
     list_pagamentos_by_contrato,
     list_pagamentos_by_cota,
+    listar_pulos_contrato,
     pular_competencia_pagamento,
     update_contrato_numero,
     update_pagamento,
@@ -104,6 +106,35 @@ def post_pular_pagamento(
         supa,
         org_id=org_id,
         pagamento_id=pagamento_id,
+        actor_id=ctx.user_id,
+    )
+
+
+@router.get("/contratos/{contrato_id}/pulos")
+def get_pulos_contrato(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return {"ok": True, "items": listar_pulos_contrato(supa, org_id, contrato_id)}
+
+
+@router.delete("/contratos/{contrato_id}/pulos/{competencia}")
+def delete_pulo_contrato(
+    contrato_id: str,
+    competencia: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return desfazer_pulo_competencia(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        competencia=competencia,
         actor_id=ctx.user_id,
     )
 
