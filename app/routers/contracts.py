@@ -436,9 +436,11 @@ def _save_opcoes_lance_fixo(
         for op in opcoes
     ]
 
+    # Upsert por (cota_id, ordem): atualiza a opção existente da mesma ordem
+    # ou inclui uma nova, sem duplicar nem apagar as demais já cadastradas.
     fixo_resp = (
         supa.table("cota_lance_fixo_opcoes")
-        .insert(fixo_rows, returning="representation")
+        .upsert(fixo_rows, on_conflict="cota_id,ordem", returning="representation")
         .execute()
     )
 

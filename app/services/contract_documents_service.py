@@ -1,6 +1,8 @@
 # app/services/contract_documents_service.py
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -159,6 +161,39 @@ def build_contract_pdf_path(org_id: str, contract_id: str) -> str:
     return f"orgs/{org_id}/contracts/{contract_id}/contrato.pdf"
 
 
+def _slugify_filename(text: str) -> str:
+    norm = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    norm = re.sub(r"[^A-Za-z0-9]+", "_", norm).strip("_")
+    return norm
+
+
+def build_contract_download_filename(
+    supa: Client, *, org_id: str, contrato: Dict[str, Any]
+) -> Optional[str]:
+    """Nome padronizado do arquivo: {cliente}_{numero_contrato}.pdf (sem acentos/espaços)."""
+    numero = (contrato.get("numero") or "").strip()
+    cliente = ""
+    cota_id = contrato.get("cota_id")
+    if cota_id:
+        cota_resp = (
+            supa.table("cotas").select("lead_id").eq("org_id", org_id).eq("id", cota_id).limit(1).execute()
+        )
+        crows = getattr(cota_resp, "data", None) or []
+        lead_id = crows[0].get("lead_id") if crows else None
+        if lead_id:
+            lead_resp = (
+                supa.table("leads").select("nome").eq("org_id", org_id).eq("id", lead_id).limit(1).execute()
+            )
+            lrows = getattr(lead_resp, "data", None) or []
+            cliente = (lrows[0].get("nome") or "") if lrows else ""
+
+    base = [p for p in [_slugify_filename(cliente), _slugify_filename(numero)] if p]
+    if not base:
+        return None  # sem cliente/número: usa o nome enviado
+    data_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return "_".join([*base, data_str]) + ".pdf"
+
+
 def _looks_like_pdf(filename: Optional[str], content_type: Optional[str], content: bytes) -> bool:
     filename_ok = bool(filename and filename.lower().endswith(".pdf"))
     content_type_ok = content_type in ("application/pdf", "application/octet-stream", None)
@@ -229,7 +264,10 @@ async def upload_contract_document(
     ensure_can_upload_contract_document(ctx=ctx)
 
     contrato = get_contract_or_404(supa, org_id=ctx.org_id, contract_id=contract_id)
-    content, filename = await read_and_validate_pdf(file)
+    content, uploaded_filename = await read_and_validate_pdf(file)
+
+    # Nome padronizado (cliente + nº do contrato); cai no nome enviado se não der pra montar.
+    filename = build_contract_download_filename(supa, org_id=ctx.org_id, contrato=contrato) or uploaded_filename
 
     path = build_contract_pdf_path(ctx.org_id, contract_id)
     current_version = contrato.get("pdf_version") or 1
