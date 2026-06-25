@@ -167,7 +167,9 @@ Regras:
 - usa a configuracao oficial de `cota_comissao_config`, `cota_comissao_regras` e `cota_comissao_parceiros`;
 - **identidade por regra**: cada regra tem **uma** parcela, que é **movida/atualizada no lugar**
   (não cancela+cria). Duplicados da mesma regra são removidos — sem rastro de "Cancelado";
-- aplica os pulos persistidos (`cota_pagamento_pulos`);
+- aplica os pulos persistidos (`cota_pagamento_pulos`) **no resolver compartilhado**
+  (`_resolve_regra_competencia_prevista`), de forma que **pagamentos e comissões usam a mesma
+  competência** — sem descasamento (a última parcela também recebe repasse/lançamento);
 - **âncora de parcela paga**: regra com parcela `pago` é preservada (não recria/move/reescreve) —
   12 continua 12, mantém o realizado. Divergência de valor volta em `divergencias_pagas`;
 - parcelas previstas que saem do cronograma (regra removida) são **deletadas** (não marcadas

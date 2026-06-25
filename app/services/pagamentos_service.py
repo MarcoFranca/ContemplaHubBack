@@ -794,11 +794,10 @@ def gerar_cronograma_pagamentos_contrato(
             cota=cota,
             config=config,
             regra=regra,
+            pulos=pulos,
         )
         if not competencia:
             continue
-        # Aplica os pulos persistidos (desloca +1 mês por pulo em competência <= esta).
-        competencia = _aplicar_pulos(competencia, pulos)
         competencia_key = competencia.isoformat()
         if competencia_key in competencias_vistas:
             # Sobreposição de datas: duas regras resolvem para o mesmo mês.

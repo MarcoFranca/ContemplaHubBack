@@ -313,6 +313,35 @@ def _resolve_contemplacao_competencia(supa: Client, org_id: str, contrato: Dict[
     return month_start(parse_date(rows[0].get("data")))
 
 
+def _fetch_pulos_competencia(supa: Client, org_id: str, contrato_id: str) -> List[date]:
+    """Competências puladas do contrato (decisões persistidas)."""
+    if not contrato_id:
+        return []
+    resp = (
+        supa.table("cota_pagamento_pulos")
+        .select("competencia")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .order("competencia")
+        .execute()
+    )
+    out: List[date] = []
+    for row in _safe_rows(resp):
+        d = parse_date(row.get("competencia"))
+        if d:
+            out.append(d)
+    return out
+
+
+def _aplicar_pulos_competencia(competencia: date, pulos: List[date]) -> date:
+    """Cada pulo em competência C empurra +1 mês tudo que cair em C ou depois."""
+    shifted = competencia
+    for pulo in pulos:
+        if pulo <= shifted:
+            shifted = add_months_month_start(shifted, 1)
+    return shifted
+
+
 def _resolve_regra_competencia_prevista(
     *,
     supa: Client,
@@ -321,37 +350,31 @@ def _resolve_regra_competencia_prevista(
     cota: Dict[str, Any],
     config: Dict[str, Any],
     regra: Dict[str, Any],
+    pulos: Optional[List[date]] = None,
 ) -> Optional[date]:
     tipo = regra.get("tipo_evento")
     offset = int(regra.get("offset_meses") or 0)
     adesao = parse_date(cota.get("data_adesao"))
     base_competencia = _resolve_competencia_base(cota, config)
 
+    result: Optional[date] = None
     if tipo == "adesao":
-        if not adesao:
-            return None
-        return add_months_month_start(adesao, offset)
-
-    if tipo == "primeira_cobranca_valida":
-        return add_months_month_start(_compute_primeira_cobranca_valida(cota, config), offset)
-
-    if tipo == "proxima_cobranca":
-        if not base_competencia:
-            return None
-        return add_months_month_start(base_competencia, offset)
-
-    if tipo == "manual":
-        if not base_competencia:
-            return None
-        return add_months_month_start(base_competencia, offset)
-
-    if tipo == "contemplacao":
+        result = add_months_month_start(adesao, offset) if adesao else None
+    elif tipo == "primeira_cobranca_valida":
+        result = add_months_month_start(_compute_primeira_cobranca_valida(cota, config), offset)
+    elif tipo in ("proxima_cobranca", "manual"):
+        result = add_months_month_start(base_competencia, offset) if base_competencia else None
+    elif tipo == "contemplacao":
         contemplacao = _resolve_contemplacao_competencia(supa, org_id, contrato, cota["id"])
-        if not contemplacao:
-            return None
-        return add_months_month_start(contemplacao, offset)
+        result = add_months_month_start(contemplacao, offset) if contemplacao else None
 
-    return None
+    if result is None:
+        return None
+
+    # Aplica os pulos persistidos para que pagamentos E comissões usem a MESMA competência.
+    if pulos is None:
+        pulos = _fetch_pulos_competencia(supa, org_id, contrato.get("id"))
+    return _aplicar_pulos_competencia(result, pulos)
 
 
 def _find_matching_regra_for_competencia(
