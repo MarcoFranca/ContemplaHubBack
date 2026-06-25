@@ -165,13 +165,15 @@ Headers:
 Regras:
 
 - usa a configuracao oficial de `cota_comissao_config`, `cota_comissao_regras` e `cota_comissao_parceiros`;
-- gera ou atualiza pagamentos previstos por competencia;
+- **identidade por regra**: cada regra tem **uma** parcela, que é **movida/atualizada no lugar**
+  (não cancela+cria). Duplicados da mesma regra são removidos — sem rastro de "Cancelado";
 - aplica os pulos persistidos (`cota_pagamento_pulos`);
-- **âncora de parcela paga**: regra que já tem parcela `pago` é preservada por regra (não recria,
-  não move, não reescreve o valor) — evita duplicidade (12 continua 12, não vira 13) e mantém o
-  realizado. Se a % nova divergir do valor pago, retorna em `divergencias_pagas` (não altera o pago);
-- reprocessa `cota_pagamento_competencias` e `comissao_lancamentos` usando o motor existente;
-- cancela parcelas previstas antigas (não pagas) que sairem do cronograma apos reconfiguracao.
+- **âncora de parcela paga**: regra com parcela `pago` é preservada (não recria/move/reescreve) —
+  12 continua 12, mantém o realizado. Divergência de valor volta em `divergencias_pagas`;
+- parcelas previstas que saem do cronograma (regra removida) são **deletadas** (não marcadas
+  cancelado); `pago` e `inadimplente` nunca são removidos. `cota_pagamento_competencias.pagamento_id`
+  é `ON DELETE SET NULL`, então a remoção é segura;
+- reprocessa `cota_pagamento_competencias` e `comissao_lancamentos` usando o motor existente.
 
 ### `POST /financeiro/pagamentos/{pagamento_id}/pular`
 

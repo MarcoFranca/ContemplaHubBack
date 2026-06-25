@@ -147,33 +147,32 @@ def _resolve_pagamento_vencimento(competencia: date, cota: Dict[str, Any]) -> da
     return competencia.replace(day=base_day)
 
 
-def _find_pagamento_cronograma_existente(
-    supa: Client,
-    *,
-    org_id: str,
-    contrato_id: str,
-    competencia: date,
-    regra_id: str,
-) -> Dict[str, Any] | None:
+def _find_cronograma_rows_for_regra(
+    supa: Client, *, org_id: str, contrato_id: str, regra_id: str
+) -> List[Dict[str, Any]]:
+    """Todas as parcelas do cronograma daquela regra que NÃO estão pagas,
+    ordenadas com canceladas por último (a primeira é a melhor para reutilizar)."""
     resp = (
         supa.table("pagamentos")
         .select("*")
         .eq("org_id", org_id)
         .eq("contrato_id", contrato_id)
-        .eq("competencia", competencia.isoformat())
         .eq("tipo", "parcela_mensal")
         .eq("origem", "manual")
         .execute()
     )
-    rows = _safe_rows(resp)
-    for row in rows:
+    rows = []
+    for row in _safe_rows(resp):
         payload = row.get("payload") or {}
-        if (
-            payload.get("source_module") == "financeiro_cronograma_comissao"
-            and str(payload.get("regra_id")) == str(regra_id)
-        ):
-            return row
-    return None
+        if payload.get("source_module") != "financeiro_cronograma_comissao":
+            continue
+        if str(payload.get("regra_id")) != str(regra_id):
+            continue
+        if (row.get("status") or "").lower() == "pago":
+            continue
+        rows.append(row)
+    rows.sort(key=lambda r: 1 if (r.get("status") or "").lower() == "cancelado" else 0)
+    return rows
 
 
 def _upsert_pagamento_cronograma(
@@ -188,13 +187,14 @@ def _upsert_pagamento_cronograma(
     valor: Decimal,
 ) -> Tuple[Dict[str, Any], str]:
     vencimento = _resolve_pagamento_vencimento(competencia, cota)
-    existing = _find_pagamento_cronograma_existente(
-        supa,
-        org_id=org_id,
-        contrato_id=contrato["id"],
-        competencia=competencia,
-        regra_id=regra["id"],
+    # Identidade por REGRA: reutiliza a parcela existente da regra (movendo a competência)
+    # em vez de cancelar+criar. Duplicados da mesma regra são removidos (limpa poluição).
+    rows_regra = _find_cronograma_rows_for_regra(
+        supa, org_id=org_id, contrato_id=contrato["id"], regra_id=regra["id"]
     )
+    existing = rows_regra[0] if rows_regra else None
+    for extra in rows_regra[1:]:
+        supa.table("pagamentos").delete().eq("org_id", org_id).eq("id", extra["id"]).execute()
 
     source_payload = {
         "source_module": "financeiro_cronograma_comissao",
@@ -230,11 +230,13 @@ def _upsert_pagamento_cronograma(
                 "updated_by_financeiro": actor_id,
             },
         }
-        if existing_status == "pago":
-            update_payload["status"] = existing.get("status")
-            update_payload["pago_em"] = existing.get("pago_em")
-        elif existing_status in {"inadimplente", "cancelado"}:
-            update_payload["status"] = existing_status
+        # Reutiliza a linha da regra: cancelado volta a previsto (é a parcela viva),
+        # inadimplente é preservado; pago não chega aqui (excluído do conjunto).
+        if existing_status == "inadimplente":
+            update_payload["status"] = "inadimplente"
+            update_payload["pago_em"] = None
+        else:
+            update_payload["status"] = "previsto"
             update_payload["pago_em"] = None
         updated = (
             supa.table("pagamentos")
@@ -271,42 +273,24 @@ def _cancel_stale_pagamentos_cronograma(
         .eq("origem", "manual")
         .execute()
     )
-    updated = 0
+    removed = 0
     keep_ids = set(keep_pagamento_ids)
     for row in _safe_rows(resp):
         payload = row.get("payload") or {}
+        status = (row.get("status") or "").lower()
         if payload.get("source_module") != "financeiro_cronograma_comissao":
             continue
         if row["id"] in keep_ids:
             continue
-        if (row.get("status") or "").lower() == "pago":
+        # Preserva o que tem valor de histórico: pago e inadimplente nunca são removidos.
+        if status in {"pago", "inadimplente"}:
             continue
-        update_payload = {
-            "status": "cancelado",
-            "pago_em": None,
-            "observacoes": "Pagamento previsto cancelado após reconfiguração do cronograma.",
-            "payload": {
-                **payload,
-                "updated_by_financeiro": actor_id,
-                "updated_at_financeiro": _now_iso(),
-                "cancelado_por_reconfiguracao": True,
-            },
-        }
-        (
-            supa.table("pagamentos")
-            .update(update_payload)
-            .eq("org_id", org_id)
-            .eq("id", row["id"])
-            .execute()
-        )
-        processar_pagamento_para_comissao(
-            supa,
-            org_id=org_id,
-            pagamento_id=row["id"],
-            actor_id=actor_id,
-        )
-        updated += 1
-    return updated
+        # Parcela prevista que saiu do cronograma (regra removida) é DELETADA, não
+        # cancelada — evita poluir a tela com "Cancelado" de reconfiguração.
+        # (cota_pagamento_competencias.pagamento_id é ON DELETE SET NULL: seguro.)
+        supa.table("pagamentos").delete().eq("org_id", org_id).eq("id", row["id"]).execute()
+        removed += 1
+    return removed
 
 
 def _enrich_pagamento_rows(
