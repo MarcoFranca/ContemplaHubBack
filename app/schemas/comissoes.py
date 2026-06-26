@@ -108,6 +108,13 @@ class ComissaoRegraIn(BaseModel):
     descricao: Optional[str] = None
 
 
+class RepasseLoteCreateIn(BaseModel):
+    parceiro_id: str
+    lancamento_ids: list[str]
+    forma_pagamento: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
 class ComissaoModeloRegraIn(BaseModel):
     ordem: int = Field(ge=1)
     tipo_evento: ComissaoEvento

@@ -1222,6 +1222,21 @@ Exclui carta/cota na operacao de lances.
 
 ### Gestao de parceiro
 
+#### Lotes de repasse (pagamento em lote a parceiro)
+
+Agrupam vários repasses pagos a um parceiro numa baixa única, com forma de pagamento e comprovante
+(tabela `repasse_lotes`, migration 011; `comissao_lancamentos.repasse_lote_id` referencia o lote).
+Manager + `X-Org-Id`.
+
+- `POST /comissoes/repasses/lote` — body `{ parceiro_id, lancamento_ids[], forma_pagamento?, observacoes? }`.
+  Cria o lote, marca os lançamentos pendentes selecionados como repasse `pago` (com `repasse_pago_em`)
+  e vincula ao lote. Retorna `{ ok, lote, repasses_pagos }`.
+- `POST /comissoes/repasses/lote/{lote_id}/comprovante` — multipart (`file`). Aceita PDF ou imagem
+  (JPG/PNG), valida assinatura + limite de tamanho; guarda no bucket `contracts` em
+  `repasses/{org}/{lote}/`.
+- `POST /comissoes/repasses/lote/{lote_id}/comprovante/signed-url` — URL assinada do comprovante.
+- `GET /comissoes/repasses/lotes?parceiro_id=` — lista lotes (auditoria).
+
 #### Modelos de comissão (campanhas)
 
 CRUD de modelos reutilizáveis que pré-preenchem a configuração de comissão de uma carta.

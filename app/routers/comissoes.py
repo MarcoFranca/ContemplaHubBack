@@ -3,10 +3,17 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from supabase import Client
 
 from app.deps import get_supabase_admin
+from app.schemas.comissoes import RepasseLoteCreateIn
+from app.services.repasse_lotes_service import (
+    create_repasse_comprovante_signed_url,
+    create_repasse_lote,
+    list_repasse_lotes,
+    upload_repasse_comprovante,
+)
 from app.schemas.comissoes import (
     ComissaoListFilters,
     CotaComissaoConfigUpsertIn,
@@ -257,6 +264,61 @@ def toggle_parceiro(
         ativo=body.ativo,
         disabled_reason=body.disabled_reason,
     )
+
+
+@router.post("/repasses/lote")
+def post_repasse_lote(
+    body: RepasseLoteCreateIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return create_repasse_lote(
+        supa,
+        org_id=org_id,
+        parceiro_id=body.parceiro_id,
+        lancamento_ids=body.lancamento_ids,
+        forma_pagamento=body.forma_pagamento,
+        observacoes=body.observacoes,
+        actor_id=ctx.user_id,
+    )
+
+
+@router.post("/repasses/lote/{lote_id}/comprovante")
+async def post_repasse_comprovante(
+    lote_id: str,
+    file: UploadFile = File(...),
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return await upload_repasse_comprovante(
+        supa, org_id=org_id, lote_id=lote_id, file=file, actor_id=ctx.user_id
+    )
+
+
+@router.post("/repasses/lote/{lote_id}/comprovante/signed-url")
+def post_repasse_comprovante_signed_url(
+    lote_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return create_repasse_comprovante_signed_url(supa, org_id=org_id, lote_id=lote_id)
+
+
+@router.get("/repasses/lotes")
+def get_repasse_lotes(
+    parceiro_id: Optional[str] = Query(default=None),
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return {"ok": True, "items": list_repasse_lotes(supa, org_id, parceiro_id)}
 
 
 @router.get("/modelos")
