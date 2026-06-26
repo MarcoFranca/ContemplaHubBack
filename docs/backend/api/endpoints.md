@@ -1579,6 +1579,16 @@ Cada item da pagina vem enriquecido com `contrato_numero`, `numero_cota`, `grupo
 portal. O `resumo` inclui, alem dos totais/contagens, `valor_liquido_pendente` e
 `valor_liquido_pago` (somas do liquido por status de repasse, para "a receber" x "recebido").
 
+### `GET /partner/repasses/lotes`
+
+Lista os lotes de repasse **pagos ao próprio parceiro** (exige `can_view_commissions`). Cada item:
+`total`, `quantidade`, `forma_pagamento`, `observacoes`, `pago_em`, `tem_comprovante` (o `path`
+interno do storage não é exposto).
+
+### `POST /partner/repasses/lotes/{lote_id}/comprovante/signed-url`
+
+URL assinada do comprovante do lote, validando que o lote pertence ao parceiro logado.
+
 ### `POST /partner/contracts/{contract_id}/document/signed-url`
 
 Gera URL assinada do PDF do contrato.
