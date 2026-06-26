@@ -11,10 +11,12 @@ from app.security.auth import AuthContext
 from app.security.permissions import require_partner_user
 from app.services.partner_portal_service import (
     create_partner_contract_signed_url,
+    create_partner_repasse_comprovante_signed_url,
     get_partner_contract_detail,
     get_partner_user_me,
     list_partner_commissions,
     list_partner_contracts,
+    list_partner_repasse_lotes,
 )
 
 router = APIRouter(prefix="/partner", tags=["partner-portal"])
@@ -87,6 +89,23 @@ def partner_commissions(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+
+
+@router.get("/repasses/lotes")
+def partner_repasse_lotes(
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_partner_user),
+):
+    return list_partner_repasse_lotes(supa, ctx=ctx)
+
+
+@router.post("/repasses/lotes/{lote_id}/comprovante/signed-url")
+def partner_repasse_comprovante_url(
+    lote_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_partner_user),
+):
+    return create_partner_repasse_comprovante_signed_url(supa, ctx=ctx, lote_id=lote_id)
 
 
 @router.post("/contracts/{contract_id}/document/signed-url")

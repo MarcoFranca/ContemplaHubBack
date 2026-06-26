@@ -953,3 +953,55 @@ def create_partner_contract_signed_url(
         "expires_in": ttl,
         "pdf_filename": contrato.get("pdf_filename"),
     }
+
+
+def list_partner_repasse_lotes(supa: Client, *, ctx: AuthContext) -> dict:
+    ensure_partner_ctx(ctx)
+    if not ctx.can_view_commissions:
+        raise HTTPException(403, "Parceiro sem permissão para visualizar comissões")
+
+    resp = (
+        supa.table("repasse_lotes")
+        .select(
+            "id, total, quantidade, forma_pagamento, observacoes,"
+            " comprovante_path, comprovante_filename, pago_em, created_at"
+        )
+        .eq("org_id", ctx.org_id)
+        .eq("parceiro_id", ctx.parceiro_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    items = _safe_data(resp) or []
+    # Não expõe o path interno do storage; só sinaliza se há comprovante.
+    for item in items:
+        item["tem_comprovante"] = bool(item.pop("comprovante_path", None))
+    return {"ok": True, "items": items}
+
+
+def create_partner_repasse_comprovante_signed_url(
+    supa: Client, *, ctx: AuthContext, lote_id: str, expires_in: int = 600
+) -> dict:
+    ensure_partner_ctx(ctx)
+    if not ctx.can_view_commissions:
+        raise HTTPException(403, "Parceiro sem permissão para visualizar comissões")
+
+    resp = (
+        supa.table("repasse_lotes")
+        .select("id, parceiro_id, comprovante_path, comprovante_filename")
+        .eq("org_id", ctx.org_id)
+        .eq("id", lote_id)
+        .limit(1)
+        .execute()
+    )
+    rows = _safe_data(resp) or []
+    if not rows or rows[0].get("parceiro_id") != ctx.parceiro_id:
+        raise HTTPException(404, "Lote de repasse não encontrado")
+    lote = rows[0]
+    if not lote.get("comprovante_path"):
+        raise HTTPException(404, "Lote sem comprovante")
+
+    signed = supa.storage.from_(settings.CONTRACTS_BUCKET).create_signed_url(
+        lote["comprovante_path"], expires_in
+    )
+    url = signed.get("signedURL") or signed.get("signed_url") if isinstance(signed, dict) else None
+    return {"ok": True, "url": url, "filename": lote.get("comprovante_filename")}
