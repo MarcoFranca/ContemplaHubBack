@@ -606,10 +606,8 @@ def atualizar_repasse(
     lanc = get_org_record_or_404(supa, "comissao_lancamentos", org_id, lancamento_id)
     if lanc["beneficiario_tipo"] != "parceiro":
         raise HTTPException(400, "Repasse só se aplica a lançamentos de parceiro")
-    if lanc.get("status") not in {"disponivel", "pago"} and body.repasse_status in {"pendente", "pago"}:
-        raise HTTPException(409, "Repasse só pode avançar quando a comissão correspondente estiver disponível ou paga")
-    if body.repasse_status == "pago" and lanc.get("status") != "pago":
-        raise HTTPException(409, "Repasse só pode ser marcado como pago quando a comissão correspondente estiver paga")
+    if lanc.get("status") == "cancelado" and body.repasse_status == "pago":
+        raise HTTPException(400, "Lançamento cancelado não pode ter repasse pago")
     if lanc.get("repasse_status") == "pago" and body.repasse_status != "pago":
         raise HTTPException(409, "Repasse já pago não pode regredir de forma destrutiva")
 
@@ -621,6 +619,10 @@ def atualizar_repasse(
     }
     if body.repasse_status == "pago":
         payload["repasse_pago_em"] = (body.repasse_pago_em or datetime.utcnow()).isoformat()
+        # Pagar o repasse quita a comissão correspondente.
+        if lanc.get("status") != "pago":
+            payload["status"] = "pago"
+            payload["pago_em"] = lanc.get("pago_em") or datetime.utcnow().isoformat()
     elif body.repasse_status != "pago":
         payload["repasse_pago_em"] = None
 

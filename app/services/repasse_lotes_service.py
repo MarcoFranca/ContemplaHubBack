@@ -114,6 +114,9 @@ def create_repasse_lote(
                 "repasse_status": "pago",
                 "repasse_pago_em": pago_em,
                 "repasse_lote_id": lote["id"],
+                # Pagar o repasse quita a comissão correspondente (status pago).
+                "status": "pago",
+                "pago_em": pago_em,
                 "updated_at": pago_em,
             }
         )

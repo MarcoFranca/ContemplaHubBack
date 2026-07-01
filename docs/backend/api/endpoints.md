@@ -1426,15 +1426,16 @@ a competência (oriente a gerar/confirmar o cronograma no Financeiro antes).
 
 #### `PATCH /comissoes/lancamentos/{lancamento_id}/repasse`
 
-Headers:
+Headers: `X-Org-Id`. Válido apenas para lançamentos de parceiro.
 
-- `X-Org-Id`
-
-Valido apenas para lancamentos de parceiro.
+Regra: **marcar o repasse como `pago` quita a comissão correspondente** (define `status=pago` se
+ainda não estava) — não é mais necessário dar baixa na comissão antes de repassar. Continua
+bloqueando: repasse já pago não regride; lançamento cancelado não recebe repasse pago.
 
 #### `POST /comissoes/lancamentos/{lancamento_id}/marcar-repasse-pago`
 
-Exige manager e `X-Org-Id`.
+Exige manager e `X-Org-Id`. Mesma regra: pagar o repasse quita a comissão (status pago); idempotente
+se já estiver pago. (Os três caminhos — este, o PATCH acima e o lote `/repasses/lote` — são consistentes.)
 
 ### Processamento e visoes gerenciais
 

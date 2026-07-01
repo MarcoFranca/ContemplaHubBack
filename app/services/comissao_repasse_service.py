@@ -49,8 +49,6 @@ def marcar_repasse_pago(
 
     if lanc.get("status") == "cancelado":
         raise HTTPException(400, "Lançamento cancelado não pode ser pago")
-    if lanc.get("status") != "pago":
-        raise HTTPException(409, "Repasse só pode ser marcado como pago quando a comissão correspondente estiver paga")
     if lanc.get("repasse_status") == "pago":
         return {"ok": True, "item": lanc, "already_paid": True}
 
@@ -62,6 +60,10 @@ def marcar_repasse_pago(
         "repasse_observacoes": observacoes,
         "updated_at": datetime.utcnow().isoformat(),
     }
+    # Pagar o repasse implica comissão liquidada: quita o lançamento junto.
+    if lanc.get("status") != "pago":
+        payload["status"] = "pago"
+        payload["pago_em"] = lanc.get("pago_em") or repasse_pago_em
 
     updated = (
         supa.table("comissao_lancamentos")
