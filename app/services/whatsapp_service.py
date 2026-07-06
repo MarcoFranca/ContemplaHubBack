@@ -86,12 +86,12 @@ def _graph_post(*, path: str, access_token: str, data: Optional[dict[str, Any]] 
 # Conexão (Embedded Signup)
 # --------------------------------------------------------------------------- #
 def signup_config(*, connected: bool) -> dict[str, Any]:
-    app_id, _ = _require_meta_app()
-    config_id = settings.WHATSAPP_ES_CONFIG_ID.strip()
+    # Não levanta erro se faltar credencial: a conexão manual não precisa do
+    # app secret, e a página de config deve carregar mesmo sem Embedded Signup.
     return {
         "ok": True,
-        "app_id": app_id,
-        "config_id": config_id,
+        "app_id": settings.WHATSAPP_APP_ID.strip(),
+        "config_id": settings.WHATSAPP_ES_CONFIG_ID.strip(),
         "graph_version": _graph_version(),
         "connected": connected,
     }
