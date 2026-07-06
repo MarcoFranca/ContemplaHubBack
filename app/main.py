@@ -22,6 +22,7 @@ from app.routers.partner_users import router as partner_users_router
 from app.routers.contract_documents import router as contract_documents_router
 from app.routers.partner_portal import router as partner_portal_router
 from app.routers.meta import router as meta_router
+from app.routers.whatsapp import router as whatsapp_router
 from app.routers.financeiro import router as financeiro_router
 
 app = FastAPI(
@@ -70,6 +71,7 @@ app.include_router(auth_debug_router)
 app.include_router(contract_documents_router)
 app.include_router(partner_portal_router)
 app.include_router(meta_router)
+app.include_router(whatsapp_router)
 app.include_router(financeiro_router)
 
 @app.on_event("startup")

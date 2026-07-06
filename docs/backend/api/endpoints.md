@@ -1650,3 +1650,49 @@ Uso recomendado:
 
 - ambientes de desenvolvimento/homologacao;
 - `pendente de confirmacao` se essas rotas devem permanecer expostas em producao.
+
+## WhatsApp (Cloud API oficial)
+
+Integração oficial do WhatsApp por org (WABA/Cloud API). Fase 1: conexão da conta via
+Embedded Signup + template de boas-vindas configurável. Todos exigem manager + `X-Org-Id`,
+exceto o webhook público. O `access_token` da integração nunca é retornado ao frontend.
+
+### `GET /whatsapp/config`
+
+Dados públicos para o frontend iniciar o Embedded Signup (FB JS SDK): `app_id`, `config_id`
+(env `WHATSAPP_ES_CONFIG_ID`), `graph_version` e `connected`.
+
+### `GET /whatsapp/integration`
+
+Integração atual da org (sanitizada, sem token) ou `null`.
+
+### `POST /whatsapp/connect`
+
+Recebe `{ code, waba_id, phone_number_id }` do Embedded Signup, troca o code por token de
+negócio, busca dados do número/WABA, inscreve o app nos webhooks da WABA e persiste a
+integração. Retorna a integração sanitizada.
+
+### `DELETE /whatsapp/integration/{integration_id}`
+
+Desativa (soft) a integração da org (`ativo = false`).
+
+### `GET /whatsapp/template` · `PUT /whatsapp/template`
+
+Lê/atualiza o template de boas-vindas (`key = lead_welcome`) por org: `template_name`,
+`language`, `category`, `body_text`, `variables`, `ativo`. Cria o padrão se não existir.
+
+### `GET /api/public/webhooks/whatsapp`
+
+Verificação do webhook (`hub.challenge`), valida `hub.verify_token` contra
+`WHATSAPP_VERIFY_TOKEN`. Público, sem auth.
+
+### `POST /api/public/webhooks/whatsapp`
+
+Recebimento de eventos (status/inbound). Na Fase 1 apenas reconhece com 200; o tratamento
+completo (criar/dedup lead `origem=whatsapp` e auto-resposta na janela de 24h) vem na Fase 3.
+
+Tabelas (migration `013_whatsapp.sql`): `whatsapp_integrations`, `whatsapp_templates`,
+`whatsapp_messages`, `whatsapp_outbound_queue`. Trigger `trg_enqueue_whatsapp_welcome`
+(AFTER INSERT em `leads`) enfileira boas-vindas para todo lead novo com telefone válido,
+exceto `origem = whatsapp`, quando a org tem WhatsApp ativo. A fila é drenada pelo
+dispatcher (Fase 2, cron do Railway).
