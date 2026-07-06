@@ -168,6 +168,8 @@ class LanceCartaListItem(BaseModel):
     numero_cota: str
     valor_carta: Optional[Decimal] = None
     valor_parcela: Optional[Decimal] = None
+    taxa_admin_percentual: Optional[Decimal] = None
+    taxa_admin_valor_mensal: Optional[Decimal] = None
     fundo_reserva_percentual: Optional[Decimal] = None
     fundo_reserva_valor_mensal: Optional[Decimal] = None
     seguro_prestamista_ativo: bool = False

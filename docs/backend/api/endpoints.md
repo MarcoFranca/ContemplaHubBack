@@ -1162,6 +1162,8 @@ Query params:
 
 Cada item (`LanceCartaListItem`) inclui `data_adesao` e `forma_pagamento` (necessários para o formulário "Editar carta" pré-carregar os valores já cadastrados e não sobrescrevê-los ao salvar).
 
+Também inclui os componentes financeiros usados para estimar a base do lance fixo (custo total do contrato): `taxa_admin_percentual`, `taxa_admin_valor_mensal`, `fundo_reserva_percentual`, `fundo_reserva_valor_mensal` e `taxa_admin_antecipada_valor_total`. O frontend calcula a base = carta + taxa adm + fundo reserva + taxa adm antecipada e aplica o percentual do lance fixo sobre ela (não sobre o `valor_carta` puro). O seguro prestamista NÃO entra nessa base.
+
 ### `GET /lances/cartas/{cota_id}`
 
 Detalhe operacional da carta por competencia.
