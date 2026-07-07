@@ -25,6 +25,19 @@ class WhatsappConnectIn(BaseModel):
     phone_number_id: str = Field(min_length=1)
 
 
+class WhatsappTestSendIn(BaseModel):
+    """Envio de teste imediato (valida a conexão sem esperar o cron)."""
+
+    to: str = Field(min_length=8)
+
+
+class WhatsappDispatchOut(BaseModel):
+    processed: int
+    sent: int
+    failed: int
+    skipped: int
+
+
 class WhatsappManualConnectIn(BaseModel):
     """Conexão manual (número de teste ou system user): token + IDs colados pelo admin."""
 

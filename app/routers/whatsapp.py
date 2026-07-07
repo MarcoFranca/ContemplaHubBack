@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from supabase import Client
 
@@ -12,11 +12,13 @@ from app.deps import get_supabase_admin
 from app.schemas.whatsapp import (
     WhatsappConnectIn,
     WhatsappDeleteOut,
+    WhatsappDispatchOut,
     WhatsappIntegrationOut,
     WhatsappManualConnectIn,
     WhatsappSignupConfigOut,
     WhatsappTemplateOut,
     WhatsappTemplateUpdateIn,
+    WhatsappTestSendIn,
 )
 from app.security.auth import AuthContext
 from app.security.permissions import require_manager
@@ -129,6 +131,43 @@ def put_whatsapp_template(
         user_id=ctx.user_id,
         changes=payload.model_dump(exclude_unset=True),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Fase 2 - Dispatcher (drenado pelo cron do Railway) + envio de teste
+# --------------------------------------------------------------------------- #
+@router.post("/whatsapp/dispatch", response_model=WhatsappDispatchOut)
+def dispatch_whatsapp_queue(
+    x_dispatch_secret: Optional[str] = Header(default=None, alias="X-Dispatch-Secret"),
+    limit: int = Query(default=25, ge=1, le=100),
+    supa: Client = Depends(get_supabase_admin),
+):
+    secret = settings.WHATSAPP_DISPATCH_SECRET.strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Dispatcher não configurado (WHATSAPP_DISPATCH_SECRET).")
+    if (x_dispatch_secret or "").strip() != secret:
+        raise HTTPException(status_code=403, detail="Segredo do dispatcher inválido.")
+    return wa.process_outbound_queue(supa=supa, limit=limit)
+
+
+@router.post("/whatsapp/test-send", response_model=WhatsappDispatchOut)
+def test_send_whatsapp(
+    payload: WhatsappTestSendIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    """Envia um template de teste imediatamente para validar a conexão."""
+    integration = wa.get_integration_row(supa=supa, org_id=ctx.org_id)
+    if not integration or not integration.get("ativo"):
+        raise HTTPException(status_code=400, detail="Conecte o WhatsApp antes de enviar um teste.")
+    try:
+        wa.send_now(supa=supa, org_id=ctx.org_id, to=payload.to)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("whatsapp_test_send_failed", extra={"org_id": ctx.org_id})
+        raise HTTPException(status_code=502, detail=f"Falha ao enviar teste: {exc}")
+    return {"processed": 1, "sent": 1, "failed": 0, "skipped": 0}
 
 
 # --------------------------------------------------------------------------- #

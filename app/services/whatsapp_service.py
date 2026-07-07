@@ -11,7 +11,8 @@ O `access_token` fica só no backend, nunca é exposto ao frontend.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import requests
@@ -350,3 +351,235 @@ def update_template(
     fetched = supa.table("whatsapp_templates").select("*").eq("id", current["id"]).limit(1).execute()
     rows = getattr(fetched, "data", None) or []
     return rows[0] if rows else {**current, **update_payload}
+
+
+# --------------------------------------------------------------------------- #
+# Fase 2 - Dispatcher: drena whatsapp_outbound_queue e envia via Cloud API
+# --------------------------------------------------------------------------- #
+# backoff por tentativa (minutos): 1, 5, 15, 60, 180
+_RETRY_BACKOFF_MIN = [1, 5, 15, 60, 180]
+
+
+def normalize_msisdn(phone: str) -> str:
+    """Normaliza para número internacional só com dígitos (DDI 55 para BR)."""
+    digits = re.sub(r"\D", "", phone or "")
+    if not digits:
+        return ""
+    if digits.startswith("55") and len(digits) in (12, 13):
+        return digits
+    if len(digits) in (10, 11):
+        return "55" + digits
+    return digits
+
+
+def _build_template_payload(*, to: str, template: dict[str, Any], nome: Optional[str]) -> dict[str, Any]:
+    """Monta o payload de template. Sem template aprovado configurado, usa hello_world."""
+    template_name = _trim(template.get("template_name"))
+    language = _trim(template.get("language")) or "pt_BR"
+    variables = template.get("variables") or []
+
+    if not template_name:
+        # fallback para validação em número de teste (sem variáveis)
+        return {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "template",
+            "template": {"name": "hello_world", "language": {"code": "en_US"}},
+        }
+
+    payload: dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {"name": template_name, "language": {"code": language}},
+    }
+
+    if variables:
+        values = {"nome": nome or "cliente"}
+        parameters = [{"type": "text", "text": str(values.get(v, "")) or " "} for v in variables]
+        payload["template"]["components"] = [{"type": "body", "parameters": parameters}]
+
+    return payload
+
+
+def send_template_message(
+    *, access_token: str, phone_number_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    resp = requests.post(
+        f"{_graph_base()}/{phone_number_id}/messages",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json=payload,
+        timeout=20,
+    )
+    data = resp.json() if resp.content else {}
+    if resp.status_code >= 400:
+        raise RuntimeError(f"WhatsApp send falhou: {resp.status_code} {resp.text}")
+    return data if isinstance(data, dict) else {}
+
+
+def _fetch_lead_nome(*, supa: Client, lead_id: Optional[str]) -> Optional[str]:
+    if not lead_id:
+        return None
+    resp = supa.table("leads").select("nome").eq("id", lead_id).limit(1).execute()
+    rows = getattr(resp, "data", None) or []
+    return (rows[0].get("nome") if rows else None)
+
+
+def _mark_queue(supa: Client, item_id: str, changes: dict[str, Any]) -> None:
+    changes = {**changes, "updated_at": datetime.now(timezone.utc).isoformat()}
+    supa.table("whatsapp_outbound_queue").update(changes).eq("id", item_id).execute()
+
+
+def _schedule_retry(supa: Client, item: dict[str, Any], error: str) -> None:
+    attempts = int(item.get("attempts") or 0) + 1
+    max_attempts = int(item.get("max_attempts") or 5)
+    if attempts >= max_attempts:
+        _mark_queue(supa, item["id"], {"status": "failed", "attempts": attempts, "last_error": error})
+        return
+    backoff = _RETRY_BACKOFF_MIN[min(attempts - 1, len(_RETRY_BACKOFF_MIN) - 1)]
+    next_at = datetime.now(timezone.utc) + timedelta(minutes=backoff)
+    _mark_queue(
+        supa,
+        item["id"],
+        {
+            "status": "pending",
+            "attempts": attempts,
+            "last_error": error,
+            "next_attempt_at": next_at.isoformat(),
+        },
+    )
+
+
+def send_now(*, supa: Client, org_id: str, to: str, lead_id: Optional[str] = None) -> dict[str, Any]:
+    """Envio imediato (usado pelo botão de teste). Levanta em caso de falha."""
+    integration = get_integration_row(supa=supa, org_id=org_id)
+    if not integration or not integration.get("ativo"):
+        raise HTTPException(status_code=400, detail="WhatsApp não conectado.")
+    access_token = _trim(integration.get("access_token"))
+    phone_number_id = _trim(integration.get("phone_number_id"))
+    to_norm = normalize_msisdn(_trim(to))
+    if not to_norm:
+        raise HTTPException(status_code=400, detail="Telefone inválido.")
+
+    template = get_template(supa=supa, org_id=org_id)
+    nome = _fetch_lead_nome(supa=supa, lead_id=lead_id)
+    payload = _build_template_payload(to=to_norm, template=template, nome=nome)
+    result = send_template_message(
+        access_token=access_token, phone_number_id=phone_number_id, payload=payload
+    )
+    wa_message_id = None
+    messages = result.get("messages") if isinstance(result, dict) else None
+    if isinstance(messages, list) and messages:
+        wa_message_id = messages[0].get("id")
+    supa.table("whatsapp_messages").insert(
+        {
+            "org_id": org_id,
+            "lead_id": lead_id,
+            "direction": "out",
+            "wa_message_id": wa_message_id,
+            "phone": to_norm,
+            "msg_type": "template",
+            "template_key": (template or {}).get("key"),
+            "body": (template or {}).get("body_text"),
+            "status": "sent",
+            "payload": payload,
+        }
+    ).execute()
+    return result
+
+
+def process_outbound_queue(*, supa: Client, limit: int = 25) -> dict[str, Any]:
+    """Drena a fila: envia pendentes cuja hora chegou. Chamado pelo cron (Railway)."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    resp = (
+        supa.table("whatsapp_outbound_queue")
+        .select("*")
+        .eq("status", "pending")
+        .lte("next_attempt_at", now_iso)
+        .order("next_attempt_at", desc=False)
+        .limit(limit)
+        .execute()
+    )
+    items = getattr(resp, "data", None) or []
+
+    sent = 0
+    failed = 0
+    skipped = 0
+
+    for item in items:
+        item_id = item["id"]
+        org_id = item["org_id"]
+
+        integration = get_integration_row(supa=supa, org_id=org_id)
+        if not integration or not integration.get("ativo"):
+            _mark_queue(supa, item_id, {"status": "skipped", "last_error": "sem integração ativa"})
+            skipped += 1
+            continue
+
+        access_token = _trim(integration.get("access_token"))
+        phone_number_id = _trim(integration.get("phone_number_id"))
+        if not access_token or not phone_number_id:
+            _mark_queue(supa, item_id, {"status": "skipped", "last_error": "integração sem token/numero"})
+            skipped += 1
+            continue
+
+        to = normalize_msisdn(_trim(item.get("phone")))
+        if not to:
+            _mark_queue(supa, item_id, {"status": "failed", "last_error": "telefone inválido"})
+            failed += 1
+            continue
+
+        # marca em processamento (reduz corrida entre execuções do cron)
+        _mark_queue(supa, item_id, {"status": "processing"})
+
+        template = get_template(supa=supa, org_id=org_id)
+        nome = _fetch_lead_nome(supa=supa, lead_id=item.get("lead_id"))
+        payload = _build_template_payload(to=to, template=template, nome=nome)
+
+        try:
+            result = send_template_message(
+                access_token=access_token, phone_number_id=phone_number_id, payload=payload
+            )
+            wa_message_id = None
+            messages = result.get("messages") if isinstance(result, dict) else None
+            if isinstance(messages, list) and messages:
+                wa_message_id = messages[0].get("id")
+
+            msg = (
+                supa.table("whatsapp_messages")
+                .insert(
+                    {
+                        "org_id": org_id,
+                        "lead_id": item.get("lead_id"),
+                        "direction": "out",
+                        "wa_message_id": wa_message_id,
+                        "phone": to,
+                        "msg_type": "template",
+                        "template_key": item.get("template_key"),
+                        "body": (template or {}).get("body_text"),
+                        "status": "sent",
+                        "payload": payload,
+                    }
+                )
+                .execute()
+            )
+            msg_rows = getattr(msg, "data", None) or []
+            message_id = msg_rows[0]["id"] if msg_rows else None
+
+            _mark_queue(
+                supa,
+                item_id,
+                {
+                    "status": "sent",
+                    "attempts": int(item.get("attempts") or 0) + 1,
+                    "message_id": message_id,
+                    "last_error": None,
+                },
+            )
+            sent += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_send_failed", extra={"org_id": org_id, "error": str(exc)})
+            _schedule_retry(supa, item, str(exc))
+            failed += 1
+
+    return {"processed": len(items), "sent": sent, "failed": failed, "skipped": skipped}

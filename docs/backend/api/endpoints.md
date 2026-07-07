@@ -1681,6 +1681,18 @@ Desativa (soft) a integração da org (`ativo = false`).
 Lê/atualiza o template de boas-vindas (`key = lead_welcome`) por org: `template_name`,
 `language`, `category`, `body_text`, `variables`, `ativo`. Cria o padrão se não existir.
 
+### `POST /whatsapp/dispatch`
+
+Dispatcher da fila (Fase 2). Protegido por header `X-Dispatch-Secret` = `WHATSAPP_DISPATCH_SECRET`
+(sem sessão de usuário; chamado pelo cron do Railway). Query `limit` (1-100, default 25). Drena
+`whatsapp_outbound_queue`: envia pendentes via Cloud API, grava em `whatsapp_messages` e faz retry
+com backoff (1, 5, 15, 60, 180 min; máx 5 tentativas). Retorna `{processed, sent, failed, skipped}`.
+
+### `POST /whatsapp/test-send`
+
+Manager + `X-Org-Id`. Body `{ to }`. Envia um template imediatamente para validar a conexão sem
+esperar o cron. Sem `template_name` aprovado configurado, usa `hello_world` (en_US).
+
 ### `GET /api/public/webhooks/whatsapp`
 
 Verificação do webhook (`hub.challenge`), valida `hub.verify_token` contra
