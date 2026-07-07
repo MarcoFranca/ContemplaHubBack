@@ -684,6 +684,80 @@ def send_text_message(*, access_token: str, phone_number_id: str, to: str, body:
     return send_template_message(access_token=access_token, phone_number_id=phone_number_id, payload=payload)
 
 
+def send_typing_indicator(*, access_token: str, phone_number_id: str, message_id: str) -> None:
+    """Marca a mensagem como lida e mostra 'digitando...' (best-effort)."""
+    if not message_id:
+        return
+    try:
+        requests.post(
+            f"{_graph_base()}/{phone_number_id}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "messaging_product": "whatsapp",
+                "status": "read",
+                "message_id": message_id,
+                "typing_indicator": {"type": "text"},
+            },
+            timeout=15,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("whatsapp_typing_falhou", extra={"error": str(exc)})
+
+
+def download_media(*, access_token: str, media_id: str) -> Optional[tuple[bytes, str]]:
+    """Baixa a mídia (áudio/imagem) do WhatsApp. Retorna (bytes, mime) ou None."""
+    try:
+        meta = requests.get(
+            f"{_graph_base()}/{media_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=20,
+        )
+        if meta.status_code >= 400:
+            return None
+        info = meta.json()
+        url = info.get("url")
+        mime = info.get("mime_type") or "application/octet-stream"
+        if not url:
+            return None
+        binr = requests.get(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=30)
+        if binr.status_code >= 400:
+            return None
+        return binr.content, mime
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("whatsapp_download_media_falhou", extra={"error": str(exc)})
+        return None
+
+
+def upload_media(*, access_token: str, phone_number_id: str, data: bytes, mime: str, filename: str = "audio.ogg") -> Optional[str]:
+    """Sobe uma mídia e retorna o media_id."""
+    try:
+        resp = requests.post(
+            f"{_graph_base()}/{phone_number_id}/media",
+            headers={"Authorization": f"Bearer {access_token}"},
+            data={"messaging_product": "whatsapp", "type": mime},
+            files={"file": (filename, data, mime)},
+            timeout=60,
+        )
+        if resp.status_code >= 400:
+            logger.warning("whatsapp_upload_media_falhou", extra={"status": resp.status_code, "body": resp.text[:300]})
+            return None
+        return (resp.json() or {}).get("id")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("whatsapp_upload_media_erro", extra={"error": str(exc)})
+        return None
+
+
+def send_audio_message(*, access_token: str, phone_number_id: str, to: str, media_id: str) -> dict[str, Any]:
+    """Envia uma mensagem de voz (áudio) já uploadada."""
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "audio",
+        "audio": {"id": media_id},
+    }
+    return send_template_message(access_token=access_token, phone_number_id=phone_number_id, payload=payload)
+
+
 def _wamid_exists(supa: Client, wamid: Optional[str]) -> bool:
     if not wamid:
         return False
@@ -771,7 +845,25 @@ def _handle_inbound(
     if _wamid_exists(supa, wamid):
         return {}
 
+    mtype = msg.get("type")
+    access_token = _trim(integration.get("access_token"))
+    phone_number_id = _trim(integration.get("phone_number_id"))
+    origem_audio = False
     text = _extract_message_text(msg)
+
+    # Áudio recebido: transcreve para texto (se habilitado).
+    if mtype == "audio" and settings.WHATSAPP_AUDIO_ENABLED and settings.OPENAI_API_KEY.strip():
+        media_id = (msg.get("audio") or {}).get("id")
+        if media_id:
+            media = download_media(access_token=access_token, media_id=media_id)
+            if media:
+                from app.ai import audio as ai_audio
+
+                transcript = ai_audio.transcrever(media[0], media[1])
+                if transcript:
+                    text = transcript
+                    origem_audio = True
+
     lead, created = _find_or_create_lead(supa, org_id, from_wa or "", contact_name)
     lead_id = lead.get("id") if lead else None
 
@@ -782,7 +874,7 @@ def _handle_inbound(
             "direction": "in",
             "wa_message_id": wamid,
             "phone": from_wa,
-            "msg_type": msg.get("type"),
+            "msg_type": mtype,
             "body": text,
             "status": "received",
             "payload": msg,
@@ -794,11 +886,32 @@ def _handle_inbound(
 
     # 1) Agente de IA (se ligado para a org e o lead não estiver em atendimento humano).
     ai_on = settings.WHATSAPP_AI_ENABLED and bool(integration.get("ai_enabled"))
-    if ai_on:
+    # processável: texto/botão/interactive OU áudio transcrito com sucesso.
+    ia_processavel = mtype in ("text", "button", "interactive") or origem_audio
+    if ai_on and not ia_processavel:
+        # imagem/documento/áudio não transcrito: pede por texto (educado).
         try:
             from app.ai import agent as ai_agent
 
             if not ai_agent.lead_em_handoff(supa, org_id, lead_id):
+                _send_and_log_reply(
+                    supa=supa,
+                    integration=integration,
+                    org_id=org_id,
+                    lead_id=lead_id,
+                    to=from_wa,
+                    body="Por enquanto consigo te atender melhor por texto. Pode me escrever sua dúvida ou o que você procura? 🙂",
+                    payload={"ai": True, "ai_media_fallback": True},
+                )
+                ai_replied = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_ai_media_fallback_failed", extra={"org_id": org_id, "error": str(exc)})
+    elif ai_on:
+        try:
+            from app.ai import agent as ai_agent
+
+            if not ai_agent.lead_em_handoff(supa, org_id, lead_id):
+                send_typing_indicator(access_token=access_token, phone_number_id=phone_number_id, message_id=wamid)
                 hist_resp = (
                     supa.table("whatsapp_messages")
                     .select("direction, body, msg_type, created_at")
@@ -818,14 +931,15 @@ def _handle_inbound(
                 )
                 reply_text = result.get("reply")
                 if reply_text:
-                    _send_and_log_reply(
+                    _send_ai_reply(
                         supa=supa,
                         integration=integration,
                         org_id=org_id,
                         lead_id=lead_id,
                         to=from_wa,
-                        body=reply_text,
-                        payload={"ai": True, "ai_handoff": bool(result.get("escalated"))},
+                        text=reply_text,
+                        as_audio=bool(origem_audio and settings.WHATSAPP_AUDIO_REPLY),
+                        escalated=bool(result.get("escalated")),
                     )
                     ai_replied = True
         except Exception as exc:  # noqa: BLE001
@@ -850,6 +964,66 @@ def _handle_inbound(
             logger.warning("whatsapp_autoreply_failed", extra={"org_id": org_id, "error": str(exc)})
 
     return {"lead_created": created, "auto_replied": auto_replied or ai_replied}
+
+
+def _send_ai_reply(
+    *,
+    supa: Client,
+    integration: dict[str, Any],
+    org_id: str,
+    lead_id: Optional[str],
+    to: str,
+    text: str,
+    as_audio: bool,
+    escalated: bool,
+) -> None:
+    """Envia a resposta da IA em áudio (se origem foi áudio) ou texto. Loga o texto."""
+    base_payload = {"ai": True, "ai_handoff": escalated}
+    if as_audio:
+        try:
+            from app.ai import audio as ai_audio
+
+            voice = ai_audio.sintetizar(text)
+            if voice:
+                data, mime = voice
+                media_id = upload_media(
+                    access_token=_trim(integration.get("access_token")),
+                    phone_number_id=_trim(integration.get("phone_number_id")),
+                    data=data,
+                    mime=mime,
+                )
+                if media_id:
+                    reply = send_audio_message(
+                        access_token=_trim(integration.get("access_token")),
+                        phone_number_id=_trim(integration.get("phone_number_id")),
+                        to=to,
+                        media_id=media_id,
+                    )
+                    reply_wamid = None
+                    reply_msgs = reply.get("messages") if isinstance(reply, dict) else None
+                    if isinstance(reply_msgs, list) and reply_msgs:
+                        reply_wamid = reply_msgs[0].get("id")
+                    supa.table("whatsapp_messages").insert(
+                        {
+                            "org_id": org_id,
+                            "lead_id": lead_id,
+                            "direction": "out",
+                            "wa_message_id": reply_wamid,
+                            "phone": to,
+                            "msg_type": "audio",
+                            "body": text,  # texto da fala (fica legível no inbox)
+                            "status": "sent",
+                            "payload": {**base_payload, "audio": True},
+                        }
+                    ).execute()
+                    return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_ai_audio_reply_falhou", extra={"org_id": org_id, "error": str(exc)})
+        # se o áudio falhar, cai para texto abaixo
+
+    _send_and_log_reply(
+        supa=supa, integration=integration, org_id=org_id, lead_id=lead_id, to=to, body=text, payload=base_payload
+    )
 
 
 def _send_and_log_reply(

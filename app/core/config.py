@@ -64,6 +64,19 @@ class Settings(BaseModel):
     # Quantas mensagens do histórico enviar de contexto por conversa.
     WHATSAPP_AI_MAX_HISTORY: int = int(os.getenv("WHATSAPP_AI_MAX_HISTORY", "30"))
 
+    # Áudio (transcrição + voz). Provedor plugável; hoje OpenAI (transcreve e fala com 1 chave).
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    WHATSAPP_AUDIO_ENABLED: bool = os.getenv("WHATSAPP_AUDIO_ENABLED", "true").lower() in ("1", "true", "yes")
+    # Espelhar modalidade: se o cliente mandar áudio, responder em áudio.
+    WHATSAPP_AUDIO_REPLY: bool = os.getenv("WHATSAPP_AUDIO_REPLY", "true").lower() in ("1", "true", "yes")
+    AUDIO_TTS_PROVIDER: str = os.getenv("AUDIO_TTS_PROVIDER", "openai")  # openai | elevenlabs (futuro)
+    OPENAI_STT_MODEL: str = os.getenv("OPENAI_STT_MODEL", "whisper-1")
+    OPENAI_TTS_MODEL: str = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+    OPENAI_TTS_VOICE: str = os.getenv("OPENAI_TTS_VOICE", "alloy")
+    # ElevenLabs (só quando trocar o provedor de voz).
+    ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
+    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "")
+
     BACKEND_PUBLIC_URL: str = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000")
     FRONTEND_SITE_URL: str = os.getenv("FRONTEND_SITE_URL", "http://localhost:3000")
 
