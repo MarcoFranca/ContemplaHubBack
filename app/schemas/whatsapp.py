@@ -40,6 +40,10 @@ class WhatsappAiToggleIn(BaseModel):
     enabled: bool
 
 
+class WhatsappLeadIn(BaseModel):
+    lead_id: str = Field(min_length=1)
+
+
 class WhatsappOkOut(BaseModel):
     ok: bool = True
 

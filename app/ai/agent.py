@@ -88,7 +88,7 @@ _TOOLS = [
     },
     {
         "name": "escalar_humano",
-        "description": "Transfere o atendimento para um especialista humano. Use nos gatilhos de escalonamento (fechamento, proposta, taxa/administradora específica, FGTS, quitação, documentos, cliente insatisfeito, pedido de humano, fora do escopo).",
+        "description": "Transfere para um especialista humano. Use SOMENTE nos gatilhos reais: pedido de proposta/fechamento/contrato/boleto; taxa, administradora, grupo ou prazo de contemplação específicos; FGTS, quitação de financiamento, construção/reforma, documentos; cliente insatisfeito/irritado; pedido explícito de humano; assunto fora de consórcio. NÃO use para objeções, dúvidas, comparações ou hesitação ('consórcio é ruim', 'vou pensar', 'achei caro') - isso você mesmo responde e conduz.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -112,9 +112,18 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "Regras operacionais adicionais:\n"
         "- Responda em pt-BR, mensagens curtas e naturais para WhatsApp. Sem travessão (—).\n"
         "- NUNCA invente taxas, administradoras, grupos, prazos ou percentuais. Use as ferramentas e os dados da org.\n"
-        "- Use `simular_consorcio` para números; use `registrar_qualificacao` conforme for descobrindo dados; "
-        "use `escalar_humano` nos gatilhos de escalonamento.\n"
-        "- Quando escalar, escreva uma mensagem curta avisando o cliente que um especialista vai continuar.\n\n"
+        "- Use `simular_consorcio` para números; use `registrar_qualificacao` conforme for descobrindo dados.\n"
+        "\n"
+        "ESCALONAMENTO (regra crítica):\n"
+        "- NÃO escale por objeção, dúvida, comparação, hesitação ou frases como 'consórcio é ruim/furada', "
+        "'redutor não presta', 'vou pensar', 'achei caro'. Isso é atendimento normal: RECONHEÇA, EXPLIQUE, "
+        "REPOSICIONE e CONDUZA com uma pergunta (siga o arquivo de objeções). Objeção NUNCA é motivo de escalonamento.\n"
+        "- Use `escalar_humano` SOMENTE quando o cliente: pedir proposta/fechar/contratar; pedir boleto, contrato ou "
+        "link de pagamento; perguntar taxa, administradora, grupo ou prazo de contemplação ESPECÍFICOS; falar de FGTS, "
+        "quitação de financiamento, construção/reforma ou enviar documentos; estiver claramente insatisfeito/irritado; "
+        "pedir explicitamente falar com um humano; ou trazer assunto totalmente fora de consórcio.\n"
+        "- Na dúvida se deve escalar, NÃO escale: continue atendendo e conduzindo.\n"
+        "- Ao escalar, escreva uma mensagem curta avisando que um especialista vai continuar.\n\n"
         f"Administradoras disponíveis para esta organização: {admins}.\n"
         f"{cliente}\n\n"
         "===== BASE DE CONHECIMENTO (GLOBAL) =====\n" + knowledge

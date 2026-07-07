@@ -18,6 +18,7 @@ from app.schemas.whatsapp import (
     WhatsappIntegrationOut,
     WhatsappManualConnectIn,
     WhatsappAiToggleIn,
+    WhatsappLeadIn,
     WhatsappOkOut,
     WhatsappReplyIn,
     WhatsappSignupConfigOut,
@@ -123,6 +124,16 @@ def toggle_whatsapp_ai(
     ctx: AuthContext = Depends(require_manager),
 ):
     return wa.set_ai_enabled(supa=supa, org_id=ctx.org_id, enabled=payload.enabled)
+
+
+@router.post("/whatsapp/ai/reativar", response_model=WhatsappOkOut)
+def reativar_ia(
+    payload: WhatsappLeadIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    wa.reativar_ia_lead(supa=supa, org_id=ctx.org_id, lead_id=payload.lead_id)
+    return {"ok": True}
 
 
 @router.get("/whatsapp/template", response_model=WhatsappTemplateOut)

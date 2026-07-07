@@ -309,6 +309,26 @@ def set_ai_enabled(*, supa: Client, org_id: str, enabled: bool) -> Optional[dict
     return sanitize_integration_or_none(get_integration_row(supa=supa, org_id=org_id))
 
 
+def reativar_ia_lead(*, supa: Client, org_id: str, lead_id: str) -> dict[str, Any]:
+    """Limpa o marcador de handoff do lead: a IA volta a atender aquela conversa."""
+    resp = (
+        supa.table("whatsapp_messages")
+        .select("id, payload")
+        .eq("org_id", org_id)
+        .eq("lead_id", lead_id)
+        .filter("payload->>ai_handoff", "eq", "true")
+        .execute()
+    )
+    n = 0
+    for row in getattr(resp, "data", None) or []:
+        payload = row.get("payload")
+        if isinstance(payload, dict):
+            payload["ai_handoff"] = False
+            supa.table("whatsapp_messages").update({"payload": payload}).eq("id", row["id"]).execute()
+            n += 1
+    return {"ok": True, "limpos": n}
+
+
 # --------------------------------------------------------------------------- #
 # Template configurável por org
 # --------------------------------------------------------------------------- #
