@@ -960,6 +960,7 @@ def _handle_inbound(
                         text=reply_text,
                         as_audio=bool(origem_audio and settings.WHATSAPP_AUDIO_REPLY),
                         escalated=bool(result.get("escalated")),
+                        nome_cliente=(lead.get("nome") if lead else None),
                     )
                     ai_replied = True
         except Exception as exc:  # noqa: BLE001
@@ -996,6 +997,7 @@ def _send_ai_reply(
     text: str,
     as_audio: bool,
     escalated: bool,
+    nome_cliente: Optional[str] = None,
 ) -> None:
     """Envia a resposta da IA em áudio (se origem foi áudio) ou texto. Loga o texto."""
     base_payload = {"ai": True, "ai_handoff": escalated}
@@ -1003,7 +1005,7 @@ def _send_ai_reply(
         try:
             from app.ai import audio as ai_audio
 
-            voice = ai_audio.sintetizar(text)
+            voice = ai_audio.sintetizar(text, nome_cliente=nome_cliente)
             if voice:
                 data, mime = voice
                 media_id = upload_media(

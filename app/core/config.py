@@ -72,7 +72,10 @@ class Settings(BaseModel):
     AUDIO_TTS_PROVIDER: str = os.getenv("AUDIO_TTS_PROVIDER", "openai")  # openai | elevenlabs (futuro)
     OPENAI_STT_MODEL: str = os.getenv("OPENAI_STT_MODEL", "whisper-1")
     OPENAI_TTS_MODEL: str = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
-    OPENAI_TTS_VOICE: str = os.getenv("OPENAI_TTS_VOICE", "alloy")
+    OPENAI_TTS_VOICE: str = os.getenv("OPENAI_TTS_VOICE", "alloy")  # fallback quando gênero indefinido
+    # Voz invertida pelo gênero do cliente (homem -> voz feminina; mulher -> voz masculina).
+    OPENAI_TTS_VOICE_FEMININA: str = os.getenv("OPENAI_TTS_VOICE_FEMININA", "nova")
+    OPENAI_TTS_VOICE_MASCULINA: str = os.getenv("OPENAI_TTS_VOICE_MASCULINA", "onyx")
     # ElevenLabs (só quando trocar o provedor de voz).
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
     ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "")

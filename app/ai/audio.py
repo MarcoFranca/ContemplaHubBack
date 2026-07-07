@@ -51,19 +51,57 @@ def transcrever(audio_bytes: bytes, mime: str = "audio/ogg") -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Gênero pelo primeiro nome (heurística PT-BR) para escolher a voz invertida.
+# --------------------------------------------------------------------------- #
+# Nomes terminados em "a" que são masculinos (a heurística padrão erraria).
+_MASC_EXCECOES = {
+    "joshua", "isaias", "josias", "elias", "jonas", "lucas", "tobias", "matias",
+    "cauã", "caua", "juca", "noa", "aba", "aba",
+}
+# Nomes NÃO terminados em "a" que são femininos.
+_FEM_EXCECOES = {
+    "beatriz", "ines", "inês", "isis", "íris", "iris", "mercedes", "lais", "laís",
+    "raquel", "isabel", "cristiane", "rute", "ruth", "ester", "esther", "carmen",
+    "miriam", "jasmin", "yasmin", "nicole", "gabrielle", "michele", "michelle",
+    "jaqueline", "jacqueline", "eloa", "eloá",
+}
+
+
+def _primeiro_nome(nome: Optional[str]) -> str:
+    return (nome or "").strip().split()[0].lower() if (nome or "").strip() else ""
+
+
+def _voz_por_genero(nome: Optional[str]) -> str:
+    """Voz invertida: homem -> feminina; mulher -> masculina; indefinido -> feminina."""
+    fem_voice = settings.OPENAI_TTS_VOICE_FEMININA.strip() or settings.OPENAI_TTS_VOICE
+    masc_voice = settings.OPENAI_TTS_VOICE_MASCULINA.strip() or settings.OPENAI_TTS_VOICE
+    n = _primeiro_nome(nome)
+    if not n:
+        return fem_voice  # sem nome: default feminino
+    if n in _FEM_EXCECOES:
+        return masc_voice  # cliente mulher -> voz masculina
+    if n in _MASC_EXCECOES:
+        return fem_voice  # cliente homem -> voz feminina
+    # Heurística: termina em "a" (ou "ia") => feminino; caso contrário masculino.
+    if n.endswith("a"):
+        return masc_voice  # provavelmente mulher -> voz masculina
+    return fem_voice  # provavelmente homem (ou indefinido) -> voz feminina
+
+
+# --------------------------------------------------------------------------- #
 # TTS — gera voz da resposta. Retorna (bytes, mime) ou None.
 # --------------------------------------------------------------------------- #
-def sintetizar(texto: str) -> Optional[tuple[bytes, str]]:
+def sintetizar(texto: str, nome_cliente: Optional[str] = None) -> Optional[tuple[bytes, str]]:
     texto = (texto or "").strip()
     if not texto:
         return None
     provider = settings.AUDIO_TTS_PROVIDER.lower()
     if provider == "elevenlabs":
         return _tts_elevenlabs(texto)
-    return _tts_openai(texto)
+    return _tts_openai(texto, voice=_voz_por_genero(nome_cliente))
 
 
-def _tts_openai(texto: str) -> Optional[tuple[bytes, str]]:
+def _tts_openai(texto: str, voice: Optional[str] = None) -> Optional[tuple[bytes, str]]:
     key = settings.OPENAI_API_KEY.strip()
     if not key:
         return None
@@ -74,7 +112,7 @@ def _tts_openai(texto: str) -> Optional[tuple[bytes, str]]:
             json={
                 "model": settings.OPENAI_TTS_MODEL,
                 "input": texto,
-                "voice": settings.OPENAI_TTS_VOICE,
+                "voice": (voice or settings.OPENAI_TTS_VOICE),
                 "response_format": "opus",  # ogg/opus = nota de voz no WhatsApp
             },
             timeout=60,
