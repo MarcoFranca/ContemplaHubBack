@@ -1693,6 +1693,12 @@ com backoff (1, 5, 15, 60, 180 min; máx 5 tentativas). Retorna `{processed, sen
 Manager + `X-Org-Id`. Body `{ to }`. Envia um template imediatamente para validar a conexão sem
 esperar o cron. Sem `template_name` aprovado configurado, usa `hello_world` (en_US).
 
+### `POST /whatsapp/reply`
+
+Manager + `X-Org-Id`. Body `{ lead_id, body }`. Envia uma resposta de **texto livre** ao lead
+(válida na janela de 24h de atendimento) e loga em `whatsapp_messages`. Usado pela central de
+Mensagens (`/app/mensagens`).
+
 ### `GET /api/public/webhooks/whatsapp`
 
 Verificação do webhook (`hub.challenge`), valida `hub.verify_token` contra
