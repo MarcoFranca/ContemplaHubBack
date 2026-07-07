@@ -31,6 +31,15 @@ class WhatsappTestSendIn(BaseModel):
     to: str = Field(min_length=8)
 
 
+class WhatsappReplyIn(BaseModel):
+    lead_id: str = Field(min_length=1)
+    body: str = Field(min_length=1)
+
+
+class WhatsappOkOut(BaseModel):
+    ok: bool = True
+
+
 class WhatsappDispatchOut(BaseModel):
     processed: int
     sent: int

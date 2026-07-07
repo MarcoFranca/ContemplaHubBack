@@ -489,6 +489,68 @@ def send_now(*, supa: Client, org_id: str, to: str, lead_id: Optional[str] = Non
     return result
 
 
+def send_reply(*, supa: Client, org_id: str, lead_id: str, body: str) -> dict[str, Any]:
+    """Resposta de texto livre a um lead (válida na janela de 24h). Loga a mensagem."""
+    body = (body or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Mensagem vazia.")
+
+    integration = get_integration_row(supa=supa, org_id=org_id)
+    if not integration or not integration.get("ativo"):
+        raise HTTPException(status_code=400, detail="WhatsApp não conectado.")
+
+    lead_resp = (
+        supa.table("leads").select("id, telefone").eq("org_id", org_id).eq("id", lead_id).limit(1).execute()
+    )
+    lead_rows = getattr(lead_resp, "data", None) or []
+    if not lead_rows:
+        raise HTTPException(status_code=404, detail="Lead não encontrado.")
+
+    to = normalize_msisdn(_trim(lead_rows[0].get("telefone")))
+    if not to:
+        # fallback: telefone da última mensagem recebida
+        last_in = (
+            supa.table("whatsapp_messages")
+            .select("phone")
+            .eq("org_id", org_id)
+            .eq("lead_id", lead_id)
+            .eq("direction", "in")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(last_in, "data", None) or []
+        to = normalize_msisdn(_trim(rows[0].get("phone"))) if rows else ""
+    if not to:
+        raise HTTPException(status_code=400, detail="Lead sem telefone válido.")
+
+    result = send_text_message(
+        access_token=_trim(integration.get("access_token")),
+        phone_number_id=_trim(integration.get("phone_number_id")),
+        to=to,
+        body=body,
+    )
+    wamid = None
+    msgs = result.get("messages") if isinstance(result, dict) else None
+    if isinstance(msgs, list) and msgs:
+        wamid = msgs[0].get("id")
+
+    supa.table("whatsapp_messages").insert(
+        {
+            "org_id": org_id,
+            "lead_id": lead_id,
+            "direction": "out",
+            "wa_message_id": wamid,
+            "phone": to,
+            "msg_type": "text",
+            "body": body,
+            "status": "sent",
+            "payload": {"manual_reply": True},
+        }
+    ).execute()
+    return {"ok": True, "wa_message_id": wamid}
+
+
 def process_outbound_queue(*, supa: Client, limit: int = 25) -> dict[str, Any]:
     """Drena a fila: envia pendentes cuja hora chegou. Chamado pelo cron (Railway)."""
     now_iso = datetime.now(timezone.utc).isoformat()

@@ -17,6 +17,8 @@ from app.schemas.whatsapp import (
     WhatsappDispatchOut,
     WhatsappIntegrationOut,
     WhatsappManualConnectIn,
+    WhatsappOkOut,
+    WhatsappReplyIn,
     WhatsappSignupConfigOut,
     WhatsappTemplateOut,
     WhatsappTemplateUpdateIn,
@@ -150,6 +152,22 @@ def dispatch_whatsapp_queue(
     if (x_dispatch_secret or "").strip() != secret:
         raise HTTPException(status_code=403, detail="Segredo do dispatcher inválido.")
     return wa.process_outbound_queue(supa=supa, limit=limit)
+
+
+@router.post("/whatsapp/reply", response_model=WhatsappOkOut)
+def reply_whatsapp(
+    payload: WhatsappReplyIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    try:
+        wa.send_reply(supa=supa, org_id=ctx.org_id, lead_id=payload.lead_id, body=payload.body)
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("whatsapp_reply_failed", extra={"org_id": ctx.org_id})
+        raise HTTPException(status_code=502, detail=f"Falha ao enviar: {exc}")
 
 
 @router.post("/whatsapp/test-send", response_model=WhatsappDispatchOut)
