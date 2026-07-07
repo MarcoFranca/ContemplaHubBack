@@ -82,6 +82,30 @@ _TOOLS = [
         },
     },
     {
+        "name": "atualizar_etapa_classificacao",
+        "description": (
+            "Move o lead no funil de vendas e/ou classifica temperatura conforme a conversa evolui. "
+            "Chame sempre que houver progresso real: respondeu -> 'contato_realizado'; começou a qualificar "
+            "(objetivo/valor/prazo) -> 'diagnostico'; recebeu simulação/proposta -> 'proposta'; negociando "
+            "condições -> 'negociacao'; sumiu/sem interesse -> 'frio'. Classifique temperatura: 'quente' (pronto/urgente), "
+            "'morno' (interessado, ainda avaliando), 'frio' (curioso/sem urgência). Use 'valor_agregado' para o "
+            "valor de carta pretendido quando souber. NÃO use etapas de fechamento (contrato/pós-venda): isso é humano."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "etapa": {
+                    "type": "string",
+                    "enum": ["novo", "tentativa_contato", "contato_realizado", "diagnostico", "proposta", "negociacao", "frio"],
+                },
+                "temperatura": {"type": "string", "enum": ["quente", "morno", "frio"]},
+                "valor_agregado": {"type": "number", "description": "Valor de carta pretendido em reais (opcional)"},
+                "motivo": {"type": "string", "description": "Por que mudou (curto, para o time)"},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "buscar_dados_lead",
         "description": "Consulta os dados já salvos do lead (nome, telefone, interesse) para não repetir perguntas.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -113,6 +137,9 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Responda em pt-BR, mensagens curtas e naturais para WhatsApp. Sem travessão (—).\n"
         "- NUNCA invente taxas, administradoras, grupos, prazos ou percentuais. Use as ferramentas e os dados da org.\n"
         "- Use `simular_consorcio` para números; use `registrar_qualificacao` conforme for descobrindo dados.\n"
+        "- Use `atualizar_etapa_classificacao` para mover o lead no funil e classificar a temperatura sempre que a "
+        "conversa avançar (respondeu, começou a qualificar, recebeu proposta, negociando, esfriou). Isso mantém o "
+        "kanban do time atualizado sozinho. Não anuncie isso ao cliente, faça em segundo plano.\n"
         "\n"
         "ESCALONAMENTO (regra crítica):\n"
         "- NÃO escale por objeção, dúvida, comparação, hesitação ou frases como 'consórcio é ruim/furada', "
@@ -180,6 +207,8 @@ def _exec_tool(
         return ai_tools.buscar_dados_lead(supa=supa, org_id=org_id, lead_id=lead_id or "")
     if name == "registrar_qualificacao":
         return ai_tools.registrar_qualificacao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
+    if name == "atualizar_etapa_classificacao":
+        return ai_tools.atualizar_etapa_classificacao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "escalar_humano":
         state["escalated"] = True
         motivo = args.get("motivo") or "escalonamento"

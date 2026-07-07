@@ -137,6 +137,84 @@ def registrar_qualificacao(
         return {"ok": False, "erro": str(exc)}
 
 
+# Etapas que a IA pode setar pela conversa do WhatsApp. Etapas de fechamento
+# (contrato/ativo/pos_venda) e 'perdido' ficam fora: exigem ação humana.
+_ETAPAS_IA = {
+    "novo",
+    "tentativa_contato",
+    "contato_realizado",
+    "diagnostico",
+    "proposta",
+    "negociacao",
+    "frio",
+}
+_TEMPERATURAS = {"frio", "morno", "quente"}
+
+
+def atualizar_etapa_classificacao(
+    *,
+    supa: Client,
+    org_id: str,
+    lead_id: str,
+    etapa: Optional[str] = None,
+    temperatura: Optional[str] = None,
+    valor_agregado: Optional[float] = None,
+    motivo: Optional[str] = None,
+) -> dict[str, Any]:
+    """Move o lead no funil e/ou classifica temperatura conforme a conversa evolui."""
+    try:
+        update: dict[str, Any] = {}
+        etapa_norm = (etapa or "").strip().lower()
+        if etapa_norm:
+            if etapa_norm not in _ETAPAS_IA:
+                return {"ok": False, "erro": f"etapa inválida para a IA: {etapa_norm}", "etapas_validas": sorted(_ETAPAS_IA)}
+            update["etapa"] = etapa_norm
+
+        temp_norm = (temperatura or "").strip().lower()
+        if temp_norm:
+            if temp_norm not in _TEMPERATURAS:
+                return {"ok": False, "erro": f"temperatura inválida: {temp_norm}", "validas": sorted(_TEMPERATURAS)}
+            update["temperatura"] = temp_norm
+            update["temperatura_at"] = "now()"
+
+        if valor_agregado and float(valor_agregado) > 0:
+            update["valor_interesse"] = float(valor_agregado)
+
+        if not update:
+            return {"ok": False, "erro": "nada para atualizar"}
+
+        # 'now()' precisa ir como expressão do Postgres; PostgREST aceita string ISO,
+        # então usamos timestamp do lado do banco via update simples.
+        if update.get("temperatura_at") == "now()":
+            from datetime import datetime, timezone
+
+            update["temperatura_at"] = datetime.now(timezone.utc).isoformat()
+
+        supa.table("leads").update(update).eq("org_id", org_id).eq("id", lead_id).execute()
+
+        supa.table("activities").insert(
+            {
+                "id": str(uuid4()),
+                "org_id": org_id,
+                "lead_id": lead_id,
+                "tipo": "whatsapp",
+                "assunto": "Atualização de funil pela IA (WhatsApp)",
+                "conteudo": " | ".join(
+                    [x for x in [
+                        f"etapa: {etapa_norm}" if etapa_norm else None,
+                        f"temperatura: {temp_norm}" if temp_norm else None,
+                        f"valor: {valor_agregado}" if valor_agregado else None,
+                        f"motivo: {motivo}" if motivo else None,
+                    ] if x]
+                ) or "atualização",
+            }
+        ).execute()
+        return {"ok": True, "atualizado": {k: v for k, v in update.items() if k != "temperatura_at"}}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ia_atualizar_etapa_falhou", extra={"org_id": org_id, "error": str(exc)})
+        return {"ok": False, "erro": str(exc)}
+
+
 def buscar_dados_lead(*, supa: Client, org_id: str, lead_id: str) -> dict[str, Any]:
     """Contexto do lead: nome/telefone + último interesse."""
     try:
