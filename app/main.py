@@ -1,7 +1,12 @@
 # app/main.py
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.deps import get_supabase_admin
 
 from app.routers import marketing_guide, marketing_guide_pdf
 from app.routers.lead_propostas import router as lead_propostas_router
@@ -81,3 +86,38 @@ async def print_routes():
         if isinstance(route, APIRoute):
             print(f"{sorted(route.methods)} -> {route.path}")
     print("=========================")
+
+
+_wa_logger = logging.getLogger("whatsapp.scheduler")
+
+
+async def _whatsapp_dispatch_loop():
+    """Agendador embutido: drena a fila de WhatsApp periodicamente."""
+    from app.services import whatsapp_service as wa
+
+    interval = settings.WHATSAPP_DISPATCH_INTERVAL_SEC
+    while True:
+        try:
+            supa = get_supabase_admin()
+            result = await asyncio.to_thread(wa.process_outbound_queue, supa=supa, limit=25)
+            if result.get("processed"):
+                _wa_logger.info("whatsapp_dispatch_tick", extra={"result": result})
+        except Exception as exc:  # noqa: BLE001
+            _wa_logger.warning("whatsapp_dispatch_loop_error", extra={"error": str(exc)})
+        await asyncio.sleep(max(interval, 15))
+
+
+@app.on_event("startup")
+async def start_whatsapp_scheduler():
+    if settings.WHATSAPP_DISPATCH_INTERVAL_SEC and settings.WHATSAPP_DISPATCH_INTERVAL_SEC > 0:
+        app.state._wa_task = asyncio.create_task(_whatsapp_dispatch_loop())
+        print(f"[whatsapp] agendador embutido ativo (a cada {settings.WHATSAPP_DISPATCH_INTERVAL_SEC}s)")
+    else:
+        print("[whatsapp] agendador embutido desligado (WHATSAPP_DISPATCH_INTERVAL_SEC=0)")
+
+
+@app.on_event("shutdown")
+async def stop_whatsapp_scheduler():
+    task = getattr(app.state, "_wa_task", None)
+    if task:
+        task.cancel()

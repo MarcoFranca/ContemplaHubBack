@@ -49,8 +49,11 @@ class Settings(BaseModel):
     WHATSAPP_VERIFY_TOKEN: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
     # config_id do fluxo de Embedded Signup criado no app da Meta (opcional).
     WHATSAPP_ES_CONFIG_ID: str = os.getenv("WHATSAPP_ES_CONFIG_ID", "")
-    # Segredo para o dispatcher (cron do Railway) autenticar no endpoint interno.
+    # Segredo para o dispatcher (cron externo, se usado) autenticar no endpoint interno.
     WHATSAPP_DISPATCH_SECRET: str = os.getenv("WHATSAPP_DISPATCH_SECRET", "")
+    # Agendador embutido: intervalo em segundos entre execuções do dispatcher.
+    # 0 desliga o agendador interno (usar cron externo). Default 60s.
+    WHATSAPP_DISPATCH_INTERVAL_SEC: int = int(os.getenv("WHATSAPP_DISPATCH_INTERVAL_SEC", "60"))
 
     BACKEND_PUBLIC_URL: str = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000")
     FRONTEND_SITE_URL: str = os.getenv("FRONTEND_SITE_URL", "http://localhost:3000")
