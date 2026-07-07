@@ -55,6 +55,15 @@ class Settings(BaseModel):
     # 0 desliga o agendador interno (usar cron externo). Default 60s.
     WHATSAPP_DISPATCH_INTERVAL_SEC: int = int(os.getenv("WHATSAPP_DISPATCH_INTERVAL_SEC", "60"))
 
+    # Agente de IA (WhatsApp). Chave da API da Anthropic + toggles.
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    # Master switch (além do toggle por org em whatsapp_integrations.ai_enabled).
+    WHATSAPP_AI_ENABLED: bool = os.getenv("WHATSAPP_AI_ENABLED", "true").lower() in ("1", "true", "yes")
+    # Modelo. Sonnet 5 (custo/qualidade p/ alto volume); trocar p/ claude-opus-4-8 se quiser topo.
+    WHATSAPP_AI_MODEL: str = os.getenv("WHATSAPP_AI_MODEL", "claude-sonnet-5")
+    # Quantas mensagens do histórico enviar de contexto por conversa.
+    WHATSAPP_AI_MAX_HISTORY: int = int(os.getenv("WHATSAPP_AI_MAX_HISTORY", "30"))
+
     BACKEND_PUBLIC_URL: str = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000")
     FRONTEND_SITE_URL: str = os.getenv("FRONTEND_SITE_URL", "http://localhost:3000")
 

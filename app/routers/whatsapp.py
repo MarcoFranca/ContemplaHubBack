@@ -17,6 +17,7 @@ from app.schemas.whatsapp import (
     WhatsappDispatchOut,
     WhatsappIntegrationOut,
     WhatsappManualConnectIn,
+    WhatsappAiToggleIn,
     WhatsappOkOut,
     WhatsappReplyIn,
     WhatsappSignupConfigOut,
@@ -115,6 +116,15 @@ def disconnect_whatsapp(
 # --------------------------------------------------------------------------- #
 # Template configurável
 # --------------------------------------------------------------------------- #
+@router.post("/whatsapp/ai/toggle", response_model=Optional[WhatsappIntegrationOut])
+def toggle_whatsapp_ai(
+    payload: WhatsappAiToggleIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+):
+    return wa.set_ai_enabled(supa=supa, org_id=ctx.org_id, enabled=payload.enabled)
+
+
 @router.get("/whatsapp/template", response_model=WhatsappTemplateOut)
 def get_whatsapp_template(
     supa: Client = Depends(get_supabase_admin),

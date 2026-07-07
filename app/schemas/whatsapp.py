@@ -36,6 +36,10 @@ class WhatsappReplyIn(BaseModel):
     body: str = Field(min_length=1)
 
 
+class WhatsappAiToggleIn(BaseModel):
+    enabled: bool
+
+
 class WhatsappOkOut(BaseModel):
     ok: bool = True
 
@@ -67,6 +71,7 @@ class WhatsappIntegrationOut(BaseModel):
     quality_rating: Optional[str] = None
     messaging_limit: Optional[str] = None
     ativo: bool
+    ai_enabled: bool = False
     last_webhook_at: Optional[datetime] = None
     last_success_at: Optional[datetime] = None
     last_error_at: Optional[datetime] = None

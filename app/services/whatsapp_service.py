@@ -304,6 +304,11 @@ def deactivate_integration(*, supa: Client, org_id: str, integration_id: str) ->
     ).execute()
 
 
+def set_ai_enabled(*, supa: Client, org_id: str, enabled: bool) -> Optional[dict[str, Any]]:
+    supa.table("whatsapp_integrations").update({"ai_enabled": enabled}).eq("org_id", org_id).execute()
+    return sanitize_integration_or_none(get_integration_row(supa=supa, org_id=org_id))
+
+
 # --------------------------------------------------------------------------- #
 # Template configurável por org
 # --------------------------------------------------------------------------- #
@@ -785,39 +790,101 @@ def _handle_inbound(
     ).execute()
 
     auto_replied = False
-    # auto-resposta só no primeiro contato (evita eco a cada mensagem).
-    if created:
+    ai_replied = False
+
+    # 1) Agente de IA (se ligado para a org e o lead não estiver em atendimento humano).
+    ai_on = settings.WHATSAPP_AI_ENABLED and bool(integration.get("ai_enabled"))
+    if ai_on:
+        try:
+            from app.ai import agent as ai_agent
+
+            if not ai_agent.lead_em_handoff(supa, org_id, lead_id):
+                hist_resp = (
+                    supa.table("whatsapp_messages")
+                    .select("direction, body, msg_type, created_at")
+                    .eq("org_id", org_id)
+                    .eq("lead_id", lead_id)
+                    .order("created_at", desc=False)
+                    .limit(60)
+                    .execute()
+                )
+                history = getattr(hist_resp, "data", None) or []
+                result = ai_agent.run_agent(
+                    supa=supa,
+                    org_id=org_id,
+                    lead_id=lead_id,
+                    history=history,
+                    nome_cliente=(lead.get("nome") if lead else None),
+                )
+                reply_text = result.get("reply")
+                if reply_text:
+                    _send_and_log_reply(
+                        supa=supa,
+                        integration=integration,
+                        org_id=org_id,
+                        lead_id=lead_id,
+                        to=from_wa,
+                        body=reply_text,
+                        payload={"ai": True, "ai_handoff": bool(result.get("escalated"))},
+                    )
+                    ai_replied = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_ai_failed", extra={"org_id": org_id, "error": str(exc)})
+
+    # 2) Fallback: auto-resposta fixa só no primeiro contato quando a IA não respondeu.
+    if not ai_replied and created:
         try:
             template = get_template(supa=supa, org_id=org_id)
             body = _welcome_text(template, lead.get("nome") if lead else None)
-            reply = send_text_message(
-                access_token=_trim(integration.get("access_token")),
-                phone_number_id=_trim(integration.get("phone_number_id")),
+            _send_and_log_reply(
+                supa=supa,
+                integration=integration,
+                org_id=org_id,
+                lead_id=lead_id,
                 to=from_wa,
                 body=body,
+                payload={"auto_reply": True},
             )
-            reply_wamid = None
-            reply_msgs = reply.get("messages") if isinstance(reply, dict) else None
-            if isinstance(reply_msgs, list) and reply_msgs:
-                reply_wamid = reply_msgs[0].get("id")
-            supa.table("whatsapp_messages").insert(
-                {
-                    "org_id": org_id,
-                    "lead_id": lead_id,
-                    "direction": "out",
-                    "wa_message_id": reply_wamid,
-                    "phone": from_wa,
-                    "msg_type": "text",
-                    "body": body,
-                    "status": "sent",
-                    "payload": {"auto_reply": True},
-                }
-            ).execute()
             auto_replied = True
         except Exception as exc:  # noqa: BLE001
             logger.warning("whatsapp_autoreply_failed", extra={"org_id": org_id, "error": str(exc)})
 
-    return {"lead_created": created, "auto_replied": auto_replied}
+    return {"lead_created": created, "auto_replied": auto_replied or ai_replied}
+
+
+def _send_and_log_reply(
+    *,
+    supa: Client,
+    integration: dict[str, Any],
+    org_id: str,
+    lead_id: Optional[str],
+    to: str,
+    body: str,
+    payload: dict[str, Any],
+) -> None:
+    reply = send_text_message(
+        access_token=_trim(integration.get("access_token")),
+        phone_number_id=_trim(integration.get("phone_number_id")),
+        to=to,
+        body=body,
+    )
+    reply_wamid = None
+    reply_msgs = reply.get("messages") if isinstance(reply, dict) else None
+    if isinstance(reply_msgs, list) and reply_msgs:
+        reply_wamid = reply_msgs[0].get("id")
+    supa.table("whatsapp_messages").insert(
+        {
+            "org_id": org_id,
+            "lead_id": lead_id,
+            "direction": "out",
+            "wa_message_id": reply_wamid,
+            "phone": to,
+            "msg_type": "text",
+            "body": body,
+            "status": "sent",
+            "payload": payload,
+        }
+    ).execute()
 
 
 def handle_webhook_payload(*, supa: Client, payload: dict[str, Any]) -> dict[str, Any]:
