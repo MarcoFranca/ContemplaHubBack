@@ -70,6 +70,201 @@ def simular_consorcio(
 
 
 # --------------------------------------------------------------------------- #
+# Proposta: a IA monta e envia uma proposta com base na simulação
+# --------------------------------------------------------------------------- #
+# Simulador usa imovel/auto/pesados; a proposta usa imobiliario/auto/outro.
+_PRODUTO_PROPOSTA = {"imovel": "imobiliario", "auto": "auto", "pesados": "outro"}
+
+
+def gerar_proposta(
+    *,
+    supa: Client,
+    org_id: str,
+    lead_id: str,
+    created_by: Optional[str] = None,
+    titulo: Optional[str] = None,
+    cenarios: Optional[list[dict[str, Any]]] = None,
+    enviar: bool = True,
+) -> dict[str, Any]:
+    """Monta uma proposta (calculando os números via simulador) e a envia ao cliente.
+
+    Cada cenário: {produto, valor_carta, prazo?, redutor_percent?, administradora?, titulo?}.
+    Retorna o link público da proposta para a IA mandar ao cliente.
+    """
+    import os
+
+    from app.schemas.propostas import CreateLeadProposalInput, CreateProposalScenarioInput
+    from app.services.lead_propostas_service import create_lead_proposta
+
+    cenarios = cenarios or []
+    if not cenarios:
+        return {"ok": False, "erro": "informe ao menos um cenário"}
+
+    inputs: list[CreateProposalScenarioInput] = []
+    for i, c in enumerate(cenarios):
+        produto = (c.get("produto") or "imovel").lower()
+        sim = simular_consorcio(
+            produto=produto,
+            valor_credito=float(c.get("valor_carta") or 0),
+            prazo=c.get("prazo"),
+            redutor_percentual=c.get("redutor_percent"),
+        )
+        if sim.get("erro"):
+            return {"ok": False, "erro": f"cenário {i + 1}: {sim['erro']}"}
+        redutor = c.get("redutor_percent")
+        inputs.append(
+            CreateProposalScenarioInput(
+                id=chr(ord("A") + i),
+                titulo=c.get("titulo") or f"Carta {produto} {sim.get('valor_credito')}",
+                produto=_PRODUTO_PROPOSTA.get(produto, "outro"),
+                administradora=c.get("administradora"),
+                valor_carta=float(sim.get("valor_credito") or 0),
+                prazo_meses=int(sim.get("prazo_meses") or 0),
+                com_redutor=bool(redutor and redutor > 0),
+                redutor_percent=redutor,
+                parcela_cheia=sim.get("parcela_integral"),
+                parcela_reduzida=sim.get("parcela_reduzida"),
+                taxa_admin_anual=sim.get("taxa_administracao_pct"),
+                permite_lance_embutido=True,
+                lance_embutido_pct_max=sim.get("embutido_maximo_pct"),
+                observacoes="Valores de referência. Condições finais dependem da administradora e do grupo.",
+            )
+        )
+
+    try:
+        data = CreateLeadProposalInput(
+            titulo=titulo or "Proposta de consórcio",
+            status="enviado" if enviar else "rascunho",
+            cenarios=inputs,
+        )
+        rec = create_lead_proposta(org_id=org_id, lead_id=lead_id, created_by=created_by, data=data, supa=supa)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ia_gerar_proposta_falhou", extra={"org_id": org_id, "error": str(exc)})
+        return {"ok": False, "erro": str(exc)}
+
+    frontend = os.getenv("FRONTEND_APP_URL", "https://app.contemplahub.com").rstrip("/")
+    link = f"{frontend}/propostas/{rec.public_hash}" if rec.public_hash else None
+
+    # ao enviar proposta, move o lead para a etapa 'proposta'
+    if enviar:
+        try:
+            supa.table("leads").update({"etapa": "proposta"}).eq("org_id", org_id).eq("id", lead_id).execute()
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        supa.table("activities").insert(
+            {
+                "id": str(uuid4()),
+                "org_id": org_id,
+                "lead_id": lead_id,
+                "tipo": "whatsapp",
+                "assunto": "Proposta gerada e enviada pela IA" if enviar else "Proposta em rascunho (IA)",
+                "conteudo": f"{data.titulo} | {len(inputs)} cenário(s) | link: {link or 'n/d'}",
+            }
+        ).execute()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {"ok": True, "proposta_id": rec.id, "link": link, "status": rec.status, "cenarios": len(inputs)}
+
+
+# --------------------------------------------------------------------------- #
+# Agenda: a IA agenda uma reunião com o especialista (agenda interna)
+# --------------------------------------------------------------------------- #
+def agendar_reuniao(
+    *,
+    supa: Client,
+    org_id: str,
+    lead_id: str,
+    inicio: str,
+    duracao_min: Optional[int] = 30,
+    titulo: Optional[str] = None,
+    observacao: Optional[str] = None,
+) -> dict[str, Any]:
+    """Cria um agendamento de reunião com o especialista. `inicio` em ISO 8601.
+
+    Evita sobreposição com outra reunião ativa da mesma org no mesmo horário.
+    """
+    from datetime import datetime, timedelta
+
+    try:
+        dt = datetime.fromisoformat(inicio.replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "erro": "data/hora inválida (use ISO 8601, ex.: 2026-07-10T15:00:00-03:00)"}
+
+    dur = int(duracao_min or 30)
+    fim = dt + timedelta(minutes=dur)
+
+    # dono/especialista responsável pelo lead (se houver)
+    especialista_id: Optional[str] = None
+    try:
+        lead_resp = supa.table("leads").select("owner_id").eq("org_id", org_id).eq("id", lead_id).limit(1).execute()
+        lead_rows = getattr(lead_resp, "data", None) or []
+        if lead_rows:
+            especialista_id = lead_rows[0].get("owner_id")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # prevenção simples de conflito: mesma org, status ativo, começo no mesmo horário
+    try:
+        conflito = (
+            supa.table("agendamentos")
+            .select("id, inicio")
+            .eq("org_id", org_id)
+            .in_("status", ["agendado", "confirmado"])
+            .eq("inicio", dt.isoformat())
+            .limit(1)
+            .execute()
+        )
+        if getattr(conflito, "data", None):
+            return {"ok": False, "erro": "horário indisponível", "sugestao": "ofereça outro horário ao cliente"}
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        ins = (
+            supa.table("agendamentos")
+            .insert(
+                {
+                    "org_id": org_id,
+                    "lead_id": lead_id,
+                    "especialista_id": especialista_id,
+                    "titulo": titulo or "Reunião com especialista",
+                    "inicio": dt.isoformat(),
+                    "fim": fim.isoformat(),
+                    "status": "agendado",
+                    "origem": "ia",
+                    "observacao": observacao,
+                }
+            )
+            .execute()
+        )
+        rows = getattr(ins, "data", None) or []
+        ag_id = rows[0].get("id") if rows else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ia_agendar_reuniao_falhou", extra={"org_id": org_id, "error": str(exc)})
+        return {"ok": False, "erro": str(exc)}
+
+    # atividade tipo reuniao aparece na timeline do lead e notifica o time
+    try:
+        supa.table("activities").insert(
+            {
+                "id": str(uuid4()),
+                "org_id": org_id,
+                "lead_id": lead_id,
+                "tipo": "reuniao",
+                "assunto": "Reunião agendada pela IA",
+                "conteudo": f"{titulo or 'Reunião com especialista'} em {dt.isoformat()} ({dur} min). {observacao or ''}".strip(),
+            }
+        ).execute()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {"ok": True, "agendamento_id": ag_id, "inicio": dt.isoformat(), "duracao_min": dur}
+
+
+# --------------------------------------------------------------------------- #
 # CRM: qualificação e dados do lead
 # --------------------------------------------------------------------------- #
 def registrar_qualificacao(

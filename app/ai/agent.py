@@ -82,6 +82,58 @@ _TOOLS = [
         },
     },
     {
+        "name": "gerar_proposta",
+        "description": (
+            "Monta e ENVIA uma proposta formal de consórcio ao cliente (calcula os números via simulador e "
+            "gera um link público). Use quando o cliente demonstrar intenção real e você já tiver produto e valor "
+            "de carta. Pode ter 1 a 3 cenários (ex.: com e sem redutor, ou valores diferentes). Depois de chamar, "
+            "mande ao cliente o link retornado, de forma natural. NÃO invente administradora/taxa específica: só "
+            "informe a administradora se souber com certeza pelos dados da org."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "titulo": {"type": "string", "description": "Título da proposta (ex.: 'Consórcio imóvel R$ 300 mil')"},
+                "cenarios": {
+                    "type": "array",
+                    "description": "1 a 3 cenários de carta",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "produto": {"type": "string", "enum": ["imovel", "auto", "pesados"]},
+                            "valor_carta": {"type": "number"},
+                            "prazo": {"type": "integer"},
+                            "redutor_percent": {"type": "number", "description": "0-100, se houver redutor"},
+                            "administradora": {"type": "string"},
+                            "titulo": {"type": "string"},
+                        },
+                        "required": ["produto", "valor_carta"],
+                    },
+                },
+            },
+            "required": ["cenarios"],
+        },
+    },
+    {
+        "name": "agendar_reuniao",
+        "description": (
+            "Agenda uma reunião do cliente com o especialista na agenda interna. Use quando o cliente aceitar "
+            "conversar com um especialista e você tiver combinado data e horário específicos com ele. SEMPRE confirme "
+            "o dia e a hora exatos com o cliente ANTES de chamar. Passe 'inicio' em ISO 8601 com fuso -03:00. Se o "
+            "horário voltar indisponível, ofereça outro ao cliente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "inicio": {"type": "string", "description": "Início em ISO 8601, ex.: 2026-07-10T15:00:00-03:00"},
+                "duracao_min": {"type": "integer", "description": "Duração em minutos (default 30)"},
+                "titulo": {"type": "string"},
+                "observacao": {"type": "string", "description": "Contexto para o especialista"},
+            },
+            "required": ["inicio"],
+        },
+    },
+    {
         "name": "atualizar_etapa_classificacao",
         "description": (
             "Move o lead no funil de vendas e/ou classifica temperatura conforme a conversa evolui. "
@@ -112,7 +164,7 @@ _TOOLS = [
     },
     {
         "name": "escalar_humano",
-        "description": "Transfere para um especialista humano. Use SOMENTE nos gatilhos reais: pedido de proposta/fechamento/contrato/boleto; taxa, administradora, grupo ou prazo de contemplação específicos; FGTS, quitação de financiamento, construção/reforma, documentos; cliente insatisfeito/irritado; pedido explícito de humano; assunto fora de consórcio. NÃO use para objeções, dúvidas, comparações ou hesitação ('consórcio é ruim', 'vou pensar', 'achei caro') - isso você mesmo responde e conduz.",
+        "description": "Transfere para um especialista humano. Use SOMENTE nos gatilhos reais: fechamento/contrato/boleto/pagamento; taxa, administradora, grupo ou prazo de contemplação específicos; FGTS, quitação de financiamento, construção/reforma, documentos; cliente insatisfeito/irritado; pedido explícito de humano; assunto fora de consórcio. NÃO use para objeções, dúvidas, comparações ou hesitação ('consórcio é ruim', 'vou pensar', 'achei caro') nem para PEDIDO DE PROPOSTA (proposta você mesmo gera com gerar_proposta) - isso você conduz.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -123,6 +175,14 @@ _TOOLS = [
         },
     },
 ]
+
+
+def _agora_brasil() -> str:
+    from datetime import datetime, timedelta, timezone
+
+    dias = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+    agora = datetime.now(timezone(timedelta(hours=-3)))  # America/Sao_Paulo (sem DST atual)
+    return f"{dias[agora.weekday()]}, {agora.strftime('%d/%m/%Y %H:%M')} (horário de Brasília, UTC-03:00)"
 
 
 def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]) -> str:
@@ -140,12 +200,18 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Use `atualizar_etapa_classificacao` para mover o lead no funil e classificar a temperatura sempre que a "
         "conversa avançar (respondeu, começou a qualificar, recebeu proposta, negociando, esfriou). Isso mantém o "
         "kanban do time atualizado sozinho. Não anuncie isso ao cliente, faça em segundo plano.\n"
+        "- Use `gerar_proposta` quando o cliente demonstrar intenção real e você já tiver produto e valor de carta: "
+        "a ferramenta cria e envia a proposta e devolve um link; mande esse link ao cliente de forma natural. "
+        "Pedir proposta NÃO é escalonamento: você mesmo gera.\n"
+        "- Use `agendar_reuniao` quando o cliente aceitar falar com um especialista: combine dia e horário "
+        f"específicos com ele (a data/hora atual é {_agora_brasil()}) e só então agende. Confirme ao cliente o "
+        "horário marcado. Isso substitui o escalonamento nesses casos: agende em vez de só transferir.\n"
         "\n"
         "ESCALONAMENTO (regra crítica):\n"
         "- NÃO escale por objeção, dúvida, comparação, hesitação ou frases como 'consórcio é ruim/furada', "
         "'redutor não presta', 'vou pensar', 'achei caro'. Isso é atendimento normal: RECONHEÇA, EXPLIQUE, "
         "REPOSICIONE e CONDUZA com uma pergunta (siga o arquivo de objeções). Objeção NUNCA é motivo de escalonamento.\n"
-        "- Use `escalar_humano` SOMENTE quando o cliente: pedir proposta/fechar/contratar; pedir boleto, contrato ou "
+        "- Use `escalar_humano` SOMENTE quando o cliente: quiser fechar/contratar de fato; pedir boleto, contrato ou "
         "link de pagamento; perguntar taxa, administradora, grupo ou prazo de contemplação ESPECÍFICOS; falar de FGTS, "
         "quitação de financiamento, construção/reforma ou enviar documentos; estiver claramente insatisfeito/irritado; "
         "pedir explicitamente falar com um humano; ou trazer assunto totalmente fora de consórcio.\n"
@@ -209,6 +275,10 @@ def _exec_tool(
         return ai_tools.registrar_qualificacao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "atualizar_etapa_classificacao":
         return ai_tools.atualizar_etapa_classificacao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
+    if name == "gerar_proposta":
+        return ai_tools.gerar_proposta(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
+    if name == "agendar_reuniao":
+        return ai_tools.agendar_reuniao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "escalar_humano":
         state["escalated"] = True
         motivo = args.get("motivo") or "escalonamento"
