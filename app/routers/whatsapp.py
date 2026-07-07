@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from typing import Optional
 
@@ -191,17 +193,40 @@ async def verify_whatsapp_webhook(
     return PlainTextResponse(content=hub_challenge, status_code=200)
 
 
+def _valid_signature(raw: bytes, signature: Optional[str]) -> bool:
+    """Valida X-Hub-Signature-256 com o app secret (quando configurado)."""
+    secret = settings.WHATSAPP_APP_SECRET.strip()
+    if not secret:
+        # sem secret configurado, não bloqueia (verificação por token já ocorre no GET)
+        return True
+    if not signature or not signature.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature.split("=", 1)[1])
+
+
 @router.post("/api/public/webhooks/whatsapp")
 @router.post("/api/public/webhooks/whatsapp/", include_in_schema=False)
-async def receive_whatsapp_webhook(request: Request):
-    # Fase 3 tratará inbound e status. Por ora, apenas reconhecemos com 200
-    # para a assinatura do webhook na Meta ficar válida.
+async def receive_whatsapp_webhook(
+    request: Request,
+    x_hub_signature_256: Optional[str] = Header(default=None, alias="X-Hub-Signature-256"),
+    supa: Client = Depends(get_supabase_admin),
+):
+    raw = await request.body()
+    if not _valid_signature(raw, x_hub_signature_256):
+        raise HTTPException(status_code=403, detail="Assinatura inválida.")
+
     try:
-        body = await request.json()
+        payload = await request.json()
     except Exception:  # noqa: BLE001
-        body = None
-    logger.info(
-        "whatsapp_webhook_received",
-        extra={"has_body": bool(body)},
-    )
+        payload = None
+
+    if isinstance(payload, dict):
+        try:
+            stats = wa.handle_webhook_payload(supa=supa, payload=payload)
+            logger.info("whatsapp_webhook_processed", extra={"stats": stats})
+        except Exception:  # noqa: BLE001 - sempre responder 200 para a Meta não reenviar em loop
+            logger.exception("whatsapp_webhook_error")
+
+    # Sempre 200: a Meta reenvia em caso de erro/timeout.
     return {"received": True}

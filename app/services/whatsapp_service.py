@@ -14,6 +14,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 import requests
 from fastapi import HTTPException, status
@@ -583,3 +584,208 @@ def process_outbound_queue(*, supa: Client, limit: int = 25) -> dict[str, Any]:
             failed += 1
 
     return {"processed": len(items), "sent": sent, "failed": failed, "skipped": skipped}
+
+
+# --------------------------------------------------------------------------- #
+# Fase 3 - Inbound: recebe respostas/Click-to-WhatsApp, cria lead, auto-resposta
+# --------------------------------------------------------------------------- #
+def _resolve_integration_by_phone_number_id(
+    supa: Client, phone_number_id: Optional[str]
+) -> Optional[dict[str, Any]]:
+    if not phone_number_id:
+        return None
+    resp = (
+        supa.table("whatsapp_integrations")
+        .select("*")
+        .eq("phone_number_id", str(phone_number_id))
+        .eq("ativo", True)
+        .limit(1)
+        .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    return rows[0] if rows else None
+
+
+def send_text_message(*, access_token: str, phone_number_id: str, to: str, body: str) -> dict[str, Any]:
+    """Mensagem de texto livre (só válida dentro da janela de 24h de atendimento)."""
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"preview_url": False, "body": body},
+    }
+    return send_template_message(access_token=access_token, phone_number_id=phone_number_id, payload=payload)
+
+
+def _wamid_exists(supa: Client, wamid: Optional[str]) -> bool:
+    if not wamid:
+        return False
+    resp = supa.table("whatsapp_messages").select("id").eq("wa_message_id", wamid).limit(1).execute()
+    return bool(getattr(resp, "data", None))
+
+
+def _extract_message_text(msg: dict[str, Any]) -> Optional[str]:
+    mtype = msg.get("type")
+    if mtype == "text":
+        return (msg.get("text") or {}).get("body")
+    if mtype == "button":
+        return (msg.get("button") or {}).get("text")
+    if mtype == "interactive":
+        inter = msg.get("interactive") or {}
+        sub = inter.get(inter.get("type") or "", {}) if isinstance(inter, dict) else {}
+        return sub.get("title") if isinstance(sub, dict) else None
+    return f"[{mtype}]" if mtype else None
+
+
+def _find_or_create_lead(
+    supa: Client, org_id: str, phone: str, nome: Optional[str]
+) -> tuple[Optional[dict[str, Any]], bool]:
+    digits = re.sub(r"\D", "", phone or "")
+    candidates = {digits}
+    if digits.startswith("55") and len(digits) in (12, 13):
+        candidates.add(digits[2:])  # sem DDI
+    elif len(digits) in (10, 11):
+        candidates.add("55" + digits)
+
+    for cand in candidates:
+        resp = (
+            supa.table("leads")
+            .select("id, nome, telefone")
+            .eq("org_id", org_id)
+            .eq("telefone", cand)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", None) or []
+        if rows:
+            return rows[0], False
+
+    lead_id = str(uuid4())
+    payload = {
+        "id": lead_id,
+        "org_id": org_id,
+        "nome": (nome or "").strip() or f"WhatsApp {digits[-4:]}" if digits else (nome or "Lead WhatsApp"),
+        "telefone": digits or phone,
+        "origem": "whatsapp",
+        "etapa": "novo",
+        "channel": "whatsapp",
+    }
+    supa.table("leads").insert(payload).execute()
+    return {"id": lead_id, "nome": payload["nome"], "telefone": payload["telefone"]}, True
+
+
+def _welcome_text(template: dict[str, Any], nome: Optional[str]) -> str:
+    body = _trim(template.get("body_text")) or (
+        "Olá {{1}}! Recebemos seu contato e um especialista já vai falar com você."
+    )
+    return body.replace("{{1}}", (nome or "").strip() or "tudo bem")
+
+
+def _apply_status(supa: Client, st: dict[str, Any]) -> None:
+    wamid = st.get("id")
+    status_val = st.get("status")  # sent|delivered|read|failed
+    if not wamid or not status_val:
+        return
+    changes: dict[str, Any] = {"status": status_val, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if status_val == "failed":
+        errors = st.get("errors") or []
+        if errors:
+            changes["error"] = str(errors[0].get("title") or errors[0])
+    supa.table("whatsapp_messages").update(changes).eq("wa_message_id", wamid).execute()
+
+
+def _handle_inbound(
+    supa: Client, integration: dict[str, Any], msg: dict[str, Any], contact_name: Optional[str]
+) -> dict[str, Any]:
+    org_id = integration["org_id"]
+    wamid = msg.get("id")
+    from_wa = msg.get("from")
+
+    if _wamid_exists(supa, wamid):
+        return {}
+
+    text = _extract_message_text(msg)
+    lead, created = _find_or_create_lead(supa, org_id, from_wa or "", contact_name)
+    lead_id = lead.get("id") if lead else None
+
+    supa.table("whatsapp_messages").insert(
+        {
+            "org_id": org_id,
+            "lead_id": lead_id,
+            "direction": "in",
+            "wa_message_id": wamid,
+            "phone": from_wa,
+            "msg_type": msg.get("type"),
+            "body": text,
+            "status": "received",
+            "payload": msg,
+        }
+    ).execute()
+
+    auto_replied = False
+    # auto-resposta só no primeiro contato (evita eco a cada mensagem).
+    if created:
+        try:
+            template = get_template(supa=supa, org_id=org_id)
+            body = _welcome_text(template, lead.get("nome") if lead else None)
+            reply = send_text_message(
+                access_token=_trim(integration.get("access_token")),
+                phone_number_id=_trim(integration.get("phone_number_id")),
+                to=from_wa,
+                body=body,
+            )
+            reply_wamid = None
+            reply_msgs = reply.get("messages") if isinstance(reply, dict) else None
+            if isinstance(reply_msgs, list) and reply_msgs:
+                reply_wamid = reply_msgs[0].get("id")
+            supa.table("whatsapp_messages").insert(
+                {
+                    "org_id": org_id,
+                    "lead_id": lead_id,
+                    "direction": "out",
+                    "wa_message_id": reply_wamid,
+                    "phone": from_wa,
+                    "msg_type": "text",
+                    "body": body,
+                    "status": "sent",
+                    "payload": {"auto_reply": True},
+                }
+            ).execute()
+            auto_replied = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_autoreply_failed", extra={"org_id": org_id, "error": str(exc)})
+
+    return {"lead_created": created, "auto_replied": auto_replied}
+
+
+def handle_webhook_payload(*, supa: Client, payload: dict[str, Any]) -> dict[str, Any]:
+    """Processa o payload do webhook do WhatsApp (mensagens + status)."""
+    stats = {"messages": 0, "statuses": 0, "leads_created": 0, "auto_replies": 0}
+    for entry in payload.get("entry") or []:
+        for change in entry.get("changes") or []:
+            value = change.get("value") or {}
+            metadata = value.get("metadata") or {}
+            integration = _resolve_integration_by_phone_number_id(
+                supa, metadata.get("phone_number_id")
+            )
+            if not integration:
+                continue
+
+            for st in value.get("statuses") or []:
+                _apply_status(supa, st)
+                stats["statuses"] += 1
+
+            name_by_wa: dict[str, Optional[str]] = {}
+            for c in value.get("contacts") or []:
+                if c.get("wa_id"):
+                    name_by_wa[c["wa_id"]] = (c.get("profile") or {}).get("name")
+
+            for msg in value.get("messages") or []:
+                res = _handle_inbound(supa, integration, msg, name_by_wa.get(msg.get("from")))
+                stats["messages"] += 1
+                if res.get("lead_created"):
+                    stats["leads_created"] += 1
+                if res.get("auto_replied"):
+                    stats["auto_replies"] += 1
+
+    return stats

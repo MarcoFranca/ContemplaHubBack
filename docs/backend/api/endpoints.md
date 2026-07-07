@@ -1700,8 +1700,11 @@ Verificação do webhook (`hub.challenge`), valida `hub.verify_token` contra
 
 ### `POST /api/public/webhooks/whatsapp`
 
-Recebimento de eventos (status/inbound). Na Fase 1 apenas reconhece com 200; o tratamento
-completo (criar/dedup lead `origem=whatsapp` e auto-resposta na janela de 24h) vem na Fase 3.
+Recebe eventos do WhatsApp. Valida `X-Hub-Signature-256` com `WHATSAPP_APP_SECRET` (quando
+configurado). Processa `statuses` (atualiza status da mensagem por `wa_message_id`) e `messages`
+(inbound): resolve org por `phone_number_id`, cria/dedup lead (`origem=whatsapp`), loga a mensagem e,
+no primeiro contato, envia auto-resposta de texto na janela de 24h. Idempotente por `wa_message_id`.
+Sempre responde 200 (a Meta reenvia em erro/timeout).
 
 Tabelas (migration `013_whatsapp.sql`): `whatsapp_integrations`, `whatsapp_templates`,
 `whatsapp_messages`, `whatsapp_outbound_queue`. Trigger `trg_enqueue_whatsapp_welcome`
