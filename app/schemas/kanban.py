@@ -83,6 +83,7 @@ class LeadCard(BaseModel):
     source_label: Optional[str] = None
     form_label: Optional[str] = None
     channel: Optional[str] = None
+    temperatura: Optional[str] = None  # frio | morno | quente (classificado pela IA)
     utm_campaign: Optional[str] = None
     utm_term: Optional[str] = None
     utm_content: Optional[str] = None

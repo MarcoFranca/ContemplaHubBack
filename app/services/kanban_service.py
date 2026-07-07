@@ -68,7 +68,7 @@ def build_kanban_snapshot(
         supa.table("leads")
         .select(
             "id, nome, etapa, telefone, email, origem, owner_id, created_at, first_contact_at, "
-            "source_label, form_label, channel, utm_campaign, utm_term, utm_content, "
+            "source_label, form_label, channel, temperatura, utm_campaign, utm_term, utm_content, "
             f"{LEAD_ADDRESS_SELECT}"
         )
         .eq("org_id", org_id)
@@ -196,6 +196,7 @@ def build_kanban_snapshot(
             source_label=row.get("source_label"),
             form_label=row.get("form_label"),
             channel=row.get("channel"),
+            temperatura=row.get("temperatura"),
             utm_campaign=row.get("utm_campaign"),
             utm_term=row.get("utm_term"),
             utm_content=row.get("utm_content"),
