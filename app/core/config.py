@@ -72,6 +72,12 @@ class Settings(BaseModel):
     REMINDER_ENABLED: bool = os.getenv("REMINDER_ENABLED", "true").lower() in ("1", "true", "yes")
     # Com que frequência a varredura roda (mais lenta que o dispatcher da fila).
     FOLLOWUP_SWEEP_INTERVAL_SEC: int = int(os.getenv("FOLLOWUP_SWEEP_INTERVAL_SEC", "300"))
+    # Templates aprovados p/ reengajar FORA da janela de 24h/72h. Vazio = não envia fora
+    # da janela (só dentro). Cada template aprovado na Meta deve ter 1 variável {{1}} = nome.
+    FOLLOWUP_TEMPLATE_NAME: str = os.getenv("FOLLOWUP_TEMPLATE_NAME", "")
+    FOLLOWUP_TEMPLATE_LANG: str = os.getenv("FOLLOWUP_TEMPLATE_LANG", "pt_BR")
+    REMINDER_TEMPLATE_NAME: str = os.getenv("REMINDER_TEMPLATE_NAME", "")
+    REMINDER_TEMPLATE_LANG: str = os.getenv("REMINDER_TEMPLATE_LANG", "pt_BR")
 
     # Áudio (transcrição + voz). Provedor plugável; hoje OpenAI (transcreve e fala com 1 chave).
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

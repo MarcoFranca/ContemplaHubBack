@@ -903,6 +903,18 @@ def _handle_inbound(
     lead, created = _find_or_create_lead(supa, org_id, from_wa or "", contact_name)
     lead_id = lead.get("id") if lead else None
 
+    # Click-to-WhatsApp (anúncio): registra a origem do anúncio no lead novo.
+    referral = msg.get("referral") if isinstance(msg, dict) else None
+    if referral and lead_id and created:
+        try:
+            headline = (referral.get("headline") or referral.get("body") or "Anúncio WhatsApp").strip()
+            patch: dict[str, Any] = {"source_label": headline[:200], "channel": "whatsapp_ad"}
+            if referral.get("source_id"):
+                patch["utm_content"] = str(referral["source_id"])[:200]
+            supa.table("leads").update(patch).eq("org_id", org_id).eq("id", lead_id).execute()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_ctwa_enrich_falhou", extra={"org_id": org_id, "error": str(exc)})
+
     supa.table("whatsapp_messages").insert(
         {
             "org_id": org_id,
