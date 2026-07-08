@@ -10,7 +10,7 @@ Fuso: horário de Brasília fixo (UTC-03:00), coerente com o resto do agente.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from supabase import Client
@@ -19,6 +19,68 @@ logger = logging.getLogger(__name__)
 
 _TZ = timezone(timedelta(hours=-3))  # America/Sao_Paulo (sem DST atual)
 _STATUS_ATIVOS = ["agendado", "confirmado"]
+
+
+# --------------------------------------------------------------------------- #
+# Feriados nacionais (calculados, sem API externa). Bloqueiam o dia inteiro.
+# --------------------------------------------------------------------------- #
+def _pascoa(ano: int) -> date:
+    """Domingo de Páscoa (algoritmo de Meeus/Butcher)."""
+    a = ano % 19
+    b = ano // 100
+    c = ano % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mes = (h + l - 7 * m + 114) // 31
+    dia = ((h + l - 7 * m + 114) % 31) + 1
+    return date(ano, mes, dia)
+
+
+def feriados_nacionais(ano: int) -> dict[date, str]:
+    """Feriados nacionais (fixos + móveis) do ano."""
+    pascoa = _pascoa(ano)
+    fer: dict[date, str] = {
+        date(ano, 1, 1): "Confraternização Universal",
+        date(ano, 4, 21): "Tiradentes",
+        date(ano, 5, 1): "Dia do Trabalho",
+        date(ano, 9, 7): "Independência do Brasil",
+        date(ano, 10, 12): "Nossa Senhora Aparecida",
+        date(ano, 11, 2): "Finados",
+        date(ano, 11, 15): "Proclamação da República",
+        date(ano, 11, 20): "Consciência Negra",
+        date(ano, 12, 25): "Natal",
+        pascoa - timedelta(days=48): "Carnaval (segunda)",
+        pascoa - timedelta(days=47): "Carnaval",
+        pascoa - timedelta(days=2): "Sexta-feira Santa",
+        pascoa + timedelta(days=60): "Corpus Christi",
+    }
+    return fer
+
+
+def _feriados_set(*, supa: Client, org_id: str, anos: set[int]) -> set[date]:
+    """Dias bloqueados por feriado: nacionais (calculados) + custom da org."""
+    dias: set[date] = set()
+    for ano in anos:
+        dias.update(feriados_nacionais(ano).keys())
+    try:
+        rows = getattr(
+            supa.table("agenda_feriados").select("data").eq("org_id", org_id).execute(), "data", None
+        ) or []
+        for r in rows:
+            try:
+                dias.add(date.fromisoformat(r["data"]))
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    return dias
 
 
 def agora() -> datetime:
@@ -139,8 +201,13 @@ def listar_slots(
     minimo = agora() + timedelta(minutes=antecedencia)
     slots: list[dict[str, Any]] = []
     dia = agora().replace(hour=0, minute=0, second=0, microsecond=0)
+    limite_dia = (agora() + timedelta(days=horizonte)).date()
+    feriados = _feriados_set(supa=supa, org_id=org_id, anos={agora().year, limite_dia.year})
 
     for _ in range(horizonte + 1):
+        if dia.date() in feriados:
+            dia = dia + timedelta(days=1)
+            continue
         dow_js = (dia.weekday() + 1) % 7  # weekday() Mon=0 -> Sun=0
         for (h_ini, m_ini), (h_fim, m_fim) in por_dow.get(dow_js, []):
             cursor = dia.replace(hour=h_ini, minute=m_ini)
@@ -173,6 +240,10 @@ def slot_disponivel(
     inicio = _iso(inicio)
     fim = inicio + timedelta(minutes=slot_min)
     cal_id = calendario.get("id")
+
+    # feriado bloqueia o dia inteiro
+    if inicio.date() in _feriados_set(supa=supa, org_id=org_id, anos={inicio.year}):
+        return False
 
     # dentro de alguma regra do dia?
     dow_js = (inicio.weekday() + 1) % 7
