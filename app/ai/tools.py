@@ -152,6 +152,11 @@ def gerar_proposta(
         except Exception:  # noqa: BLE001
             pass
 
+    # renderiza a proposta em PDF e envia como documento no WhatsApp
+    pdf_enviado = False
+    if enviar and link:
+        pdf_enviado = _enviar_proposta_pdf(supa=supa, org_id=org_id, lead_id=lead_id, link=link, titulo=data.titulo)
+
     try:
         supa.table("activities").insert(
             {
@@ -160,13 +165,90 @@ def gerar_proposta(
                 "lead_id": lead_id,
                 "tipo": "whatsapp",
                 "assunto": "Proposta gerada e enviada pela IA" if enviar else "Proposta em rascunho (IA)",
-                "conteudo": f"{data.titulo} | {len(inputs)} cenário(s) | link: {link or 'n/d'}",
+                "conteudo": f"{data.titulo} | {len(inputs)} cenário(s) | link: {link or 'n/d'} | pdf: {'sim' if pdf_enviado else 'não'}",
             }
         ).execute()
     except Exception:  # noqa: BLE001
         pass
 
-    return {"ok": True, "proposta_id": rec.id, "link": link, "status": rec.status, "cenarios": len(inputs)}
+    return {
+        "ok": True,
+        "proposta_id": rec.id,
+        "link": link,
+        "status": rec.status,
+        "cenarios": len(inputs),
+        "pdf_enviado": pdf_enviado,
+    }
+
+
+def _enviar_proposta_pdf(*, supa: Client, org_id: str, lead_id: str, link: str, titulo: str) -> bool:
+    """Renderiza a proposta em PDF e envia como documento no WhatsApp. Best-effort."""
+    from app.services import pdf_render
+    from app.services import whatsapp_service as wa
+
+    try:
+        integration = wa.get_integration_row(supa=supa, org_id=org_id)
+        if not integration or not integration.get("ativo"):
+            return False
+        access_token = (integration.get("access_token") or "").strip()
+        phone_number_id = (integration.get("phone_number_id") or "").strip()
+        if not access_token or not phone_number_id:
+            return False
+
+        lead_resp = supa.table("leads").select("telefone").eq("org_id", org_id).eq("id", lead_id).limit(1).execute()
+        lead_rows = getattr(lead_resp, "data", None) or []
+        to = (lead_rows[0].get("telefone") if lead_rows else None) or ""
+        to = "".join(ch for ch in to if ch.isdigit())
+        if not to:
+            return False
+
+        pdf = pdf_render.render_url_to_pdf(link)
+        if not pdf:
+            return False
+
+        media_id = wa.upload_media(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            data=pdf,
+            mime="application/pdf",
+            filename="proposta.pdf",
+        )
+        if not media_id:
+            return False
+
+        reply = wa.send_document_message(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            to=to,
+            media_id=media_id,
+            filename="proposta.pdf",
+            caption=titulo,
+        )
+        reply_wamid = None
+        msgs = reply.get("messages") if isinstance(reply, dict) else None
+        if isinstance(msgs, list) and msgs:
+            reply_wamid = msgs[0].get("id")
+
+        try:
+            supa.table("whatsapp_messages").insert(
+                {
+                    "org_id": org_id,
+                    "lead_id": lead_id,
+                    "direction": "out",
+                    "wa_message_id": reply_wamid,
+                    "phone": to,
+                    "msg_type": "document",
+                    "body": f"[PDF] {titulo}",
+                    "status": "sent",
+                    "payload": {"ai": True, "document": True},
+                }
+            ).execute()
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ia_enviar_proposta_pdf_falhou", extra={"org_id": org_id, "error": str(exc)})
+        return False
 
 
 # --------------------------------------------------------------------------- #

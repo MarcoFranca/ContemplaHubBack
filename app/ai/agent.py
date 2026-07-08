@@ -84,11 +84,12 @@ _TOOLS = [
     {
         "name": "gerar_proposta",
         "description": (
-            "Monta e ENVIA uma proposta formal de consórcio ao cliente (calcula os números via simulador e "
-            "gera um link público). Use quando o cliente demonstrar intenção real e você já tiver produto e valor "
-            "de carta. Pode ter 1 a 3 cenários (ex.: com e sem redutor, ou valores diferentes). Depois de chamar, "
-            "mande ao cliente o link retornado, de forma natural. NÃO invente administradora/taxa específica: só "
-            "informe a administradora se souber com certeza pelos dados da org."
+            "Monta e ENVIA uma proposta formal de consórcio ao cliente. Calcula os números via simulador, gera um "
+            "link público E JÁ ENVIA o PDF da proposta como documento no WhatsApp automaticamente. Use quando o "
+            "cliente demonstrar intenção real e você já tiver produto e valor de carta. Pode ter 1 a 3 cenários "
+            "(ex.: com e sem redutor, ou valores diferentes). Depois de chamar, comente com o cliente de forma "
+            "natural que enviou a proposta (o PDF vai junto) e mande também o link retornado. NÃO invente "
+            "administradora/taxa específica: só informe a administradora se souber com certeza pelos dados da org."
         ),
         "input_schema": {
             "type": "object",

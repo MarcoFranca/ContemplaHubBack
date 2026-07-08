@@ -778,6 +778,22 @@ def send_audio_message(*, access_token: str, phone_number_id: str, to: str, medi
     return send_template_message(access_token=access_token, phone_number_id=phone_number_id, payload=payload)
 
 
+def send_document_message(
+    *, access_token: str, phone_number_id: str, to: str, media_id: str, filename: str, caption: Optional[str] = None
+) -> dict[str, Any]:
+    """Envia um documento (ex.: PDF) já uploadado."""
+    doc: dict[str, Any] = {"id": media_id, "filename": filename}
+    if caption:
+        doc["caption"] = caption
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "document",
+        "document": doc,
+    }
+    return send_template_message(access_token=access_token, phone_number_id=phone_number_id, payload=payload)
+
+
 def _wamid_exists(supa: Client, wamid: Optional[str]) -> bool:
     if not wamid:
         return False
