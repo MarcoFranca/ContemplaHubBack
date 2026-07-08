@@ -112,6 +112,25 @@ Decisão de arquitetura: **funil único** compartilhado + filtro "canal = WhatsA
 Fases B/C (pendentes): badge de temperatura + filtro no kanban do front; faixa de status de atendimento
 (IA atendendo / precisa humano / aguardando / reengajar) integrando o handoff.
 
+### Follow-up automático e lembretes
+
+`app/services/whatsapp_followup_service.py` roda no agendador embutido (`_whatsapp_dispatch_loop`,
+com throttle de `FOLLOWUP_SWEEP_INTERVAL_SEC`, default 300s) e também via `POST /whatsapp/followups/run`
+(protegido por `X-Dispatch-Secret`).
+
+- **Follow-up:** reengaja leads que ficaram sem responder. Deriva o estado das próprias mensagens (sem
+  tabela nova): conta mensagens de saída com `payload.followup=true` desde a última mensagem recebida.
+  Só age dentro da janela de 24h, quando a última mensagem foi nossa, respeitando um intervalo mínimo
+  (`FOLLOWUP_MIN_GAP_HOURS`) e um máximo de tentativas (`FOLLOWUP_MAX_ATTEMPTS`). Pula leads com
+  `nao_perturbe`, em etapa terminal, com reunião futura ou em handoff.
+- **Lembretes:** varre `agendamentos` ativos e envia lembrete ~24h e ~1h antes (dedup via
+  `lembrete_24h_at` / `lembrete_1h_at`). **Só envia dentro da janela de 24h** (fora dela a mensagem livre
+  não é entregue; exigiria template aprovado, ainda não disponível): nesse caso apenas marca a coluna e
+  loga `reminder_fora_da_janela`.
+- Envs: `FOLLOWUP_ENABLED`, `FOLLOWUP_MAX_ATTEMPTS`, `FOLLOWUP_MIN_GAP_HOURS`, `FOLLOWUP_WINDOW_HOURS`,
+  `REMINDER_ENABLED`, `FOLLOWUP_SWEEP_INTERVAL_SEC`. Migration `022_agenda_lembretes.sql`.
+- Pendente: envio fora da janela via template aprovado; detecção de CTWA (janela de 72h).
+
 ## Timeline / inbox
 
 - **Fase 4 (feito):** timeline de conversa no detalhe do lead. O frontend lê `whatsapp_messages`

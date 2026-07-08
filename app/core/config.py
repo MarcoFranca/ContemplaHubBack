@@ -64,6 +64,15 @@ class Settings(BaseModel):
     # Quantas mensagens do histórico enviar de contexto por conversa.
     WHATSAPP_AI_MAX_HISTORY: int = int(os.getenv("WHATSAPP_AI_MAX_HISTORY", "30"))
 
+    # Follow-up automático + lembretes de reunião (job embutido no agendador).
+    FOLLOWUP_ENABLED: bool = os.getenv("FOLLOWUP_ENABLED", "true").lower() in ("1", "true", "yes")
+    FOLLOWUP_MAX_ATTEMPTS: int = int(os.getenv("FOLLOWUP_MAX_ATTEMPTS", "3"))
+    FOLLOWUP_MIN_GAP_HOURS: float = float(os.getenv("FOLLOWUP_MIN_GAP_HOURS", "3"))
+    FOLLOWUP_WINDOW_HOURS: int = int(os.getenv("FOLLOWUP_WINDOW_HOURS", "24"))
+    REMINDER_ENABLED: bool = os.getenv("REMINDER_ENABLED", "true").lower() in ("1", "true", "yes")
+    # Com que frequência a varredura roda (mais lenta que o dispatcher da fila).
+    FOLLOWUP_SWEEP_INTERVAL_SEC: int = int(os.getenv("FOLLOWUP_SWEEP_INTERVAL_SEC", "300"))
+
     # Áudio (transcrição + voz). Provedor plugável; hoje OpenAI (transcreve e fala com 1 chave).
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     WHATSAPP_AUDIO_ENABLED: bool = os.getenv("WHATSAPP_AUDIO_ENABLED", "true").lower() in ("1", "true", "yes")

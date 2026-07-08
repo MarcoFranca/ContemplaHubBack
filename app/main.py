@@ -92,10 +92,12 @@ _wa_logger = logging.getLogger("whatsapp.scheduler")
 
 
 async def _whatsapp_dispatch_loop():
-    """Agendador embutido: drena a fila de WhatsApp periodicamente."""
+    """Agendador embutido: drena a fila de WhatsApp e varre follow-ups/lembretes."""
     from app.services import whatsapp_service as wa
+    from app.services import whatsapp_followup_service as fup
 
     interval = settings.WHATSAPP_DISPATCH_INTERVAL_SEC
+    last_sweep = 0.0
     while True:
         try:
             supa = get_supabase_admin()
@@ -104,6 +106,19 @@ async def _whatsapp_dispatch_loop():
                 _wa_logger.info("whatsapp_dispatch_tick", extra={"result": result})
         except Exception as exc:  # noqa: BLE001
             _wa_logger.warning("whatsapp_dispatch_loop_error", extra={"error": str(exc)})
+
+        # Varredura de follow-up/lembretes (mais lenta que a fila).
+        now = asyncio.get_event_loop().time()
+        if now - last_sweep >= max(settings.FOLLOWUP_SWEEP_INTERVAL_SEC, 60):
+            last_sweep = now
+            try:
+                supa = get_supabase_admin()
+                stats = await asyncio.to_thread(fup.run_sweeps, supa, limit=50)
+                if stats.get("followups") or stats.get("reminders"):
+                    _wa_logger.info("whatsapp_followup_tick", extra={"stats": stats})
+            except Exception as exc:  # noqa: BLE001
+                _wa_logger.warning("whatsapp_followup_loop_error", extra={"error": str(exc)})
+
         await asyncio.sleep(max(interval, 15))
 
 

@@ -175,6 +175,23 @@ def dispatch_whatsapp_queue(
     return wa.process_outbound_queue(supa=supa, limit=limit)
 
 
+@router.post("/whatsapp/followups/run")
+def run_followups(
+    x_dispatch_secret: Optional[str] = Header(default=None, alias="X-Dispatch-Secret"),
+    limit: int = Query(default=50, ge=1, le=200),
+    supa: Client = Depends(get_supabase_admin),
+):
+    """Roda a varredura de follow-up + lembretes (protegido pelo mesmo segredo do dispatcher)."""
+    secret = settings.WHATSAPP_DISPATCH_SECRET.strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Dispatcher não configurado (WHATSAPP_DISPATCH_SECRET).")
+    if (x_dispatch_secret or "").strip() != secret:
+        raise HTTPException(status_code=403, detail="Segredo do dispatcher inválido.")
+    from app.services import whatsapp_followup_service as fup
+
+    return fup.run_sweeps(supa=supa, limit=limit)
+
+
 @router.post("/whatsapp/reply", response_model=WhatsappOkOut)
 def reply_whatsapp(
     payload: WhatsappReplyIn,
