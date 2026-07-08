@@ -338,22 +338,31 @@ def run_agent(
     final_text: Optional[str] = None
 
     for _ in range(6):  # limite de iterações do loop de ferramentas
-        resp = client.messages.create(
-            model=settings.WHATSAPP_AI_MODEL,
-            max_tokens=1024,
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            thinking={"type": "disabled"},
-            tools=_TOOLS,
-            messages=messages,
-        )
+        try:
+            resp = client.messages.create(
+                model=settings.WHATSAPP_AI_MODEL,
+                max_tokens=1024,
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                thinking={"type": "disabled"},
+                tools=_TOOLS,
+                messages=messages,
+            )
+        except Exception as exc:  # noqa: BLE001 - erro de API (créditos/rate/modelo) não pode virar silêncio
+            logger.exception("ia_model_call_falhou", extra={"org_id": org_id, "model": settings.WHATSAPP_AI_MODEL})
+            return {"reply": None, "escalated": bool(state.get("escalated")), "erro": f"model_call: {exc}"}
+
         if resp.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": resp.content})
             tool_results = []
             for block in resp.content:
                 if getattr(block, "type", None) == "tool_use":
-                    result = _exec_tool(
-                        name=block.name, args=block.input or {}, supa=supa, org_id=org_id, lead_id=lead_id, state=state
-                    )
+                    try:
+                        result = _exec_tool(
+                            name=block.name, args=block.input or {}, supa=supa, org_id=org_id, lead_id=lead_id, state=state
+                        )
+                    except Exception as exc:  # noqa: BLE001 - falha de ferramenta não derruba o turno
+                        logger.exception("ia_tool_falhou", extra={"org_id": org_id, "tool": block.name})
+                        result = {"ok": False, "erro": f"falha na ferramenta {block.name}: {exc}"}
                     tool_results.append(
                         {"type": "tool_result", "tool_use_id": block.id, "content": str(result)}
                     )

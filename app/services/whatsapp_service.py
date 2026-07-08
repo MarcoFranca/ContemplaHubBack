@@ -919,6 +919,7 @@ def _handle_inbound(
 
     auto_replied = False
     ai_replied = False
+    ai_failed = False
 
     # 1) Agente de IA (se ligado para a org e o lead não estiver em atendimento humano).
     ai_on = settings.WHATSAPP_AI_ENABLED and bool(integration.get("ai_enabled"))
@@ -979,7 +980,15 @@ def _handle_inbound(
                         nome_cliente=(lead.get("nome") if lead else None),
                     )
                     ai_replied = True
+                else:
+                    # rodou mas não produziu texto (erro de API/modelo ou loop sem resposta)
+                    ai_failed = True
+                    logger.warning(
+                        "whatsapp_ai_sem_resposta",
+                        extra={"org_id": org_id, "erro": result.get("erro")},
+                    )
         except Exception as exc:  # noqa: BLE001
+            ai_failed = True
             logger.warning("whatsapp_ai_failed", extra={"org_id": org_id, "error": str(exc)})
 
     # 2) Fallback: auto-resposta fixa só no primeiro contato quando a IA não respondeu.
@@ -999,6 +1008,22 @@ def _handle_inbound(
             auto_replied = True
         except Exception as exc:  # noqa: BLE001
             logger.warning("whatsapp_autoreply_failed", extra={"org_id": org_id, "error": str(exc)})
+
+    # 3) Rede de segurança: a IA tentou e falhou numa conversa em andamento.
+    #    Em vez de deixar o cliente no silêncio, manda uma mensagem curta.
+    if ai_failed and not ai_replied and not auto_replied:
+        try:
+            _send_and_log_reply(
+                supa=supa,
+                integration=integration,
+                org_id=org_id,
+                lead_id=lead_id,
+                to=from_wa,
+                body="Recebi sua mensagem! Só um instante que já te retorno. 🙏",
+                payload={"ai_fallback": True},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_ai_fallback_failed", extra={"org_id": org_id, "error": str(exc)})
 
     return {"lead_created": created, "auto_replied": auto_replied or ai_replied}
 
