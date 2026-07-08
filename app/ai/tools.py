@@ -488,6 +488,33 @@ def atualizar_etapa_classificacao(
         return {"ok": False, "erro": str(exc)}
 
 
+def registrar_opt_out(*, supa: Client, org_id: str, lead_id: str, motivo: Optional[str] = None) -> dict[str, Any]:
+    """Cliente pediu para não ser mais contatado: corta automação e encerra o comercial."""
+    from datetime import datetime, timezone
+
+    try:
+        supa.table("leads").update(
+            {"nao_perturbe": True, "nao_perturbe_at": datetime.now(timezone.utc).isoformat(), "etapa": "perdido"}
+        ).eq("org_id", org_id).eq("id", lead_id).execute()
+        supa.table("activities").insert(
+            {
+                "id": str(uuid4()),
+                "org_id": org_id,
+                "lead_id": lead_id,
+                "tipo": "whatsapp",
+                "assunto": "Cliente pediu para não ser mais contatado (opt-out)",
+                "conteudo": motivo or "",
+            }
+        ).execute()
+        return {
+            "ok": True,
+            "instrucao": "Encerre com educação, agradeça e NÃO continue conduzindo. Não faça novas perguntas.",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ia_opt_out_falhou", extra={"org_id": org_id, "error": str(exc)})
+        return {"ok": False, "erro": str(exc)}
+
+
 def buscar_dados_lead(*, supa: Client, org_id: str, lead_id: str) -> dict[str, Any]:
     """Contexto do lead: nome/telefone + último interesse."""
     try:

@@ -168,6 +168,19 @@ _TOOLS = [
         },
     },
     {
+        "name": "registrar_opt_out",
+        "description": (
+            "Registra que o cliente pediu para NÃO ser mais contatado (ex.: 'não quero mais', 'pare de me mandar "
+            "mensagem', 'me remova'). Corta a automação e encerra o comercial. Depois de chamar, apenas agradeça e "
+            "encerre com educação, sem novas perguntas."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"motivo": {"type": "string", "description": "O que o cliente disse (curto)"}},
+            "required": [],
+        },
+    },
+    {
         "name": "buscar_dados_lead",
         "description": "Consulta os dados já salvos do lead (nome, telefone, interesse) para não repetir perguntas.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -227,6 +240,8 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "quitação de financiamento, construção/reforma ou enviar documentos; estiver claramente insatisfeito/irritado; "
         "pedir explicitamente falar com um humano; ou trazer assunto totalmente fora de consórcio.\n"
         "- Na dúvida se deve escalar, NÃO escale: continue atendendo e conduzindo.\n"
+        "- Se o cliente pedir para NÃO ser mais contatado ('não quero mais', 'me remova', 'pare de mandar mensagem'), "
+        "chame `registrar_opt_out`, agradeça e encerre com educação. Não insista nem faça novas perguntas.\n"
         "- Ao escalar, escreva uma mensagem curta avisando que um especialista vai continuar.\n\n"
         f"Administradoras disponíveis para esta organização: {admins}.\n"
         f"{cliente}\n\n"
@@ -283,6 +298,8 @@ def _exec_tool(
 ) -> Any:
     if name == "simular_consorcio":
         return ai_tools.simular_consorcio(**args)
+    if name == "registrar_opt_out":
+        return ai_tools.registrar_opt_out(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "buscar_dados_lead":
         return ai_tools.buscar_dados_lead(supa=supa, org_id=org_id, lead_id=lead_id or "")
     if name == "registrar_qualificacao":
