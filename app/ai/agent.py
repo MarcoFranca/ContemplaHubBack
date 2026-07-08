@@ -247,9 +247,12 @@ def _history_to_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             msgs[-1]["content"] += "\n" + text
         else:
             msgs.append({"role": role, "content": text})
-    # a API exige começar com user
+    # a API exige começar com user...
     while msgs and msgs[0]["role"] != "user":
         msgs.pop(0)
+    # ...e terminar com user (claude-sonnet-5 não aceita prefill de assistant).
+    while msgs and msgs[-1]["role"] != "user":
+        msgs.pop()
     return msgs
 
 
