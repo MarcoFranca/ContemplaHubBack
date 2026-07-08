@@ -373,4 +373,22 @@ def run_agent(
         final_text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
         break
 
+    # Loop esgotou sem texto (modelo só chamou ferramentas): força uma resposta
+    # final SEM ferramentas para o cliente não ficar sem retorno.
+    if not final_text:
+        try:
+            resp = client.messages.create(
+                model=settings.WHATSAPP_AI_MODEL,
+                max_tokens=1024,
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                thinking={"type": "disabled"},
+                messages=messages + [
+                    {"role": "user", "content": "Responda ao cliente agora em texto, de forma natural, sem chamar ferramentas."}
+                ],
+            )
+            final_text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("ia_forcar_texto_falhou", extra={"org_id": org_id})
+            return {"reply": None, "escalated": bool(state.get("escalated")), "erro": f"forcar_texto: {exc}"}
+
     return {"reply": final_text or None, "escalated": bool(state.get("escalated"))}

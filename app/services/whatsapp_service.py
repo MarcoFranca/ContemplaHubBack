@@ -920,6 +920,7 @@ def _handle_inbound(
     auto_replied = False
     ai_replied = False
     ai_failed = False
+    ai_error: Optional[str] = None
 
     # 1) Agente de IA (se ligado para a org e o lead não estiver em atendimento humano).
     ai_on = settings.WHATSAPP_AI_ENABLED and bool(integration.get("ai_enabled"))
@@ -983,13 +984,12 @@ def _handle_inbound(
                 else:
                     # rodou mas não produziu texto (erro de API/modelo ou loop sem resposta)
                     ai_failed = True
-                    logger.warning(
-                        "whatsapp_ai_sem_resposta",
-                        extra={"org_id": org_id, "erro": result.get("erro")},
-                    )
+                    ai_error = result.get("erro") or "sem resposta do modelo"
+                    logger.warning("whatsapp_ai_sem_resposta", extra={"org_id": org_id, "erro": ai_error})
         except Exception as exc:  # noqa: BLE001
             ai_failed = True
-            logger.warning("whatsapp_ai_failed", extra={"org_id": org_id, "error": str(exc)})
+            ai_error = str(exc)
+            logger.warning("whatsapp_ai_failed", extra={"org_id": org_id, "error": ai_error})
 
     # 2) Fallback: auto-resposta fixa só no primeiro contato quando a IA não respondeu.
     if not ai_replied and created:
@@ -1008,6 +1008,21 @@ def _handle_inbound(
             auto_replied = True
         except Exception as exc:  # noqa: BLE001
             logger.warning("whatsapp_autoreply_failed", extra={"org_id": org_id, "error": str(exc)})
+
+    # Registra a falha da IA para observabilidade (quando falhou, lead e por quê).
+    if ai_failed:
+        try:
+            supa.table("ai_falhas").insert(
+                {
+                    "org_id": org_id,
+                    "lead_id": lead_id,
+                    "telefone": from_wa,
+                    "contexto": "whatsapp_inbound",
+                    "erro": (ai_error or "desconhecido")[:1000],
+                }
+            ).execute()
+        except Exception:  # noqa: BLE001 - tabela pode não existir ainda; não pode quebrar o fluxo
+            pass
 
     # 3) Rede de segurança: a IA tentou e falhou numa conversa em andamento.
     #    Em vez de deixar o cliente no silêncio, manda uma mensagem curta.
