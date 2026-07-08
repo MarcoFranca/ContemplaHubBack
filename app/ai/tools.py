@@ -172,55 +172,50 @@ def gerar_proposta(
 # --------------------------------------------------------------------------- #
 # Agenda: a IA agenda uma reunião com o especialista (agenda interna)
 # --------------------------------------------------------------------------- #
+def listar_horarios_disponiveis(*, supa: Client, org_id: str, lead_id: str, max_slots: int = 8) -> dict[str, Any]:
+    """Retorna os próximos horários livres da agenda do especialista do lead."""
+    from app.services import agenda_service
+
+    cal = agenda_service.resolver_calendario_para_lead(supa=supa, org_id=org_id, lead_id=lead_id)
+    if not cal:
+        return {"ok": False, "erro": "sem agenda configurada", "instrucao": "combine um horário e escale para humano"}
+    slots = agenda_service.listar_slots(supa=supa, org_id=org_id, calendario=cal, max_slots=int(max_slots or 8))
+    if not slots:
+        return {"ok": True, "horarios": [], "instrucao": "nenhum horário livre no período; ofereça retorno depois ou escale"}
+    return {"ok": True, "agenda": cal.get("nome"), "horarios": slots}
+
+
 def agendar_reuniao(
     *,
     supa: Client,
     org_id: str,
     lead_id: str,
     inicio: str,
-    duracao_min: Optional[int] = 30,
+    duracao_min: Optional[int] = None,
     titulo: Optional[str] = None,
     observacao: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Cria um agendamento de reunião com o especialista. `inicio` em ISO 8601.
-
-    Evita sobreposição com outra reunião ativa da mesma org no mesmo horário.
-    """
+    """Cria um agendamento validando disponibilidade da agenda. `inicio` em ISO 8601."""
     from datetime import datetime, timedelta
+
+    from app.services import agenda_service
 
     try:
         dt = datetime.fromisoformat(inicio.replace("Z", "+00:00"))
     except Exception:  # noqa: BLE001
         return {"ok": False, "erro": "data/hora inválida (use ISO 8601, ex.: 2026-07-10T15:00:00-03:00)"}
 
-    dur = int(duracao_min or 30)
-    fim = dt + timedelta(minutes=dur)
+    cal = agenda_service.resolver_calendario_para_lead(supa=supa, org_id=org_id, lead_id=lead_id)
+    if not cal:
+        return {"ok": False, "erro": "sem agenda configurada", "instrucao": "combine um horário e escale para humano"}
 
-    # dono/especialista responsável pelo lead (se houver)
-    especialista_id: Optional[str] = None
-    try:
-        lead_resp = supa.table("leads").select("owner_id").eq("org_id", org_id).eq("id", lead_id).limit(1).execute()
-        lead_rows = getattr(lead_resp, "data", None) or []
-        if lead_rows:
-            especialista_id = lead_rows[0].get("owner_id")
-    except Exception:  # noqa: BLE001
-        pass
+    dur = int(duracao_min or cal.get("slot_min") or 30)
+    fim = agenda_service._iso(dt) + timedelta(minutes=dur)
+    especialista_id = cal.get("especialista_id")
 
-    # prevenção simples de conflito: mesma org, status ativo, começo no mesmo horário
-    try:
-        conflito = (
-            supa.table("agendamentos")
-            .select("id, inicio")
-            .eq("org_id", org_id)
-            .in_("status", ["agendado", "confirmado"])
-            .eq("inicio", dt.isoformat())
-            .limit(1)
-            .execute()
-        )
-        if getattr(conflito, "data", None):
-            return {"ok": False, "erro": "horário indisponível", "sugestao": "ofereça outro horário ao cliente"}
-    except Exception:  # noqa: BLE001
-        pass
+    if not agenda_service.slot_disponivel(supa=supa, org_id=org_id, calendario=cal, inicio=dt, slot_min=dur):
+        slots = agenda_service.listar_slots(supa=supa, org_id=org_id, calendario=cal, max_slots=6)
+        return {"ok": False, "erro": "horário indisponível", "horarios": slots, "instrucao": "ofereça um dos horários livres"}
 
     try:
         ins = (
@@ -229,9 +224,10 @@ def agendar_reuniao(
                 {
                     "org_id": org_id,
                     "lead_id": lead_id,
+                    "calendario_id": cal.get("id"),
                     "especialista_id": especialista_id,
                     "titulo": titulo or "Reunião com especialista",
-                    "inicio": dt.isoformat(),
+                    "inicio": agenda_service._iso(dt).isoformat(),
                     "fim": fim.isoformat(),
                     "status": "agendado",
                     "origem": "ia",

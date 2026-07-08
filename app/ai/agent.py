@@ -115,6 +115,15 @@ _TOOLS = [
         },
     },
     {
+        "name": "listar_horarios_disponiveis",
+        "description": (
+            "Lista os próximos horários livres da agenda do especialista para oferecer ao cliente. Use ANTES de "
+            "agendar: nunca invente horários, ofereça só os que esta ferramenta retornar. Depois que o cliente "
+            "escolher um, chame agendar_reuniao com o 'inicio' correspondente."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "agendar_reuniao",
         "description": (
             "Agenda uma reunião do cliente com o especialista na agenda interna. Use quando o cliente aceitar "
@@ -203,9 +212,10 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Use `gerar_proposta` quando o cliente demonstrar intenção real e você já tiver produto e valor de carta: "
         "a ferramenta cria e envia a proposta e devolve um link; mande esse link ao cliente de forma natural. "
         "Pedir proposta NÃO é escalonamento: você mesmo gera.\n"
-        "- Use `agendar_reuniao` quando o cliente aceitar falar com um especialista: combine dia e horário "
-        f"específicos com ele (a data/hora atual é {_agora_brasil()}) e só então agende. Confirme ao cliente o "
-        "horário marcado. Isso substitui o escalonamento nesses casos: agende em vez de só transferir.\n"
+        "- Para agendar reunião com especialista: primeiro chame `listar_horarios_disponiveis` e ofereça ao cliente "
+        "APENAS os horários retornados (nunca invente). Quando ele escolher, chame `agendar_reuniao` com o 'inicio' "
+        f"daquele horário. A data/hora atual é {_agora_brasil()}. Confirme ao cliente o horário marcado. Isso "
+        "substitui o escalonamento nesses casos: agende em vez de só transferir.\n"
         "\n"
         "ESCALONAMENTO (regra crítica):\n"
         "- NÃO escale por objeção, dúvida, comparação, hesitação ou frases como 'consórcio é ruim/furada', "
@@ -277,6 +287,8 @@ def _exec_tool(
         return ai_tools.atualizar_etapa_classificacao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "gerar_proposta":
         return ai_tools.gerar_proposta(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
+    if name == "listar_horarios_disponiveis":
+        return ai_tools.listar_horarios_disponiveis(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "agendar_reuniao":
         return ai_tools.agendar_reuniao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "escalar_humano":
