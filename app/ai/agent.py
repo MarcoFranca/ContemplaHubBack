@@ -208,6 +208,44 @@ def _agora_brasil() -> str:
     return f"{dias[agora.weekday()]}, {agora.strftime('%d/%m/%Y %H:%M')} (horário de Brasília, UTC-03:00)"
 
 
+def _dados_coletados(supa: Client, org_id: str, lead_id: Optional[str]) -> str:
+    """Resumo dos dados JÁ salvos do lead, para injetar no prompt como memória."""
+    if not lead_id:
+        return ""
+    try:
+        lr = supa.table("leads").select("nome, etapa, temperatura, valor_interesse, prazo_meses").eq("org_id", org_id).eq("id", lead_id).limit(1).execute()
+        lead = (getattr(lr, "data", None) or [{}])[0]
+        ir = (
+            supa.table("lead_interesses")
+            .select("produto, objetivo, perfil_desejado, observacao")
+            .eq("org_id", org_id).eq("lead_id", lead_id).order("created_at", desc=True).limit(1).execute()
+        )
+        interesse = (getattr(ir, "data", None) or [{}])[0]
+    except Exception:  # noqa: BLE001
+        return ""
+
+    linhas: list[str] = []
+    if lead.get("nome"):
+        linhas.append(f"- Nome: {lead['nome']}")
+    if interesse.get("objetivo"):
+        linhas.append(f"- Objetivo: {interesse['objetivo']}")
+    if interesse.get("produto"):
+        linhas.append(f"- Produto: {interesse['produto']}")
+    if lead.get("valor_interesse"):
+        linhas.append(f"- Valor de carta pretendido: R$ {lead['valor_interesse']}")
+    if lead.get("prazo_meses"):
+        linhas.append(f"- Prazo (meses): {lead['prazo_meses']}")
+    if interesse.get("perfil_desejado"):
+        linhas.append(f"- Perfil: {interesse['perfil_desejado']}")
+    if interesse.get("observacao"):
+        linhas.append(f"- Observações: {interesse['observacao']}")
+    if lead.get("temperatura"):
+        linhas.append(f"- Temperatura: {lead['temperatura']}")
+    if lead.get("etapa"):
+        linhas.append(f"- Etapa atual no funil: {lead['etapa']}")
+    return "\n".join(linhas)
+
+
 def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]) -> str:
     knowledge = _load_knowledge()
     admins = ", ".join(org_administradoras) if org_administradoras else "(nenhuma cadastrada; se perguntarem administradora específica, escale para humano)"
@@ -247,7 +285,11 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Na dúvida se deve escalar, NÃO escale: continue atendendo e conduzindo.\n"
         "- Se o cliente pedir para NÃO ser mais contatado ('não quero mais', 'me remova', 'pare de mandar mensagem'), "
         "chame `registrar_opt_out`, agradeça e encerre com educação. Não insista nem faça novas perguntas.\n"
-        "- Ao escalar, escreva uma mensagem curta avisando que um especialista vai continuar.\n\n"
+        "- Ao escalar, escreva uma mensagem curta avisando que um especialista vai continuar.\n"
+        "- MEMÓRIA: mais adiante há um bloco 'DADOS JÁ COLETADOS DESTE CLIENTE'. Trate-o como o que você já sabe. "
+        "NÃO pergunte de novo o que já estiver lá. Se já tiver objetivo e valor de carta, PARE de perguntar/confirmar "
+        "e AJA: rode `simular_consorcio` e/ou `gerar_proposta`, ou proponha a reunião. Sempre que descobrir um dado "
+        "novo (prazo, parcela, reserva), chame `registrar_qualificacao` para salvar.\n\n"
         f"Administradoras disponíveis para esta organização: {admins}.\n"
         f"{cliente}\n\n"
         "===== BASE DE CONHECIMENTO (GLOBAL) =====\n" + knowledge
@@ -354,7 +396,16 @@ def run_agent(
 
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     administradoras = ai_tools.listar_administradoras(supa=supa, org_id=org_id)
-    system = _build_system(org_administradoras=administradoras, nome_cliente=nome_cliente)
+    system_static = _build_system(org_administradoras=administradoras, nome_cliente=nome_cliente)
+    dados_lead = _dados_coletados(supa, org_id, lead_id)
+    # Bloco 1 (estático) fica cacheado; bloco 2 (dados do lead) varia por conversa.
+    system_blocks: list[dict[str, Any]] = [
+        {"type": "text", "text": system_static, "cache_control": {"type": "ephemeral"}}
+    ]
+    if dados_lead:
+        system_blocks.append(
+            {"type": "text", "text": "===== DADOS JÁ COLETADOS DESTE CLIENTE =====\n" + dados_lead}
+        )
     messages = _history_to_messages(history[-settings.WHATSAPP_AI_MAX_HISTORY:])
     if not messages:
         return {"reply": None, "escalated": False}
@@ -367,7 +418,7 @@ def run_agent(
             resp = client.messages.create(
                 model=settings.WHATSAPP_AI_MODEL,
                 max_tokens=1024,
-                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                system=system_blocks,
                 thinking={"type": "disabled"},
                 tools=_TOOLS,
                 messages=messages,
@@ -405,7 +456,7 @@ def run_agent(
             resp = client.messages.create(
                 model=settings.WHATSAPP_AI_MODEL,
                 max_tokens=1024,
-                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                system=system_blocks,
                 thinking={"type": "disabled"},
                 messages=messages + [
                     {"role": "user", "content": "Responda ao cliente agora em texto, de forma natural, sem chamar ferramentas."}
