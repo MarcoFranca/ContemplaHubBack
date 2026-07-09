@@ -32,6 +32,52 @@ DEFAULT_TEMPLATE_BODY = (
 )
 
 
+def _normalize_operational_payload(payload: Optional[dict[str, Any]]) -> dict[str, Any]:
+    data = dict(payload or {})
+    if data.get("followup"):
+        source = "followup"
+    elif data.get("reminder"):
+        source = "lembrete"
+    elif data.get("auto_reply"):
+        source = "fallback_boas_vindas"
+    elif data.get("ai_fallback"):
+        source = "fallback_erro_ia"
+    elif data.get("ai_media_fallback"):
+        source = "fallback_midia"
+    elif data.get("manual_reply"):
+        source = "manual"
+    elif data.get("ai"):
+        source = "ia"
+    else:
+        source = "operacional"
+
+    if data.get("ai_handoff"):
+        data["operational_handoff"] = True
+
+    data["operational_source"] = source
+    return data
+
+
+def _describe_operational_source(payload: Optional[dict[str, Any]]) -> str:
+    data = payload or {}
+    source = data.get("operational_source")
+    if source == "ia":
+        return "IA normal"
+    if source == "fallback_boas_vindas":
+        return "Fallback de boas-vindas"
+    if source == "fallback_erro_ia":
+        return "Fallback por falha da IA"
+    if source == "fallback_midia":
+        return "Fallback para mídia não suportada"
+    if source == "followup":
+        return "Follow-up automático"
+    if source == "lembrete":
+        return "Lembrete automático"
+    if source == "manual":
+        return "Resposta manual"
+    return "Operacional"
+
+
 def _trim(value: Any) -> str:
     return str(value).strip() if value is not None else ""
 
@@ -508,7 +554,7 @@ def send_now(*, supa: Client, org_id: str, to: str, lead_id: Optional[str] = Non
             "template_key": (template or {}).get("key"),
             "body": (template or {}).get("body_text"),
             "status": "sent",
-            "payload": payload,
+            "payload": _normalize_operational_payload(payload),
         }
     ).execute()
     return result
@@ -570,7 +616,7 @@ def send_reply(*, supa: Client, org_id: str, lead_id: str, body: str) -> dict[st
             "msg_type": "text",
             "body": body,
             "status": "sent",
-            "payload": {"manual_reply": True},
+            "payload": _normalize_operational_payload({"manual_reply": True}),
         }
     ).execute()
     return {"ok": True, "wa_message_id": wamid}
@@ -646,7 +692,7 @@ def process_outbound_queue(*, supa: Client, limit: int = 25) -> dict[str, Any]:
                         "template_key": item.get("template_key"),
                         "body": (template or {}).get("body_text"),
                         "status": "sent",
-                        "payload": payload,
+                        "payload": _normalize_operational_payload(payload),
                     }
                 )
                 .execute()
@@ -1002,6 +1048,7 @@ def _handle_inbound(
                         text=reply_text,
                         as_audio=bool(origem_audio and settings.WHATSAPP_AUDIO_REPLY),
                         escalated=bool(result.get("escalated")),
+                        handoff_reason=(result.get("handoff_reason") or None),
                         nome_cliente=(lead.get("nome") if lead else None),
                     )
                     ai_replied = True
@@ -1077,10 +1124,17 @@ def _send_ai_reply(
     text: str,
     as_audio: bool,
     escalated: bool,
+    handoff_reason: Optional[str],
     nome_cliente: Optional[str] = None,
 ) -> None:
     """Envia a resposta da IA em áudio (se origem foi áudio) ou texto. Loga o texto."""
-    base_payload = {"ai": True, "ai_handoff": escalated}
+    base_payload = _normalize_operational_payload(
+        {
+            "ai": True,
+            "ai_handoff": escalated,
+            "handoff_reason": handoff_reason,
+        }
+    )
     if as_audio:
         try:
             from app.ai import audio as ai_audio
@@ -1138,6 +1192,7 @@ def _send_and_log_reply(
     body: str,
     payload: dict[str, Any],
 ) -> None:
+    normalized_payload = _normalize_operational_payload(payload)
     reply = send_text_message(
         access_token=_trim(integration.get("access_token")),
         phone_number_id=_trim(integration.get("phone_number_id")),
@@ -1158,7 +1213,7 @@ def _send_and_log_reply(
             "msg_type": "text",
             "body": body,
             "status": "sent",
-            "payload": payload,
+            "payload": normalized_payload,
         }
     ).execute()
 

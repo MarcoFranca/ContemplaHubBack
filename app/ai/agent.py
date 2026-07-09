@@ -546,6 +546,7 @@ def _exec_tool(
         state["escalated"] = True
         motivo = args.get("motivo") or "escalonamento"
         resumo = args.get("resumo") or ""
+        state["handoff_reason"] = motivo
         try:
             supa.table("activities").insert(
                 {
@@ -573,7 +574,7 @@ def run_agent(
 ) -> dict[str, Any]:
     """Roda o agente sobre o histórico da conversa. Retorna {reply, escalated}."""
     if not settings.ANTHROPIC_API_KEY.strip():
-        return {"reply": None, "escalated": False, "erro": "ANTHROPIC_API_KEY ausente"}
+        return {"reply": None, "escalated": False, "handoff_reason": None, "erro": "ANTHROPIC_API_KEY ausente"}
 
     import anthropic  # import tardio (dependência opcional em dev)
 
@@ -583,7 +584,7 @@ def run_agent(
     dados_lead = _dados_coletados(supa, org_id, lead_id)
     messages = _history_to_messages(history)
     if not messages:
-        return {"reply": None, "escalated": False}
+        return {"reply": None, "escalated": False, "handoff_reason": None}
 
     last_user_message = _last_user_text(messages)
     turn_intent = _infer_turn_intent(last_user_message)
@@ -619,7 +620,12 @@ def run_agent(
             )
         except Exception as exc:  # noqa: BLE001 - erro de API (créditos/rate/modelo) não pode virar silêncio
             logger.exception("ia_model_call_falhou", extra={"org_id": org_id, "model": settings.WHATSAPP_AI_MODEL})
-            return {"reply": None, "escalated": bool(state.get("escalated")), "erro": f"model_call: {exc}"}
+            return {
+                "reply": None,
+                "escalated": bool(state.get("escalated")),
+                "handoff_reason": state.get("handoff_reason"),
+                "erro": f"model_call: {exc}",
+            }
 
         if resp.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": resp.content})
@@ -659,6 +665,15 @@ def run_agent(
             final_text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
         except Exception as exc:  # noqa: BLE001
             logger.exception("ia_forcar_texto_falhou", extra={"org_id": org_id})
-            return {"reply": None, "escalated": bool(state.get("escalated")), "erro": f"forcar_texto: {exc}"}
+            return {
+                "reply": None,
+                "escalated": bool(state.get("escalated")),
+                "handoff_reason": state.get("handoff_reason"),
+                "erro": f"forcar_texto: {exc}",
+            }
 
-    return {"reply": final_text or None, "escalated": bool(state.get("escalated"))}
+    return {
+        "reply": final_text or None,
+        "escalated": bool(state.get("escalated")),
+        "handoff_reason": state.get("handoff_reason"),
+    }
