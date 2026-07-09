@@ -64,7 +64,8 @@ principal objeção; resumo da conversa; próximo passo sugerido; necessidade de
 
 **Quente** — objetivo claro; sabe valor aproximado; aceita pagar parcela; tem reserva/intenção de
 lance; quer simulação; pede proposta; pergunta sobre fechamento; quer falar com especialista.
-→ Ação: **escalar rápido** com resumo completo.
+→ Ação: conduzir rápido para proposta ou reunião com especialista, e escalar só quando entrar em
+regras específicas, contratação, pagamento, documentos ou pedido explícito de humano.
 
 **Morno** — tem interesse mas ainda entendendo; compara com financiamento; tem objeções; precisa de
 educação; ainda não sabe valor/prazo; está pesquisando.

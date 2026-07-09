@@ -220,14 +220,41 @@ def _dados_coletados(supa: Client, org_id: str, lead_id: Optional[str]) -> str:
     if not lead_id:
         return ""
     try:
-        lr = supa.table("leads").select("nome, etapa, temperatura, valor_interesse, prazo_meses").eq("org_id", org_id).eq("id", lead_id).limit(1).execute()
+        lr = (
+            supa.table("leads")
+            .select("nome, etapa, temperatura, valor_interesse, prazo_meses")
+            .eq("org_id", org_id)
+            .eq("id", lead_id)
+            .limit(1)
+            .execute()
+        )
         lead = (getattr(lr, "data", None) or [{}])[0]
         ir = (
             supa.table("lead_interesses")
-            .select("produto, objetivo, perfil_desejado, observacao")
+            .select("produto, objetivo, perfil_desejado, observacao, created_at")
             .eq("org_id", org_id).eq("lead_id", lead_id).order("created_at", desc=True).limit(1).execute()
         )
         interesse = (getattr(ir, "data", None) or [{}])[0]
+        proposta_resp = (
+            supa.table("lead_propostas")
+            .select("id, status, titulo, created_at")
+            .eq("org_id", org_id)
+            .eq("lead_id", lead_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        proposta = (getattr(proposta_resp, "data", None) or [{}])[0]
+        ag_resp = (
+            supa.table("agendamentos")
+            .select("id, titulo, inicio, status")
+            .eq("org_id", org_id)
+            .eq("lead_id", lead_id)
+            .order("inicio", desc=False)
+            .limit(5)
+            .execute()
+        )
+        agendamentos = getattr(ag_resp, "data", None) or []
     except Exception:  # noqa: BLE001
         return ""
 
@@ -250,6 +277,16 @@ def _dados_coletados(supa: Client, org_id: str, lead_id: Optional[str]) -> str:
         linhas.append(f"- Temperatura: {lead['temperatura']}")
     if lead.get("etapa"):
         linhas.append(f"- Etapa atual no funil: {lead['etapa']}")
+    if proposta.get("id"):
+        titulo = proposta.get("titulo") or "proposta sem título"
+        status = proposta.get("status") or "sem status"
+        linhas.append(f"- Última proposta gerada: {titulo} (status: {status})")
+    ag_ativos = [a for a in agendamentos if (a.get("status") or "") in {"agendado", "confirmado"}]
+    if ag_ativos:
+        prox = ag_ativos[0]
+        when = prox.get("inicio")
+        titulo = prox.get("titulo") or "Reunião com especialista"
+        linhas.append(f"- Já existe reunião ativa agendada: {titulo} em {when}")
     return "\n".join(linhas)
 
 
@@ -277,13 +314,18 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Use `atualizar_etapa_classificacao` para mover o lead no funil e classificar a temperatura sempre que a "
         "conversa avançar (respondeu, começou a qualificar, recebeu proposta, negociando, esfriou). Isso mantém o "
         "kanban do time atualizado sozinho. Não anuncie isso ao cliente, faça em segundo plano.\n"
-        "- Use `gerar_proposta` quando o cliente demonstrar intenção real e você já tiver produto e valor de carta: "
-        "a ferramenta cria e envia a proposta e devolve um link; mande esse link ao cliente de forma natural. "
-        "Pedir proposta NÃO é escalonamento: você mesmo gera.\n"
+        "- Use `gerar_proposta` quando o cliente demonstrar intenção real e você já tiver produto e valor de carta, "
+        "especialmente se ele pedir números, proposta, comparação ou um cenário mais concreto. A ferramenta cria e "
+        "envia a proposta e devolve um link; mande esse link ao cliente de forma natural. Pedir proposta NÃO é "
+        "escalonamento: você mesmo gera.\n"
         "- Para agendar reunião com especialista: primeiro chame `listar_horarios_disponiveis` e ofereça ao cliente "
         "APENAS os horários retornados (nunca invente). Quando ele escolher, chame `agendar_reuniao` com o 'inicio' "
         f"daquele horário. A data/hora atual é {_agora_brasil()}. Confirme ao cliente o horário marcado. Isso "
         "substitui o escalonamento nesses casos: agende em vez de só transferir.\n"
+        "- Se o bloco de memória indicar que já existe proposta enviada, não gere outra sem motivo claro. Primeiro "
+        "retome a proposta existente, responda dúvidas, compare cenários ou avance para reunião.\n"
+        "- Se o bloco de memória indicar que já existe reunião agendada, não ofereça novo agendamento por padrão. "
+        "Priorize confirmação, preparação e esclarecimentos objetivos.\n"
         "\n"
         "ESCALONAMENTO (regra crítica):\n"
         "- NÃO escale por objeção, dúvida, comparação, hesitação ou frases como 'consórcio é ruim/furada', "

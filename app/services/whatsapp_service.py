@@ -933,17 +933,30 @@ def _handle_inbound(
     ai_replied = False
     ai_failed = False
     ai_error: Optional[str] = None
+    handoff_active = False
 
     # 1) Agente de IA (se ligado para a org e o lead não estiver em atendimento humano).
     ai_on = settings.WHATSAPP_AI_ENABLED and bool(integration.get("ai_enabled"))
     # processável: texto/botão/interactive OU áudio transcrito com sucesso.
     ia_processavel = mtype in ("text", "button", "interactive") or origem_audio
-    if ai_on and not ia_processavel:
-        # imagem/documento/áudio não transcrito: pede por texto (educado).
+    if ai_on:
         try:
             from app.ai import agent as ai_agent
 
-            if not ai_agent.lead_em_handoff(supa, org_id, lead_id):
+            handoff_active = ai_agent.lead_em_handoff(supa, org_id, lead_id)
+            if handoff_active:
+                logger.info(
+                    "whatsapp_ai_skip_handoff",
+                    extra={"org_id": org_id, "lead_id": lead_id, "wa_message_id": wamid},
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("whatsapp_ai_handoff_check_failed", extra={"org_id": org_id, "error": str(exc)})
+            handoff_active = False
+
+    if ai_on and not ia_processavel:
+        # imagem/documento/áudio não transcrito: pede por texto (educado).
+        try:
+            if not handoff_active:
                 _send_and_log_reply(
                     supa=supa,
                     integration=integration,
@@ -958,9 +971,7 @@ def _handle_inbound(
             logger.warning("whatsapp_ai_media_fallback_failed", extra={"org_id": org_id, "error": str(exc)})
     elif ai_on:
         try:
-            from app.ai import agent as ai_agent
-
-            if not ai_agent.lead_em_handoff(supa, org_id, lead_id):
+            if not handoff_active:
                 send_typing_indicator(access_token=access_token, phone_number_id=phone_number_id, message_id=wamid)
                 history_limit = max(settings.WHATSAPP_AI_MAX_HISTORY * 6, 60)
                 hist_resp = (

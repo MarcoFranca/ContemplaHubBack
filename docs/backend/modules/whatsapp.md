@@ -109,6 +109,25 @@ O prompt do agente foi ajustado para reduzir respostas engessadas e loops de CTA
 - o agente deve variar a forma de abrir e fechar mensagens, evitando fórmulas repetidas;
 - objeções continuam sendo tratadas pela IA, mas sem obrigar encerramento com convite em toda resposta.
 
+### Memória comercial e critérios de ação
+
+Na Fase 3, o agente passou a usar melhor o contexto comercial já salvo antes de decidir o próximo passo:
+
+- lê do lead o objetivo, produto, valor, prazo, perfil, temperatura e etapa;
+- lê a última proposta gerada em `lead_propostas`;
+- lê agendamentos ativos em `agendamentos`;
+- evita gerar nova proposta quando já existe uma recente sem motivo claro;
+- evita oferecer nova reunião quando já existe reunião ativa agendada;
+- trata pedido de proposta como ação da própria IA, não como escalonamento automático;
+- mantém escalonamento humano apenas para contratação, boleto/pagamento, documentos, regras específicas
+  de administradora/grupo, temas complexos e pedido explícito de humano.
+
+### Observabilidade de handoff
+
+Quando a IA deixa de responder porque o lead está em handoff humano, o backend agora registra log
+`whatsapp_ai_skip_handoff`. Isso ajuda a diagnosticar cenários em que o mesmo telefone de teste já foi
+escalado antes e, por isso, a IA ficou em silêncio até usar `POST /whatsapp/ai/reativar`.
+
 Fallback: se a IA não responder (desligada, erro ou sem chave), mantém a auto-resposta fixa do 1º contato.
 
 ### Áudio (voz)
