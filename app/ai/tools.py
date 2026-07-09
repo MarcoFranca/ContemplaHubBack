@@ -125,8 +125,8 @@ def simular_consorcio(
 
     resultado: dict[str, Any] = {
         "produto": produto,
-        "campanha": camp.get("nome"),
-        "administradora": camp.get("administradora"),
+        # Intencionalmente NÃO expomos nome de campanha/operadora: trabalhamos com
+        # várias e revelar isso ao cliente pode engessar a negociação.
         "valor_credito": round(credito, 2),
         "prazo_meses": prazo,
         "redutor_pct": round(redutor * 100, 2),
@@ -195,7 +195,7 @@ def gerar_proposta(
                 id=chr(ord("A") + i),
                 titulo=c.get("titulo") or f"Carta {produto} {sim.get('valor_credito')}",
                 produto=_PRODUTO_PROPOSTA.get(produto, "outro"),
-                administradora=c.get("administradora") or sim.get("administradora"),
+                administradora=c.get("administradora"),
                 valor_carta=float(sim.get("valor_credito") or 0),
                 prazo_meses=int(sim.get("prazo_meses") or 0),
                 com_redutor=bool(red_pct and red_pct > 0),
@@ -616,11 +616,11 @@ def buscar_dados_lead(*, supa: Client, org_id: str, lead_id: str) -> dict[str, A
 
 
 def listar_campanhas(*, supa: Client, org_id: str) -> dict[str, Any]:
-    """Campanhas ativas da org para a IA usar na estimativa. Se vazio, usa o padrão."""
+    """Condições vigentes (só números, SEM nome de operadora) para a IA estimar."""
     try:
         rows = getattr(
             supa.table("campanhas")
-            .select("nome, administradora_nome, produto, taxa_admin_pct, redutor_pct, fundo_reserva_pct, prazo_meses")
+            .select("produto, taxa_admin_pct, redutor_pct, fundo_reserva_pct, prazo_meses")
             .eq("org_id", org_id)
             .eq("ativo", True)
             .execute(),
@@ -631,11 +631,10 @@ def listar_campanhas(*, supa: Client, org_id: str) -> dict[str, Any]:
         rows = []
     if not rows:
         return {
-            "campanhas": [],
-            "padrao": {"taxa_admin_pct": 20, "redutor_pct": 30, "fundo_reserva_pct": 2},
-            "observacao": "Sem campanha cadastrada: usando o padrão (taxa adm 20%, redutor 30%, FR 2%).",
+            "condicoes": [{"produto": "geral", "taxa_admin_pct": 20, "redutor_pct": 30, "fundo_reserva_pct": 2}],
+            "observacao": "Condições padrão. NÃO cite operadora/administradora ao cliente.",
         }
-    return {"campanhas": rows}
+    return {"condicoes": rows, "observacao": "Use apenas os números. NÃO cite operadora/administradora ao cliente."}
 
 
 def listar_administradoras(*, supa: Client, org_id: str) -> list[str]:
