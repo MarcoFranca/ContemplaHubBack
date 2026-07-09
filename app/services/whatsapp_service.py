@@ -1177,9 +1177,13 @@ def _send_ai_reply(
             logger.warning("whatsapp_ai_audio_reply_falhou", extra={"org_id": org_id, "error": str(exc)})
         # se o áudio falhar, cai para texto abaixo
 
-    _send_and_log_reply(
-        supa=supa, integration=integration, org_id=org_id, lead_id=lead_id, to=to, body=text, payload=base_payload
-    )
+    # A IA pode separar a resposta em mensagens sequenciais com '|||'
+    # (ex.: mandar a proposta e, em seguida, o convite para reunião).
+    partes = [p.strip() for p in (text or "").split("|||") if p.strip()] or [text]
+    for parte in partes[:4]:  # limite de segurança
+        _send_and_log_reply(
+            supa=supa, integration=integration, org_id=org_id, lead_id=lead_id, to=to, body=parte, payload=base_payload
+        )
 
 
 def _send_and_log_reply(
