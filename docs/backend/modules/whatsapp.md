@@ -122,6 +122,19 @@ Na Fase 3, o agente passou a usar melhor o contexto comercial já salvo antes de
 - mantém escalonamento humano apenas para contratação, boleto/pagamento, documentos, regras específicas
   de administradora/grupo, temas complexos e pedido explícito de humano.
 
+### Prioridade da última mensagem do cliente
+
+Na Fase 4, o agente ganhou um guardrail por turno para reduzir alucinação e respostas fora de contexto:
+
+- o backend extrai a última mensagem útil do cliente antes de chamar o modelo;
+- classifica a intenção aparente do turno (`reuniao`, `remarcacao_reuniao`, `proposta`, `simulacao`, etc.);
+- injeta um bloco extra no `system` com a mensagem literal e regras específicas daquele turno;
+- quando o assunto é reunião/agendamento/remarcação, o agente fica proibido de puxar simulação ou proposta
+  sem pedido explícito na mesma mensagem;
+- isso reduz o efeito de o modelo “grudar” em assunto antigo do histórico e responder algo incoerente.
+
+Também foi adicionado log `whatsapp_ai_turn_intent` para observabilidade da intenção detectada em cada turno.
+
 ### Observabilidade de handoff
 
 Quando a IA deixa de responder porque o lead está em handoff humano, o backend agora registra log

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import unicodedata
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -30,6 +32,108 @@ _CONTEXT_NOISE_PAYLOAD_FLAGS = {
     "followup",
     "reminder",
 }
+
+_REUNIAO_KEYWORDS = (
+    "reuniao",
+    "agenda",
+    "agendar",
+    "horario",
+    "horarios",
+    "meet",
+    "videochamada",
+    "chamada",
+    "link da reuniao",
+    "link da reunião",
+)
+_REMARCAR_KEYWORDS = ("remarcar", "reagendar", "mudar horario", "mudar horário", "trocar horario", "trocar horário")
+_CANCELAR_KEYWORDS = ("cancelar", "desmarcar", "desfazer")
+_SIMULACAO_KEYWORDS = ("simul", "parcela", "valor da carta", "valor de carta", "quanto fica", "cenario", "cenário")
+_PROPOSTA_KEYWORDS = ("proposta", "pdf", "orcamento", "orçamento", "cotacao", "cotação")
+_HUMANO_KEYWORDS = ("humano", "pessoa", "atendente", "especialista", "consultor")
+_OPTOUT_KEYWORDS = ("nao quero mais", "não quero mais", "pare de mandar", "me remova", "encerrar", "não me chame")
+
+
+def _normalize_text(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    return unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _last_user_text(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            return message["content"].strip()
+    return ""
+
+
+def _infer_turn_intent(text: str) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return "desconhecida"
+    if _contains_any(normalized, _OPTOUT_KEYWORDS):
+        return "opt_out"
+    if _contains_any(normalized, _REMARCAR_KEYWORDS) and _contains_any(normalized, _REUNIAO_KEYWORDS):
+        return "remarcacao_reuniao"
+    if _contains_any(normalized, _CANCELAR_KEYWORDS) and _contains_any(normalized, _REUNIAO_KEYWORDS):
+        return "cancelamento_reuniao"
+    if _contains_any(normalized, _REUNIAO_KEYWORDS):
+        return "reuniao"
+    if _contains_any(normalized, _PROPOSTA_KEYWORDS):
+        return "proposta"
+    if _contains_any(normalized, _SIMULACAO_KEYWORDS):
+        return "simulacao"
+    if _contains_any(normalized, _HUMANO_KEYWORDS):
+        return "humano"
+    return "geral"
+
+
+def _build_turn_guidance(last_user_message: str, intent: str) -> str:
+    rules: list[str] = [
+        "- A última mensagem do cliente tem prioridade máxima sobre assuntos antigos.",
+        "- Responda primeiro ao pedido atual do cliente antes de retomar qualquer contexto anterior.",
+        "- Não mude de assunto por conta própria.",
+        "- Não invente que o cliente pediu simulação, proposta ou valores se isso não apareceu nesta mensagem.",
+    ]
+
+    if intent in {"reuniao", "remarcacao_reuniao", "cancelamento_reuniao"}:
+        rules.extend(
+            [
+                "- Este turno é sobre reunião/agendamento. Não use `simular_consorcio` e não use `gerar_proposta`, a menos que o cliente peça isso explicitamente nesta mesma mensagem.",
+                "- Se o cliente pedir remarcação, trate como remarcação de agenda: reconheça o pedido, consulte horários disponíveis e conduza só dentro desse assunto.",
+                "- Se já existir reunião ativa na memória, use isso para responder com coerência.",
+            ]
+        )
+    elif intent == "proposta":
+        rules.extend(
+            [
+                "- Este turno é sobre proposta. Não desvie para reunião ou simulação diferente sem responder o pedido de proposta primeiro.",
+            ]
+        )
+    elif intent == "simulacao":
+        rules.extend(
+            [
+                "- Este turno é sobre números/simulação. Só simule se houver dados mínimos ou se fizer sentido pedir os dados que faltam.",
+            ]
+        )
+    elif intent == "opt_out":
+        rules.extend(
+            [
+                "- Este turno é de encerramento/opt-out. Não conduza venda.",
+            ]
+        )
+
+    return (
+        "===== PRIORIDADE DESTE TURNO =====\n"
+        f"Última mensagem literal do cliente: {last_user_message or '(vazia)'}\n"
+        f"Intenção aparente do turno: {intent}\n"
+        "Regras obrigatórias deste turno:\n"
+        + "\n".join(rules)
+    )
 
 
 def _load_knowledge() -> str:
@@ -477,6 +581,17 @@ def run_agent(
     administradoras = ai_tools.listar_administradoras(supa=supa, org_id=org_id)
     system_static = _build_system(org_administradoras=administradoras, nome_cliente=nome_cliente)
     dados_lead = _dados_coletados(supa, org_id, lead_id)
+    messages = _history_to_messages(history)
+    if not messages:
+        return {"reply": None, "escalated": False}
+
+    last_user_message = _last_user_text(messages)
+    turn_intent = _infer_turn_intent(last_user_message)
+    logger.info(
+        "whatsapp_ai_turn_intent",
+        extra={"org_id": org_id, "lead_id": lead_id, "intent": turn_intent, "last_user_message": last_user_message[:200]},
+    )
+
     # Bloco 1 (estático) fica cacheado; bloco 2 (dados do lead) varia por conversa.
     system_blocks: list[dict[str, Any]] = [
         {"type": "text", "text": system_static, "cache_control": {"type": "ephemeral"}}
@@ -485,9 +600,9 @@ def run_agent(
         system_blocks.append(
             {"type": "text", "text": "===== DADOS JÁ COLETADOS DESTE CLIENTE =====\n" + dados_lead}
         )
-    messages = _history_to_messages(history)
-    if not messages:
-        return {"reply": None, "escalated": False}
+    system_blocks.append(
+        {"type": "text", "text": _build_turn_guidance(last_user_message, turn_intent)}
+    )
 
     state: dict[str, Any] = {"escalated": False}
     final_text: Optional[str] = None
