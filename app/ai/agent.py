@@ -158,18 +158,29 @@ def _load_knowledge() -> str:
 _TOOLS = [
     {
         "name": "simular_consorcio",
-        "description": "Gera uma simulação de referência de consórcio (parcela, saldo, lance estimado). Use quando o cliente informar produto e valor. Valores exatos dependem da administradora.",
+        "description": (
+            "Estimativa de consórcio com FOCO NO REDUTOR (parcela reduzida até a contemplação). Usa a campanha ativa "
+            "da org (ou o padrão). Informe 'valor_credito' quando o cliente quer uma carta específica; OU informe "
+            "'parcela_alvo' (valor mensal confortável) quando ele diz quanto pode pagar, e a ferramenta calcula o "
+            "MAIOR crédito que cabe nessa parcela com redutor (maior carta pelo menor valor). É sempre estimativa."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "produto": {"type": "string", "enum": ["imovel", "auto", "pesados"]},
-                "valor_credito": {"type": "number", "description": "Valor da carta de crédito em reais"},
-                "prazo": {"type": "integer", "description": "Prazo em meses (opcional)"},
-                "redutor_percentual": {"type": "number", "description": "Percentual de redução da parcela, se houver (opcional)"},
+                "valor_credito": {"type": "number", "description": "Valor da carta pretendido (use quando o cliente quer uma carta específica)"},
+                "parcela_alvo": {"type": "number", "description": "Parcela mensal confortável do cliente (use para achar o maior crédito com redutor)"},
+                "prazo": {"type": "integer", "description": "Prazo em meses (opcional; senão usa o da campanha/produto)"},
+                "redutor_percentual": {"type": "number", "description": "Redutor específico, se o cliente pedir (opcional; senão usa o da campanha)"},
                 "lance_percentual": {"type": "number", "description": "Percentual de lance para estimar o valor (opcional)"},
             },
-            "required": ["produto", "valor_credito"],
+            "required": ["produto"],
         },
+    },
+    {
+        "name": "listar_campanhas",
+        "description": "Consulta as campanhas ativas da org (taxa, redutor, fundo de reserva por administradora/produto). Use antes de estimar para usar as condições vigentes. Se não houver, o sistema usa o padrão.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "registrar_qualificacao",
@@ -414,7 +425,14 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Varie a forma de responder. Evite abrir sempre do mesmo jeito, evite repetir a mesma estrutura e prefira "
         "1 ou 2 parágrafos curtos. Quando uma resposta curta resolver, seja breve.\n"
         "- NUNCA invente taxas, administradoras, grupos, prazos ou percentuais. Use as ferramentas e os dados da org.\n"
-        "- Use `simular_consorcio` para números; use `registrar_qualificacao` conforme for descobrindo dados.\n"
+        "- SIMULAÇÃO com foco no REDUTOR: ao falar de parcela, NÃO use parcela cheia. Trabalhe com a parcela "
+        "REDUZIDA (redutor até a contemplação), que dá o maior crédito pelo menor valor. Quando o cliente disser "
+        "quanto pode pagar por mês, chame `simular_consorcio` com `parcela_alvo` (não invente a carta): a ferramenta "
+        "acha o maior crédito que cabe naquela parcela com redutor. Ex.: 'quer 350 mil pagando 1200' -> mostre a "
+        "carta possível com a parcela reduzida. Use `listar_campanhas` para as condições vigentes (senão o sistema "
+        "usa o padrão). Deixe SEMPRE claro que é uma estimativa e que o valor final é definido na reunião com o "
+        "corretor. Nunca apresente como valor fechado.\n"
+        "- Use `registrar_qualificacao` conforme for descobrindo dados.\n"
         "- Use `atualizar_etapa_classificacao` para mover o lead no funil e classificar a temperatura sempre que a "
         "conversa avançar (respondeu, começou a qualificar, recebeu proposta, negociando, esfriou). Isso mantém o "
         "kanban do time atualizado sozinho. Não anuncie isso ao cliente, faça em segundo plano.\n"
@@ -532,7 +550,9 @@ def _exec_tool(
     *, name: str, args: dict[str, Any], supa: Client, org_id: str, lead_id: Optional[str], state: dict[str, Any]
 ) -> Any:
     if name == "simular_consorcio":
-        return ai_tools.simular_consorcio(**args)
+        return ai_tools.simular_consorcio(supa=supa, org_id=org_id, **args)
+    if name == "listar_campanhas":
+        return ai_tools.listar_campanhas(supa=supa, org_id=org_id)
     if name == "registrar_opt_out":
         return ai_tools.registrar_opt_out(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "buscar_dados_lead":

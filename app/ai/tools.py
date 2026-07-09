@@ -18,50 +18,125 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 # Simulador de consórcio (porte de front/.../simuladores/lib/consorcio.ts)
 # --------------------------------------------------------------------------- #
+# Mecânica por produto (embutido, seguro, adesão, prazo). Taxa adm, redutor e FR
+# vêm da CAMPANHA ativa (ou do padrão abaixo), não daqui.
 _PRODUTOS = {
-    "imovel": {"embutido_max": 0.30, "taxa_adesao": 0.02, "taxa_admin": 0.155, "fundo_reserva": 0.02, "seguro": 0.00038, "tem_adesao": True, "prazo": 200},
-    "auto": {"embutido_max": 0.20, "taxa_adesao": 0.0, "taxa_admin": 0.18, "fundo_reserva": 0.02, "seguro": 0.00038, "tem_adesao": False, "prazo": 69},
-    "pesados": {"embutido_max": 0.30, "taxa_adesao": 0.0, "taxa_admin": 0.14, "fundo_reserva": 0.02, "seguro": 0.00038, "tem_adesao": False, "prazo": 95},
+    "imovel": {"embutido_max": 0.30, "taxa_adesao": 0.02, "seguro": 0.00038, "tem_adesao": True, "prazo": 200},
+    "auto": {"embutido_max": 0.20, "taxa_adesao": 0.0, "seguro": 0.00038, "tem_adesao": False, "prazo": 69},
+    "pesados": {"embutido_max": 0.30, "taxa_adesao": 0.0, "seguro": 0.00038, "tem_adesao": False, "prazo": 95},
 }
+
+# Padrão usado quando não há campanha ativa cadastrada.
+_CAMPANHA_PADRAO = {"nome": "Padrão", "taxa_admin": 0.20, "redutor": 0.30, "fundo_reserva": 0.02, "prazo": None, "embutido_max": None}
+
+
+def _resolver_campanha(supa, org_id: Optional[str], produto: str) -> dict[str, Any]:
+    """Campanha ativa (produto exato > geral) ou o padrão. Percentuais em fração (0-1)."""
+    from datetime import date
+
+    if not supa or not org_id:
+        return dict(_CAMPANHA_PADRAO)
+    try:
+        rows = getattr(
+            supa.table("campanhas").select("*").eq("org_id", org_id).eq("ativo", True).execute(), "data", None
+        ) or []
+    except Exception:  # noqa: BLE001
+        return dict(_CAMPANHA_PADRAO)
+
+    hoje = date.today()
+
+    def vigente(c: dict[str, Any]) -> bool:
+        vi, vf = c.get("vigencia_inicio"), c.get("vigencia_fim")
+        try:
+            if vi and date.fromisoformat(vi) > hoje:
+                return False
+            if vf and date.fromisoformat(vf) < hoje:
+                return False
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    cands = [c for c in rows if vigente(c)]
+    exato = [c for c in cands if (c.get("produto") or "").lower() == produto.lower()]
+    geral = [c for c in cands if (c.get("produto") or "geral").lower() in ("geral", "")]
+    chosen = (exato or geral or [None])[0]
+    if not chosen:
+        return dict(_CAMPANHA_PADRAO)
+    return {
+        "nome": chosen.get("nome") or "Campanha",
+        "administradora": chosen.get("administradora_nome"),
+        "taxa_admin": (chosen.get("taxa_admin_pct") if chosen.get("taxa_admin_pct") is not None else 20) / 100.0,
+        "redutor": (chosen.get("redutor_pct") if chosen.get("redutor_pct") is not None else 0) / 100.0,
+        "fundo_reserva": (chosen.get("fundo_reserva_pct") if chosen.get("fundo_reserva_pct") is not None else 2) / 100.0,
+        "prazo": chosen.get("prazo_meses"),
+        "embutido_max": (chosen.get("embutido_max_pct") / 100.0) if chosen.get("embutido_max_pct") is not None else None,
+    }
 
 
 def simular_consorcio(
     *,
     produto: str,
-    valor_credito: float,
+    valor_credito: Optional[float] = None,
+    parcela_alvo: Optional[float] = None,
     prazo: Optional[int] = None,
     redutor_percentual: Optional[float] = None,
     lance_percentual: Optional[float] = None,
+    supa=None,
+    org_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Simulação de referência. Valores exatos dependem do grupo/administradora."""
+    """Estimativa de consórcio com FOCO NO REDUTOR (parcela reduzida até a contemplação).
+
+    Usa a campanha ativa da org (ou o padrão). Se receber `parcela_alvo` sem `valor_credito`,
+    calcula o MAIOR crédito cuja parcela reduzida cabe nessa parcela. Sempre é estimativa.
+    """
     p = _PRODUTOS.get((produto or "").lower())
     if not p:
         return {"erro": "produto inválido", "produtos_validos": list(_PRODUTOS.keys())}
+
+    camp = _resolver_campanha(supa, org_id, produto)
+    taxa_admin = camp["taxa_admin"]
+    fundo = camp["fundo_reserva"]
+    # redutor: usa o pedido explicitamente; senão o da campanha/padrão.
+    redutor = (redutor_percentual / 100.0) if redutor_percentual is not None else camp["redutor"]
+    prazo = int(prazo or camp.get("prazo") or p["prazo"])
+    seguro = p["seguro"]
+    K = 1 + taxa_admin + fundo  # fator de saldo devedor
+
+    # Cálculo reverso: dado a parcela confortável, achar o maior crédito (com redutor).
+    usou_reverso = False
+    if (not valor_credito) and parcela_alvo and parcela_alvo > 0:
+        fator = K * ((1 - redutor) / prazo + seguro)
+        credito = (float(parcela_alvo) / fator) if fator > 0 else 0
+        # arredonda para baixo em passos de R$ 5 mil (crédito comercial redondo)
+        valor_credito = max(0, int(credito // 5000) * 5000)
+        usou_reverso = True
+
     credito = float(valor_credito or 0)
     if credito <= 0:
-        return {"erro": "valor_credito deve ser maior que zero"}
-    prazo = int(prazo or p["prazo"])
-    redutor = (redutor_percentual or 0) / 100.0
+        return {"erro": "informe valor_credito ou parcela_alvo maiores que zero"}
 
-    saldo_devedor = credito * (1 + p["taxa_admin"] + p["fundo_reserva"])
+    saldo_devedor = credito * K
     adesao_pct = p["taxa_adesao"] if p["tem_adesao"] else 0.0
-    categoria = credito * (1 + adesao_pct + p["taxa_admin"] + p["fundo_reserva"])
-    seguro_mensal = saldo_devedor * p["seguro"]
-
+    categoria = credito * (1 + adesao_pct + taxa_admin + fundo)
+    seguro_mensal = saldo_devedor * seguro
     parcela_pj = saldo_devedor / prazo if prazo else 0
-    parcela_integral = parcela_pj + seguro_mensal  # PF (com seguro)
+    parcela_integral = parcela_pj + seguro_mensal
     parcela_reduzida = parcela_pj * (1 - redutor) + seguro_mensal if redutor > 0 else parcela_integral
 
     resultado: dict[str, Any] = {
         "produto": produto,
+        "campanha": camp.get("nome"),
+        "administradora": camp.get("administradora"),
         "valor_credito": round(credito, 2),
         "prazo_meses": prazo,
-        "saldo_devedor_total": round(saldo_devedor, 2),
-        "parcela_integral": round(parcela_integral, 2),
-        "parcela_reduzida": round(parcela_reduzida, 2) if redutor > 0 else None,
-        "taxa_administracao_pct": round(p["taxa_admin"] * 100, 2),
-        "embutido_maximo_pct": round(p["embutido_max"] * 100, 2),
-        "observacao": "Valores de referência. Taxas, prazos e regras de lance dependem da administradora e do grupo.",
+        "redutor_pct": round(redutor * 100, 2),
+        "parcela_reduzida": round(parcela_reduzida, 2),  # DESTAQUE: parcela até a contemplação
+        "parcela_integral_apos_contemplacao": round(parcela_integral, 2),
+        "taxa_administracao_pct": round(taxa_admin * 100, 2),
+        "fundo_reserva_pct": round(fundo * 100, 2),
+        "embutido_maximo_pct": round((camp.get("embutido_max") or p["embutido_max"]) * 100, 2),
+        "reverso_por_parcela": usou_reverso,
+        "observacao": "ESTIMATIVA (não é proposta). A parcela reduzida vale até a contemplação e depois sobe. Valores finais só na reunião com o corretor.",
     }
     if lance_percentual:
         resultado["lance_estimado"] = round(categoria * (lance_percentual / 100.0), 2)
@@ -105,24 +180,27 @@ def gerar_proposta(
         produto = (c.get("produto") or "imovel").lower()
         sim = simular_consorcio(
             produto=produto,
-            valor_credito=float(c.get("valor_carta") or 0),
+            valor_credito=float(c.get("valor_carta") or 0) or None,
+            parcela_alvo=c.get("parcela_alvo"),
             prazo=c.get("prazo"),
             redutor_percentual=c.get("redutor_percent"),
+            supa=supa,
+            org_id=org_id,
         )
         if sim.get("erro"):
             return {"ok": False, "erro": f"cenário {i + 1}: {sim['erro']}"}
-        redutor = c.get("redutor_percent")
+        red_pct = sim.get("redutor_pct") or 0
         inputs.append(
             CreateProposalScenarioInput(
                 id=chr(ord("A") + i),
                 titulo=c.get("titulo") or f"Carta {produto} {sim.get('valor_credito')}",
                 produto=_PRODUTO_PROPOSTA.get(produto, "outro"),
-                administradora=c.get("administradora"),
+                administradora=c.get("administradora") or sim.get("administradora"),
                 valor_carta=float(sim.get("valor_credito") or 0),
                 prazo_meses=int(sim.get("prazo_meses") or 0),
-                com_redutor=bool(redutor and redutor > 0),
-                redutor_percent=redutor,
-                parcela_cheia=sim.get("parcela_integral"),
+                com_redutor=bool(red_pct and red_pct > 0),
+                redutor_percent=red_pct or None,
+                parcela_cheia=sim.get("parcela_integral_apos_contemplacao"),
                 parcela_reduzida=sim.get("parcela_reduzida"),
                 taxa_admin_anual=sim.get("taxa_administracao_pct"),
                 permite_lance_embutido=True,
@@ -535,6 +613,29 @@ def buscar_dados_lead(*, supa: Client, org_id: str, lead_id: str) -> dict[str, A
         return {"lead": lead_rows[0] if lead_rows else {}, "interesse": interesse_rows[0] if interesse_rows else {}}
     except Exception as exc:  # noqa: BLE001
         return {"erro": str(exc)}
+
+
+def listar_campanhas(*, supa: Client, org_id: str) -> dict[str, Any]:
+    """Campanhas ativas da org para a IA usar na estimativa. Se vazio, usa o padrão."""
+    try:
+        rows = getattr(
+            supa.table("campanhas")
+            .select("nome, administradora_nome, produto, taxa_admin_pct, redutor_pct, fundo_reserva_pct, prazo_meses")
+            .eq("org_id", org_id)
+            .eq("ativo", True)
+            .execute(),
+            "data",
+            None,
+        ) or []
+    except Exception:  # noqa: BLE001
+        rows = []
+    if not rows:
+        return {
+            "campanhas": [],
+            "padrao": {"taxa_admin_pct": 20, "redutor_pct": 30, "fundo_reserva_pct": 2},
+            "observacao": "Sem campanha cadastrada: usando o padrão (taxa adm 20%, redutor 30%, FR 2%).",
+        }
+    return {"campanhas": rows}
 
 
 def listar_administradoras(*, supa: Client, org_id: str) -> list[str]:
