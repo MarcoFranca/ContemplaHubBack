@@ -962,13 +962,14 @@ def _handle_inbound(
 
             if not ai_agent.lead_em_handoff(supa, org_id, lead_id):
                 send_typing_indicator(access_token=access_token, phone_number_id=phone_number_id, message_id=wamid)
+                history_limit = max(settings.WHATSAPP_AI_MAX_HISTORY * 6, 60)
                 hist_resp = (
                     supa.table("whatsapp_messages")
-                    .select("direction, body, msg_type, created_at")
+                    .select("direction, body, msg_type, created_at, payload")
                     .eq("org_id", org_id)
                     .eq("lead_id", lead_id)
                     .order("created_at", desc=False)
-                    .limit(60)
+                    .limit(history_limit)
                     .execute()
                 )
                 history = getattr(hist_resp, "data", None) or []

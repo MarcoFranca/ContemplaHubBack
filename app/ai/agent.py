@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 
 _KNOWLEDGE_CACHE: Optional[str] = None
 _KNOWLEDGE_DIR = os.path.join(os.path.dirname(__file__), "knowledge")
+_CONTEXT_NOISE_PAYLOAD_FLAGS = {
+    "auto_reply",
+    "ai_fallback",
+    "ai_media_fallback",
+    "followup",
+    "reminder",
+}
 
 
 def _load_knowledge() -> str:
@@ -252,15 +259,19 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
     cliente = f"O cliente se chama {nome_cliente}." if nome_cliente else "Você ainda não sabe o nome do cliente."
     return (
         "Você é o assistente virtual de atendimento de uma consultoria de consórcio, atendendo pelo WhatsApp.\n"
-        "Siga ESTRITAMENTE a base de conhecimento abaixo (identidade, tom, objeções, FAQ, qualificação, "
-        "processo de venda e compliance). As regras de compliance e o tom prevalecem sobre tudo.\n\n"
+        "Use a base de conhecimento abaixo como guia principal de identidade, tom, objeções, FAQ, "
+        "qualificação, processo de venda e compliance. As regras de compliance e o tom prevalecem sobre tudo.\n\n"
         "Regras operacionais adicionais:\n"
         "- Responda em pt-BR, mensagens curtas e naturais para WhatsApp. Sem travessão (—).\n"
-        "- PROGRIDA SEMPRE. NUNCA repita a mesma pergunta que você já fez. Se o cliente já respondeu, desconversou, "
-        "não sabe ou ignorou, siga em frente com o que já tem: faça a PRÓXIMA pergunta diferente, dê uma estimativa "
-        "com os dados parciais, ou proponha o próximo passo (proposta/reunião). Nenhum dado é obrigatório para "
-        "avançar: se o cliente não informa a parcela ou o valor, não insista, siga. Olhe as suas últimas mensagens "
-        "no histórico e garanta que a sua nova resposta seja DIFERENTE e faça a conversa andar.\n"
+        "- Responda primeiro ao que o cliente acabou de dizer. Só depois decida se vale perguntar, explicar, "
+        "simular, propor reunião, gerar proposta ou apenas confirmar o entendimento.\n"
+        "- Não repita a mesma pergunta. Se o cliente já respondeu, desconversou, não sabe ou ignorou, siga com o "
+        "que já tem: faça uma pergunta diferente, dê uma referência inicial com ressalvas, proponha o próximo passo "
+        "ou apenas avance a conversa sem insistir no mesmo ponto.\n"
+        "- Não force CTA em toda mensagem. Em alguns turnos, a melhor resposta é só esclarecer, acolher, resumir ou "
+        "confirmar. Conduza com naturalidade, sem parecer script.\n"
+        "- Varie a forma de responder. Evite abrir sempre do mesmo jeito, evite repetir a mesma estrutura e prefira "
+        "1 ou 2 parágrafos curtos. Quando uma resposta curta resolver, seja breve.\n"
         "- NUNCA invente taxas, administradoras, grupos, prazos ou percentuais. Use as ferramentas e os dados da org.\n"
         "- Use `simular_consorcio` para números; use `registrar_qualificacao` conforme for descobrindo dados.\n"
         "- Use `atualizar_etapa_classificacao` para mover o lead no funil e classificar a temperatura sempre que a "
@@ -276,8 +287,9 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "\n"
         "ESCALONAMENTO (regra crítica):\n"
         "- NÃO escale por objeção, dúvida, comparação, hesitação ou frases como 'consórcio é ruim/furada', "
-        "'redutor não presta', 'vou pensar', 'achei caro'. Isso é atendimento normal: RECONHEÇA, EXPLIQUE, "
-        "REPOSICIONE e CONDUZA com uma pergunta (siga o arquivo de objeções). Objeção NUNCA é motivo de escalonamento.\n"
+        "'redutor não presta', 'vou pensar', 'achei caro'. Isso é atendimento normal: reconheça a preocupação, "
+        "explique com clareza, reposicione quando fizer sentido e só conduza para o próximo passo se isso couber "
+        "na conversa. Objeção NUNCA é motivo de escalonamento.\n"
         "- Use `escalar_humano` SOMENTE quando o cliente: quiser fechar/contratar de fato; pedir boleto, contrato ou "
         "link de pagamento; perguntar taxa, administradora, grupo ou prazo de contemplação ESPECÍFICOS; falar de FGTS, "
         "quitação de financiamento, construção/reforma ou enviar documentos; estiver claramente insatisfeito/irritado; "
@@ -296,12 +308,31 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
     )
 
 
+def _is_context_noise(message: dict[str, Any]) -> bool:
+    """Identifica mensagens operacionais que não devem treinar o próximo turno."""
+    if (message.get("direction") or "").strip() != "out":
+        return False
+
+    payload = message.get("payload")
+    if isinstance(payload, dict):
+        if any(bool(payload.get(flag)) for flag in _CONTEXT_NOISE_PAYLOAD_FLAGS):
+            return True
+        # mensagens template de automação entram no histórico operacional, mas
+        # atrapalham o contexto conversacional do agente.
+        if message.get("msg_type") == "template" and not payload.get("manual_reply"):
+            return True
+
+    return False
+
+
 def _history_to_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Converte whatsapp_messages (in/out) em mensagens user/assistant."""
+    """Converte whatsapp_messages (in/out) em mensagens user/assistant limpas."""
     msgs: list[dict[str, Any]] = []
     for m in history:
         text = (m.get("body") or "").strip()
         if not text:
+            continue
+        if _is_context_noise(m):
             continue
         role = "user" if m.get("direction") == "in" else "assistant"
         # combina mensagens consecutivas do mesmo papel
@@ -315,6 +346,12 @@ def _history_to_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # ...e terminar com user (claude-sonnet-5 não aceita prefill de assistant).
     while msgs and msgs[-1]["role"] != "user":
         msgs.pop()
+    if len(msgs) > settings.WHATSAPP_AI_MAX_HISTORY:
+        msgs = msgs[-settings.WHATSAPP_AI_MAX_HISTORY:]
+        while msgs and msgs[0]["role"] != "user":
+            msgs.pop(0)
+        while msgs and msgs[-1]["role"] != "user":
+            msgs.pop()
     return msgs
 
 
@@ -406,7 +443,7 @@ def run_agent(
         system_blocks.append(
             {"type": "text", "text": "===== DADOS JÁ COLETADOS DESTE CLIENTE =====\n" + dados_lead}
         )
-    messages = _history_to_messages(history[-settings.WHATSAPP_AI_MAX_HISTORY:])
+    messages = _history_to_messages(history)
     if not messages:
         return {"reply": None, "escalated": False}
 

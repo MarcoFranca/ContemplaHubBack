@@ -76,6 +76,39 @@ conversa e responde. Ferramentas (`app/ai/tools.py`): `simular_consorcio` (porte
 Modelo configurável em `WHATSAPP_AI_MODEL` (default `claude-sonnet-5`); `ANTHROPIC_API_KEY` obrigatória.
 Endpoint `POST /whatsapp/ai/toggle` liga/desliga por org (migration 015 adiciona `ai_enabled`).
 
+### Higiene de contexto do agente
+
+O histórico bruto de `whatsapp_messages` não vai mais integralmente para o modelo. Antes de cada turno,
+`app/ai/agent.py` filtra mensagens operacionais de saída que poluem a conversa e aumentam risco de loop:
+
+- `payload.auto_reply=true`
+- `payload.ai_fallback=true`
+- `payload.ai_media_fallback=true`
+- `payload.followup=true`
+- `payload.reminder=*`
+- mensagens `msg_type=template` de automação
+
+Continuam no contexto:
+
+- mensagens recebidas do cliente;
+- respostas reais da IA;
+- respostas manuais do time (`payload.manual_reply=true`);
+- mensagens úteis de áudio com transcrição no `body`.
+
+Além disso, o webhook agora busca mais mensagens brutas (`payload` incluído) e o corte por
+`WHATSAPP_AI_MAX_HISTORY` acontece só depois da filtragem. Isso evita perder contexto real quando a conversa
+já teve follow-ups, fallback ou outras automações no meio.
+
+### Tom e condução do agente
+
+O prompt do agente foi ajustado para reduzir respostas engessadas e loops de CTA:
+
+- a resposta deve atender primeiro à mensagem do cliente antes de tentar conduzir;
+- perguntas não são mais obrigatórias em todo turno;
+- respostas curtas de confirmação, acolhimento e esclarecimento agora são válidas;
+- o agente deve variar a forma de abrir e fechar mensagens, evitando fórmulas repetidas;
+- objeções continuam sendo tratadas pela IA, mas sem obrigar encerramento com convite em toda resposta.
+
 Fallback: se a IA não responder (desligada, erro ou sem chave), mantém a auto-resposta fixa do 1º contato.
 
 ### Áudio (voz)
