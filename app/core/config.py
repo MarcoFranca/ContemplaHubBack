@@ -62,7 +62,8 @@ class Settings(BaseModel):
     # Modelo. Sonnet 5 (custo/qualidade p/ alto volume); trocar p/ claude-opus-4-8 se quiser topo.
     WHATSAPP_AI_MODEL: str = os.getenv("WHATSAPP_AI_MODEL", "claude-sonnet-5")
     # Quantas mensagens do histórico enviar de contexto por conversa.
-    WHATSAPP_AI_MAX_HISTORY: int = int(os.getenv("WHATSAPP_AI_MAX_HISTORY", "30"))
+    # Menos histórico reduz o risco de a IA "imitar" o próprio padrão em conversas longas.
+    WHATSAPP_AI_MAX_HISTORY: int = int(os.getenv("WHATSAPP_AI_MAX_HISTORY", "16"))
 
     # Follow-up automático + lembretes de reunião (job embutido no agendador).
     FOLLOWUP_ENABLED: bool = os.getenv("FOLLOWUP_ENABLED", "true").lower() in ("1", "true", "yes")
@@ -70,6 +71,10 @@ class Settings(BaseModel):
     FOLLOWUP_MIN_GAP_HOURS: float = float(os.getenv("FOLLOWUP_MIN_GAP_HOURS", "3"))
     FOLLOWUP_WINDOW_HOURS: int = int(os.getenv("FOLLOWUP_WINDOW_HOURS", "24"))
     REMINDER_ENABLED: bool = os.getenv("REMINDER_ENABLED", "true").lower() in ("1", "true", "yes")
+    # Horário de silêncio do follow-up (horário de Brasília): não incomodar o cliente
+    # de madrugada/noite. Não envia se hora >= START ou hora < END.
+    FOLLOWUP_QUIET_START_HOUR: int = int(os.getenv("FOLLOWUP_QUIET_START_HOUR", "22"))
+    FOLLOWUP_QUIET_END_HOUR: int = int(os.getenv("FOLLOWUP_QUIET_END_HOUR", "8"))
     # Com que frequência a varredura roda (mais lenta que o dispatcher da fila).
     FOLLOWUP_SWEEP_INTERVAL_SEC: int = int(os.getenv("FOLLOWUP_SWEEP_INTERVAL_SEC", "300"))
     # Templates aprovados p/ reengajar FORA da janela de 24h/72h. Vazio = não envia fora

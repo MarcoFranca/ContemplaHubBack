@@ -68,6 +68,14 @@ def _janela_horas(referral: bool) -> int:
     return _CTWA_WINDOW_HOURS if referral else settings.FOLLOWUP_WINDOW_HOURS
 
 
+def _em_horario_de_silencio() -> bool:
+    """Não incomodar de madrugada/noite (horário de Brasília, UTC-03:00)."""
+    hora = _now().astimezone(timezone(timedelta(hours=-3))).hour
+    start = settings.FOLLOWUP_QUIET_START_HOUR
+    end = settings.FOLLOWUP_QUIET_END_HOUR
+    return hora >= start or hora < end
+
+
 def _active_integrations(supa: Client, *, exigir_ia: bool) -> list[dict[str, Any]]:
     q = supa.table("whatsapp_integrations").select("*").eq("ativo", True)
     if exigir_ia:
@@ -158,6 +166,9 @@ def run_sweeps(supa: Client, *, limit: int = 50) -> dict[str, int]:
 # --------------------------------------------------------------------------- #
 def sweep_followups(supa: Client, *, limit: int = 50) -> int:
     from app.ai import agent as ai_agent
+
+    if _em_horario_de_silencio():
+        return 0  # respeita horário de silêncio (não manda follow-up de madrugada/noite)
 
     now = _now()
     gap = timedelta(hours=settings.FOLLOWUP_MIN_GAP_HOURS)
