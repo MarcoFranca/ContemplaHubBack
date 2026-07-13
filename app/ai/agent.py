@@ -249,10 +249,10 @@ _TOOLS = [
     {
         "name": "agendar_reuniao",
         "description": (
-            "Agenda uma reunião do cliente com o especialista na agenda interna. Use quando o cliente aceitar "
-            "conversar com um especialista e você tiver combinado data e horário específicos com ele. SEMPRE confirme "
-            "o dia e a hora exatos com o cliente ANTES de chamar. Passe 'inicio' em ISO 8601 com fuso -03:00. Se o "
-            "horário voltar indisponível, ofereça outro ao cliente."
+            "Agenda OU REMARCA a reunião do cliente. Use quando ele aceitar um horário específico. SEMPRE confirme o "
+            "dia e a hora ANTES de chamar. Passe 'inicio' em ISO 8601 com fuso -03:00. Se já existir uma reunião ativa "
+            "do lead, esta ferramenta ATUALIZA aquela reunião (não cria outra), então use-a também para remarcar. Se "
+            "o horário voltar indisponível, ofereça outro."
         ),
         "input_schema": {
             "type": "object",
@@ -263,6 +263,22 @@ _TOOLS = [
                 "observacao": {"type": "string", "description": "Contexto para o especialista"},
             },
             "required": ["inicio"],
+        },
+    },
+    {
+        "name": "cancelar_reuniao",
+        "description": (
+            "Cancela a reunião ativa do lead. Use SOMENTE depois de tentar remarcar e o cliente não quiser um novo "
+            "horário agora. Se ele concordar em retomar depois, passe 'retornar_em' (ISO 8601) para o sistema tentar "
+            "reagendar nessa data. PREFIRA remarcar (agendar_reuniao) a cancelar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "motivo": {"type": "string", "description": "Por que cancelou (curto)"},
+                "retornar_em": {"type": "string", "description": "Quando tentar reagendar, ISO 8601 (opcional)"},
+            },
+            "required": [],
         },
     },
     {
@@ -452,6 +468,11 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "APENAS os horários retornados (nunca invente). Quando ele escolher, chame `agendar_reuniao` com o 'inicio' "
         f"daquele horário. A data/hora atual é {_agora_brasil()}. Confirme ao cliente o horário marcado. Isso "
         "substitui o escalonamento nesses casos: agende em vez de só transferir.\n"
+        "- CANCELAMENTO de reunião: se o cliente quiser cancelar, PRIMEIRO tente REMARCAR (ofereça novos horários com "
+        "`listar_horarios_disponiveis` e use `agendar_reuniao`, que atualiza a reunião existente, sem duplicar). Só "
+        "chame `cancelar_reuniao` se ele não quiser um novo horário agora; nesse caso, combine uma data para retomar "
+        "e passe 'retornar_em' para o sistema tentar reagendar depois. Ao remarcar, sempre use agendar_reuniao (nunca "
+        "crie uma segunda reunião).\n"
         "- Se o bloco de memória indicar que já existe proposta enviada, não gere outra sem motivo claro. Primeiro "
         "retome a proposta existente, responda dúvidas, compare cenários ou avance para reunião.\n"
         "- Se o bloco de memória indicar que já existe reunião agendada, não ofereça novo agendamento por padrão. "
@@ -570,6 +591,8 @@ def _exec_tool(
         return ai_tools.listar_horarios_disponiveis(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "agendar_reuniao":
         return ai_tools.agendar_reuniao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
+    if name == "cancelar_reuniao":
+        return ai_tools.cancelar_reuniao(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "escalar_humano":
         state["escalated"] = True
         motivo = args.get("motivo") or "escalonamento"

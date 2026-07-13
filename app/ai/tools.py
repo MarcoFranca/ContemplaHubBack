@@ -377,32 +377,75 @@ def agendar_reuniao(
         slots = agenda_service.listar_slots(supa=supa, org_id=org_id, calendario=cal, max_slots=6)
         return {"ok": False, "erro": "horário indisponível", "horarios": slots, "instrucao": "ofereça um dos horários livres"}
 
+    inicio_iso = agenda_service._iso(dt).isoformat()
+    # já existe reunião ativa futura? então REMARCA (atualiza), não duplica.
+    existente = None
     try:
-        ins = (
+        er = (
             supa.table("agendamentos")
-            .insert(
-                {
-                    "org_id": org_id,
-                    "lead_id": lead_id,
-                    "calendario_id": cal.get("id"),
-                    "especialista_id": especialista_id,
-                    "titulo": titulo or "Reunião com especialista",
-                    "inicio": agenda_service._iso(dt).isoformat(),
-                    "fim": fim.isoformat(),
-                    "status": "agendado",
-                    "origem": "ia",
-                    "observacao": observacao,
-                }
-            )
+            .select("id, inicio")
+            .eq("org_id", org_id)
+            .eq("lead_id", lead_id)
+            .in_("status", ["agendado", "confirmado"])
+            .gte("inicio", agenda_service._now().isoformat())
+            .order("inicio", desc=False)
+            .limit(1)
             .execute()
         )
-        rows = getattr(ins, "data", None) or []
-        ag_id = rows[0].get("id") if rows else None
+        rows_e = getattr(er, "data", None) or []
+        existente = rows_e[0] if rows_e else None
+    except Exception:  # noqa: BLE001
+        existente = None
+
+    remarcado = False
+    try:
+        if existente:
+            supa.table("agendamentos").update(
+                {
+                    "inicio": inicio_iso,
+                    "fim": fim.isoformat(),
+                    "status": "agendado",
+                    "calendario_id": cal.get("id"),
+                    "titulo": titulo or "Reunião com especialista",
+                    "observacao": observacao,
+                    "lembrete_24h_at": None,  # reabilita lembretes para o novo horário
+                    "lembrete_1h_at": None,
+                    "updated_at": agenda_service._now().isoformat(),
+                }
+            ).eq("org_id", org_id).eq("id", existente["id"]).execute()
+            ag_id = existente["id"]
+            remarcado = True
+        else:
+            ins = (
+                supa.table("agendamentos")
+                .insert(
+                    {
+                        "org_id": org_id,
+                        "lead_id": lead_id,
+                        "calendario_id": cal.get("id"),
+                        "especialista_id": especialista_id,
+                        "titulo": titulo or "Reunião com especialista",
+                        "inicio": inicio_iso,
+                        "fim": fim.isoformat(),
+                        "status": "agendado",
+                        "origem": "ia",
+                        "observacao": observacao,
+                    }
+                )
+                .execute()
+            )
+            rows = getattr(ins, "data", None) or []
+            ag_id = rows[0].get("id") if rows else None
     except Exception as exc:  # noqa: BLE001
         logger.warning("ia_agendar_reuniao_falhou", extra={"org_id": org_id, "error": str(exc)})
         return {"ok": False, "erro": str(exc)}
 
-    # atividade tipo reuniao aparece na timeline do lead e notifica o time
+    # agendou/remarcou: limpa a data de retomada, se houver
+    try:
+        supa.table("leads").update({"retomar_em": None}).eq("org_id", org_id).eq("id", lead_id).execute()
+    except Exception:  # noqa: BLE001
+        pass
+
     try:
         supa.table("activities").insert(
             {
@@ -410,14 +453,75 @@ def agendar_reuniao(
                 "org_id": org_id,
                 "lead_id": lead_id,
                 "tipo": "reuniao",
-                "assunto": "Reunião agendada pela IA",
+                "assunto": "Reunião remarcada pela IA" if remarcado else "Reunião agendada pela IA",
                 "conteudo": f"{titulo or 'Reunião com especialista'} em {dt.isoformat()} ({dur} min). {observacao or ''}".strip(),
             }
         ).execute()
     except Exception:  # noqa: BLE001
         pass
 
-    return {"ok": True, "agendamento_id": ag_id, "inicio": dt.isoformat(), "duracao_min": dur}
+    return {"ok": True, "agendamento_id": ag_id, "inicio": dt.isoformat(), "duracao_min": dur, "remarcado": remarcado}
+
+
+def cancelar_reuniao(
+    *, supa: Client, org_id: str, lead_id: str, motivo: Optional[str] = None, retornar_em: Optional[str] = None
+) -> dict[str, Any]:
+    """Cancela a reunião ativa do lead. Se `retornar_em` (ISO) vier, agenda uma retomada futura."""
+    from datetime import datetime
+
+    from app.services import agenda_service
+
+    try:
+        er = (
+            supa.table("agendamentos")
+            .select("id, inicio")
+            .eq("org_id", org_id)
+            .eq("lead_id", lead_id)
+            .in_("status", ["agendado", "confirmado"])
+            .gte("inicio", agenda_service._now().isoformat())
+            .order("inicio", desc=False)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(er, "data", None) or []
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "erro": str(exc)}
+
+    if not rows:
+        # nada a cancelar; ainda pode registrar a retomada
+        cancelado = False
+    else:
+        try:
+            supa.table("agendamentos").update(
+                {"status": "cancelado", "updated_at": agenda_service._now().isoformat()}
+            ).eq("org_id", org_id).eq("id", rows[0]["id"]).execute()
+            cancelado = True
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "erro": str(exc)}
+
+    retomar_iso = None
+    if retornar_em:
+        try:
+            retomar_iso = datetime.fromisoformat(retornar_em.replace("Z", "+00:00")).isoformat()
+            supa.table("leads").update({"retomar_em": retomar_iso}).eq("org_id", org_id).eq("id", lead_id).execute()
+        except Exception:  # noqa: BLE001
+            retomar_iso = None
+
+    try:
+        supa.table("activities").insert(
+            {
+                "id": str(uuid4()),
+                "org_id": org_id,
+                "lead_id": lead_id,
+                "tipo": "reuniao",
+                "assunto": "Reunião cancelada pela IA",
+                "conteudo": f"{motivo or ''} | retomar em: {retomar_iso or 'não definido'}".strip(),
+            }
+        ).execute()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {"ok": True, "cancelado": cancelado, "retomar_em": retomar_iso}
 
 
 # --------------------------------------------------------------------------- #

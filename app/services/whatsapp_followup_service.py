@@ -158,7 +158,76 @@ def run_sweeps(supa: Client, *, limit: int = 50) -> dict[str, int]:
             stats["reminders"] = sweep_reminders(supa, limit=limit)
         except Exception as exc:  # noqa: BLE001
             logger.warning("reminder_sweep_erro", extra={"error": str(exc)})
+    if settings.FOLLOWUP_ENABLED and settings.WHATSAPP_AI_ENABLED:
+        try:
+            stats["retomadas"] = sweep_retomadas(supa, limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("retomada_sweep_erro", extra={"error": str(exc)})
     return stats
+
+
+def sweep_retomadas(supa: Client, *, limit: int = 50) -> int:
+    """Leads com data de retomada vencida: tenta reabrir o agendamento da reunião."""
+    from app.ai import agent as ai_agent
+
+    if _em_horario_de_silencio():
+        return 0
+    now = _now()
+    sent = 0
+    for integ in _active_integrations(supa, exigir_ia=True):
+        if sent >= limit:
+            break
+        org_id = integ.get("org_id")
+        try:
+            leads = getattr(
+                supa.table("leads")
+                .select("id, nome, telefone, nao_perturbe")
+                .eq("org_id", org_id)
+                .lte("retomar_em", now.isoformat())
+                .limit(limit)
+                .execute(),
+                "data",
+                None,
+            ) or []
+        except Exception:  # noqa: BLE001
+            leads = []
+
+        for lead in leads:
+            if sent >= limit:
+                break
+            lid = lead.get("id")
+            if lead.get("nao_perturbe") or not lid:
+                continue
+            if ai_agent.lead_em_handoff(supa, org_id, lid):
+                continue
+            # já tem reunião ativa futura? então nada a retomar; limpa.
+            ags = getattr(
+                supa.table("agendamentos").select("id").eq("org_id", org_id).eq("lead_id", lid).in_("status", _STATUS_ATIVOS).gte("inicio", now.isoformat()).limit(1).execute(),
+                "data",
+                None,
+            ) or []
+            if ags:
+                supa.table("leads").update({"retomar_em": None}).eq("org_id", org_id).eq("id", lid).execute()
+                continue
+            last_in, veio_de_anuncio = _ultimo_inbound(supa, org_id, lid)
+            janela = timedelta(hours=_janela_horas(veio_de_anuncio))
+            if not (last_in and now - last_in < janela):
+                continue  # fora da janela: não dá pra mandar mensagem livre agora
+            to = _digits(lead.get("telefone"))
+            if not to:
+                continue
+            nome = _nome_curto(lead.get("nome"))
+            body = f"Oi{nome}! Podemos retomar o agendamento da sua reunião com o especialista? Me diz um dia e horário que eu vejo a disponibilidade."
+            try:
+                wa._send_and_log_reply(
+                    supa=supa, integration=integ, org_id=org_id, lead_id=lid, to=to, body=body,
+                    payload={"ai": True, "retomada": True},
+                )
+                supa.table("leads").update({"retomar_em": None}).eq("org_id", org_id).eq("id", lid).execute()
+                sent += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("retomada_envio_falhou", extra={"org_id": org_id, "lead_id": lid, "error": str(exc)})
+    return sent
 
 
 # --------------------------------------------------------------------------- #
