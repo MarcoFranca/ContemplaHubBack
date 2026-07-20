@@ -108,6 +108,11 @@ class CreateCarteiraClienteIn(BaseModel):
     longitude: Optional[float] = None
 
 
+class AddLeadCarteiraIn(BaseModel):
+    origem_entrada: str = "manual"
+    observacoes: Optional[str] = None
+
+
 class NovaNegociacaoIn(BaseModel):
     stage: str = "negociacao"
     reason: Optional[str] = "Nova negociação iniciada pela carteira"
@@ -308,6 +313,39 @@ def create_cliente_direto_na_carteira(
 
     return {
         "ok": True,
+        "lead": lead,
+        "carteira": carteira_result["carteira_cliente"],
+    }
+
+
+@router.post("/{lead_id}")
+def add_lead_existente_na_carteira(
+    lead_id: str,
+    body: AddLeadCarteiraIn,
+    supa: Client = Depends(get_supabase_admin),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    if not x_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Org-Id header Ã© obrigatÃ³rio",
+        )
+
+    lead = get_lead_or_404(supa=supa, lead_id=lead_id)
+    if lead["org_id"] != x_org_id:
+        raise HTTPException(403, "Lead pertence a outra organizaÃ§Ã£o")
+
+    carteira_result = ensure_carteira_cliente(
+        supa=supa,
+        org_id=x_org_id,
+        lead_id=lead_id,
+        origem_entrada=(body.origem_entrada or "manual").strip() or "manual",
+        observacoes=body.observacoes or "Lead adicionado manualmente na carteira",
+    )
+
+    return {
+        "ok": True,
+        "created": carteira_result["created"],
         "lead": lead,
         "carteira": carteira_result["carteira_cliente"],
     }

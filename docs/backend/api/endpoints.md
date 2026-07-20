@@ -1114,6 +1114,25 @@ Efeito:
 - cria lead em etapa `pos_venda`
 - cria/garante `carteira_clientes`
 
+### `POST /carteira/{lead_id}`
+
+Adiciona um lead ja existente na carteira sem mover a etapa comercial.
+
+Headers:
+
+- `X-Org-Id`
+
+Payload:
+
+- `origem_entrada` default `manual`
+- `observacoes`
+
+Efeito:
+
+- valida que o lead pertence a org
+- cria/garante `carteira_clientes`
+- preserva a etapa atual do lead
+
 ### `POST /carteira/{lead_id}/nova-negociacao`
 
 Reabre negociacao de cliente que ja esta na carteira.

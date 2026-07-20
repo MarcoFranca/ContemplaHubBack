@@ -67,6 +67,16 @@ Fluxo:
 1. cria lead com etapa `pos_venda`;
 2. garante registro em `carteira_clientes`.
 
+### Adicionar lead existente na carteira
+
+`POST /carteira/{lead_id}`
+
+Fluxo:
+
+1. confirma ownership do lead;
+2. garante carteira para o mesmo `lead_id`;
+3. preserva a etapa atual do lead no funil.
+
 ### Abrir nova negociacao
 
 `POST /carteira/{lead_id}/nova-negociacao`
