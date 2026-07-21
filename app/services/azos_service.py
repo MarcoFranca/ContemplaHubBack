@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import secrets
+import re
 from typing import Any, Literal
 
 import httpx
@@ -288,6 +289,7 @@ def _upsert_external_records(
     org_id: str,
     resource: Literal["propostas", "apolices"],
     items: list[dict[str, Any]],
+    lead_by_cpf: dict[str, str] | None = None,
 ) -> int:
     table = "seguro_azos_propostas" if resource == "propostas" else "seguro_azos_apolices"
     external_key = "proposal_id" if resource == "propostas" else "policy_id"
@@ -315,7 +317,8 @@ def _upsert_external_records(
                 "policy_number": item.get("policy_number") or item.get("external_number"),
                 "policy_url": item.get("policy_url"),
                 "proposal_azos_id": item.get("proposal_id"),
-                "insured_name": item.get("insured_name") or insured.get("name"),
+                "insured_name": item.get("insured_name") or insured.get("name") or insured.get("full_name"),
+                "insured_cpf": _normalize_cpf(insured.get("cpf")),
                 "broker_name": item.get("broker_name") or broker.get("name"),
                 "broker_agent_email": item.get("broker_agent_email") or broker.get("agent_email"),
                 "issued_at": item.get("issued_at"),
@@ -327,6 +330,10 @@ def _upsert_external_records(
                 "late_payment_days": item.get("late_payment_days"),
                 "overdue_invoices_count": item.get("count_overdue_invoices"),
             })
+            insured_cpf = payload.get("insured_cpf")
+            matched_lead_id = lead_by_cpf.get(insured_cpf) if insured_cpf and lead_by_cpf else None
+            if matched_lead_id:
+                payload["lead_id"] = matched_lead_id
         if getattr(existing, "data", None):
             supa.table(table).update(payload).eq("id", existing.data["id"]).eq("org_id", org_id).execute()
         else:
@@ -418,13 +425,15 @@ def sync_broker_portfolio(supa: Client, *, org_id: str, limit: int, offset: int,
             "org_id": org_id, "resource": "apolices", "status": "error", "error_message": "Falha ao consultar a carteira da Azos.",
         }).execute()
         raise
-    policies_synced = _upsert_external_records(supa, org_id=org_id, resource="apolices", items=policies)
+    lead_by_cpf = _lead_by_cpf(supa, org_id=org_id)
+    policies_synced = _upsert_external_records(supa, org_id=org_id, resource="apolices", items=policies, lead_by_cpf=lead_by_cpf)
     commissions_synced = _upsert_broker_commissions(supa, org_id=org_id, items=commissions)
     for resource, received, synced in (("apolices", len(policies), policies_synced), ("comissoes", len(commissions), commissions_synced)):
         supa.table("seguro_azos_sync_runs").insert({
             "org_id": org_id, "resource": resource, "status": "success", "received_count": received, "synced_count": synced,
         }).execute()
-    return {"ok": True, "apolices": {"received": len(policies), "synced": policies_synced}, "comissoes": {"received": len(commissions), "synced": commissions_synced}}
+    associated = sum(1 for item in policies if _normalize_cpf((item.get("insured_data") or {}).get("cpf")) in lead_by_cpf)
+    return {"ok": True, "apolices": {"received": len(policies), "synced": policies_synced, "associadas_por_cpf": associated}, "comissoes": {"received": len(commissions), "synced": commissions_synced}}
 
 
 def _fetch_all_broker_items(fetch_page: Any, *, limit: int, offset: int) -> list[dict[str, Any]]:
@@ -441,9 +450,35 @@ def _fetch_all_broker_items(fetch_page: Any, *, limit: int, offset: int) -> list
         current_offset += len(page)
 
 
+def _normalize_cpf(value: Any) -> str | None:
+    digits = re.sub(r"\D", "", str(value or ""))
+    return digits if len(digits) == 11 else None
+
+
+def _lead_by_cpf(supa: Client, *, org_id: str) -> dict[str, str]:
+    """Retorna somente CPFs que apontam para um único lead da mesma organização."""
+    response = (
+        supa.table("lead_cadastros")
+        .select("lead_id, lead_cadastros_pf(cpf)")
+        .eq("org_id", org_id)
+        .execute()
+    )
+    candidates: dict[str, set[str]] = {}
+    for cadastro in getattr(response, "data", None) or []:
+        pf_rows = cadastro.get("lead_cadastros_pf") or []
+        if isinstance(pf_rows, dict):
+            pf_rows = [pf_rows]
+        for pf in pf_rows:
+            cpf = _normalize_cpf(pf.get("cpf") if isinstance(pf, dict) else None)
+            lead_id = cadastro.get("lead_id")
+            if cpf and lead_id:
+                candidates.setdefault(cpf, set()).add(lead_id)
+    return {cpf: next(iter(lead_ids)) for cpf, lead_ids in candidates.items() if len(lead_ids) == 1}
+
+
 def list_broker_portfolio(supa: Client, *, org_id: str, status_filter: str | None = None) -> dict[str, Any]:
     policies_query = supa.table("seguro_azos_apolices").select(
-        "id, azos_id, policy_number, policy_url, insured_name, broker_name, status, starts_at, ends_at, total_monthly_premium, late_payment_days, overdue_invoices_count, external_updated_at"
+        "id, azos_id, lead_id, policy_number, policy_url, insured_name, broker_name, status, starts_at, ends_at, total_monthly_premium, late_payment_days, overdue_invoices_count, external_updated_at"
     ).eq("org_id", org_id).order("external_updated_at", desc=True).limit(500)
     commissions_query = supa.table("seguro_azos_comissoes").select(
         "id, azos_id, policy_azos_id, policy_number, insured_name, commission_value, commission_percentage, paid_at, status, broker_agent_email, invoice_sequence_number"

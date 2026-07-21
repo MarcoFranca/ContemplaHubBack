@@ -39,6 +39,9 @@ não importar apenas a primeira página de uma carteira maior.
 
 `seguro_azos_apolices` é a carteira de Seguro: traz situação, vigência, prêmio, atraso e URL
 oficial da apólice. A URL da Azos é a referência principal; um upload manual é exceção operacional.
+Durante a sincronização de corretor, o CPF de `insured_data.cpf` é normalizado e comparado apenas
+com `lead_cadastros_pf.cpf` da mesma organização. A apólice recebe `lead_id` somente quando o CPF
+corresponde a um único lead; CPF ausente, inválido ou ambíguo permanece sem associação automática.
 `seguro_azos_comissoes` guarda os registros externos de comissão, por status Azos, sem escrever em
 `comissao_lancamentos`, repasses ou regras de comissão do Consórcio. Uma futura visão consolidada
 deve apenas somar leituras dos dois domínios, nunca unificar suas tabelas ou status.

@@ -187,7 +187,8 @@ Tabelas próprias introduzidas na migration `025_seguros_azos.sql`:
 - `seguro_azos_propostas`: cópia de propostas externas por `(org_id, azos_id)`; `lead_id` só é
   preenchido por associação explícita e segura.
 - `seguro_azos_apolices`: cópia de apólices externas por `(org_id, azos_id)`; não é
-  `contratos` do Consórcio.
+  `contratos` do Consórcio. Pode apontar para `lead_id` quando o CPF normalizado do segurado
+  corresponde a um único `lead_cadastros_pf` da mesma organização.
 - `seguro_azos_comissoes`: lançamentos externos por `(org_id, azos_id)`, com apólice, segurado,
   fatura, valor e status recebidos da Azos. Não substitui `comissao_lancamentos`.
 - `seguro_azos_sync_runs`: histórico técnico de sincronizações de propostas ou apólices.
