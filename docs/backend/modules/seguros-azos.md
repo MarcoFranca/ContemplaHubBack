@@ -10,6 +10,20 @@ A Azos disponibiliza cotação e consultas. A contratação final continua no ca
 Azos; o ContemplaHub não a representa como venda concluída antes da sincronização de proposta ou
 apólice.
 
+## Proposta pública e interesse do cliente
+
+Uma cotação pode ser publicada por `POST /seguros/azos/cotacoes/{cotacao_id}/publicar`. O backend
+gera um hash criptograficamente aleatório e devolve a URL pública e uma mensagem sugerida para
+WhatsApp. A página usa `GET /seguros/azos/p/{hash}` e recebe somente o primeiro nome do cliente,
+prêmio e coberturas, sem perfil de cotação, contatos, IDs internos ou dados da organização.
+
+`POST /seguros/azos/p/{hash}/interesse` é público e idempotente: altera o status da cotação para
+`interesse_confirmado` e cria/atualiza um único registro em `seguro_azos_atendimentos`, com status
+`pendente`. Na primeira confirmação, o sistema também tenta avisar o e-mail configurado da
+organização; uma falha de e-mail nunca desfaz o interesse registrado. Esse alerta é exclusivamente
+do domínio Seguro Azos; ele não cria contrato, cadastro, proposta ou atividade de Consórcio. A
+formalização final permanece no canal autorizado da Azos.
+
 ## Integração
 
 - base: `AZOS_API_BASE_URL`, padrão `https://api.gateway.azos.com.br`;

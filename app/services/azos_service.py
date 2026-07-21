@@ -7,7 +7,8 @@ de perfil ou a API key em logs.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import secrets
 from typing import Any, Literal
 
 import httpx
@@ -15,6 +16,7 @@ from fastapi import HTTPException, status
 from supabase import Client
 
 from app.core.config import settings
+from app.services.email_service import send_system_email
 
 
 def utcnow_iso() -> str:
@@ -127,6 +129,149 @@ def create_quote(
     saved = supa.table("seguro_azos_cotacoes").insert(row).execute()
     data = getattr(saved, "data", None) or []
     return data[0] if data else row
+
+
+def _first_name(name: str | None) -> str:
+    return (name or "Cliente").strip().split(" ")[0] or "Cliente"
+
+
+def _public_hash(supa: Client) -> str:
+    for _ in range(5):
+        candidate = secrets.token_urlsafe(24)
+        existing = (
+            supa.table("seguro_azos_cotacoes")
+            .select("id")
+            .eq("public_hash", candidate)
+            .maybe_single()
+            .execute()
+        )
+        if not getattr(existing, "data", None):
+            return candidate
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Não foi possível gerar o link da proposta.")
+
+
+def publish_quote(supa: Client, *, org_id: str, quote_id: str) -> dict[str, Any]:
+    quote_response = (
+        supa.table("seguro_azos_cotacoes")
+        .select("id, lead_id, public_hash, public_status, expires_at, leads(nome)")
+        .eq("id", quote_id)
+        .eq("org_id", org_id)
+        .maybe_single()
+        .execute()
+    )
+    quote = getattr(quote_response, "data", None)
+    if not quote:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cotação de Seguro não encontrada.")
+
+    hash_value = quote.get("public_hash") or _public_hash(supa)
+    expires_at = quote.get("expires_at") or (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    supa.table("seguro_azos_cotacoes").update({
+        "public_hash": hash_value,
+        "public_status": "enviada",
+        "public_sent_at": utcnow_iso(),
+        "expires_at": expires_at,
+    }).eq("id", quote_id).eq("org_id", org_id).execute()
+
+    lead = quote.get("leads") or {}
+    lead_name = lead.get("nome") if isinstance(lead, dict) else None
+    public_url = f"{settings.FRONTEND_SITE_URL.rstrip('/')}/seguros/{hash_value}"
+    return {
+        "id": quote_id,
+        "public_hash": hash_value,
+        "public_url": public_url,
+        "whatsapp_message": (
+            f"Olá, {_first_name(lead_name)}! Sua cotação de Seguro de Vida Azos está pronta. "
+            f"Para ver as coberturas e nos avisar que deseja seguir com o atendimento, acesse: {public_url}"
+        ),
+        "expires_at": expires_at,
+    }
+
+
+def get_public_quote(supa: Client, *, public_hash: str) -> dict[str, Any]:
+    response = (
+        supa.table("seguro_azos_cotacoes")
+        .select("public_status, expires_at, total_premium, result, selected_coverages, created_at, leads(nome)")
+        .eq("public_hash", public_hash)
+        .in_("public_status", ["enviada", "interesse_confirmado"])
+        .maybe_single()
+        .execute()
+    )
+    quote = getattr(response, "data", None)
+    if not quote:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposta de Seguro não encontrada.")
+
+    expires_at = quote.get("expires_at")
+    if expires_at and datetime.fromisoformat(expires_at.replace("Z", "+00:00")) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Esta proposta de Seguro expirou.")
+
+    lead = quote.get("leads") or {}
+    result = quote.get("result") or {}
+    return {
+        "cliente_primeiro_nome": _first_name(lead.get("nome") if isinstance(lead, dict) else None),
+        "status": quote.get("public_status"),
+        "expires_at": expires_at,
+        "created_at": quote.get("created_at"),
+        "total_premium": quote.get("total_premium") or result.get("total_premium"),
+        "discount": result.get("discount"),
+        "coverages": result.get("coverages") or [],
+    }
+
+
+def confirm_public_interest(
+    supa: Client, *, public_hash: str, origin: str, user_agent: str | None
+) -> dict[str, Any]:
+    response = (
+        supa.table("seguro_azos_cotacoes")
+        .select("id, org_id, lead_id, public_status, expires_at")
+        .eq("public_hash", public_hash)
+        .in_("public_status", ["enviada", "interesse_confirmado"])
+        .maybe_single()
+        .execute()
+    )
+    quote = getattr(response, "data", None)
+    if not quote:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposta de Seguro não encontrada.")
+
+    expires_at = quote.get("expires_at")
+    if expires_at and datetime.fromisoformat(expires_at.replace("Z", "+00:00")) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Esta proposta de Seguro expirou.")
+
+    first_confirmation = quote.get("public_status") != "interesse_confirmado"
+    supa.table("seguro_azos_cotacoes").update({
+        "public_status": "interesse_confirmado",
+        "interest_confirmed_at": utcnow_iso(),
+    }).eq("id", quote["id"]).execute()
+    supa.table("seguro_azos_atendimentos").upsert({
+        "org_id": quote["org_id"],
+        "lead_id": quote["lead_id"],
+        "cotacao_id": quote["id"],
+        "origem": origin,
+        "first_user_agent": user_agent,
+        "updated_at": utcnow_iso(),
+    }, on_conflict="cotacao_id").execute()
+    if first_confirmation:
+        try:
+            lead_response = supa.table("leads").select("nome").eq("id", quote["lead_id"]).maybe_single().execute()
+            org_response = supa.table("orgs").select("nome, email_from").eq("id", quote["org_id"]).maybe_single().execute()
+            lead = getattr(lead_response, "data", None) or {}
+            org = getattr(org_response, "data", None) or {}
+            destination = org.get("email_from")
+            if destination:
+                lead_url = f"{settings.FRONTEND_SITE_URL.rstrip('/')}/app/leads/{quote['lead_id']}/seguro-azos"
+                send_system_email(
+                    to=destination,
+                    subject=f"Interesse em Seguro Azos: {lead.get('nome') or 'cliente'}",
+                    text_body=(
+                        "O cliente confirmou interesse na proposta pública de Seguro de Vida Azos.\n\n"
+                        f"Cliente: {lead.get('nome') or '—'}\n"
+                        "Ação necessária: entrar em contato e seguir a formalização no canal autorizado da Azos.\n\n"
+                        f"Abrir atendimento: {lead_url}"
+                    ),
+                )
+        except Exception:
+            # A confirmação do cliente e o atendimento pendente não dependem de e-mail.
+            pass
+    return {"ok": True, "message": "Recebemos seu interesse. Um especialista entrará em contato para seguir com a formalização pela Azos."}
 
 
 def _upsert_external_records(

@@ -63,3 +63,6 @@ class AzosSyncIn(BaseModel):
     limit: int = Field(default=50, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
 
+
+class AzosPublicInterestIn(BaseModel):
+    origem: str = Field(default="proposta_publica", max_length=80)

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from supabase import Client
 
 from app.deps import get_supabase_admin
-from app.schemas.seguros_azos import AzosCoberturasIn, AzosCotacaoIn, AzosSyncIn
+from app.schemas.seguros_azos import AzosCoberturasIn, AzosCotacaoIn, AzosPublicInterestIn, AzosSyncIn
 from app.security.auth import AuthContext
 from app.security.permissions import require_internal_user, require_manager
-from app.services.azos_service import create_quote, ensure_lead, get_azos_client, sync_resource
+from app.services.azos_service import (
+    confirm_public_interest, create_quote, ensure_lead, get_azos_client,
+    get_public_quote, publish_quote, sync_resource,
+)
 
 
 router = APIRouter(prefix="/seguros/azos", tags=["seguros-azos"])
@@ -63,6 +66,39 @@ def post_cotacao_azos(
     )
 
 
+@router.post("/cotacoes/{cotacao_id}/publicar")
+def post_publicar_cotacao_azos(
+    cotacao_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_internal_user),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    return publish_quote(supa, org_id=_org(ctx, x_org_id), quote_id=cotacao_id)
+
+
+@router.get("/p/{public_hash}")
+def get_proposta_publica_azos(
+    public_hash: str,
+    supa: Client = Depends(get_supabase_admin),
+):
+    return get_public_quote(supa, public_hash=public_hash)
+
+
+@router.post("/p/{public_hash}/interesse")
+def post_interesse_publico_azos(
+    public_hash: str,
+    body: AzosPublicInterestIn,
+    request: Request,
+    supa: Client = Depends(get_supabase_admin),
+):
+    return confirm_public_interest(
+        supa,
+        public_hash=public_hash,
+        origin=body.origem,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
 @router.post("/sincronizar")
 def post_sincronizar_azos(
     body: AzosSyncIn,
@@ -79,4 +115,3 @@ def post_sincronizar_azos(
         offset=body.offset,
         azos=get_azos_client(),
     )
-
