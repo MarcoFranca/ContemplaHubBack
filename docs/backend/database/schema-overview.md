@@ -176,6 +176,22 @@ Regras criticas:
 - `default_owner_id`, quando usado, precisa pertencer a mesma organizacao;
 - eventos de webhook podem ser auditados e reinspecionados por integracao.
 
+### 1.2 Seguro de Vida Azos
+
+Tabelas próprias introduzidas na migration `025_seguros_azos.sql`:
+
+- `seguro_azos_cotacoes`: `org_id`, `lead_id`, `provider`, `profile`,
+  `selected_coverages`, `result`, `total_premium`, `consent_obtained_at`, `created_by` e
+  `created_at`. `profile` é o mínimo necessário para reproduzir a cotação e não deve ser enviado
+  a logs, IA ou ao domínio de Consórcio.
+- `seguro_azos_propostas`: cópia de propostas externas por `(org_id, azos_id)`; `lead_id` só é
+  preenchido por associação explícita e segura.
+- `seguro_azos_apolices`: cópia de apólices externas por `(org_id, azos_id)`; não é
+  `contratos` do Consórcio.
+- `seguro_azos_sync_runs`: histórico técnico de sincronizações de propostas ou apólices.
+
+Todas recebem `org_id`, RLS e políticas isoladas por organização.
+
 ### 2. Diagnosticos
 
 Tabela principal: `lead_diagnosticos`
@@ -650,6 +666,9 @@ Regra de dominio:
 erDiagram
     LEADS ||--o{ LEAD_PROPOSTAS : possui
     LEADS ||--o{ LEAD_DIAGNOSTICOS : possui
+    LEADS ||--o{ SEGURO_AZOS_COTACOES : possui
+    LEADS ||--o{ SEGURO_AZOS_PROPOSTAS : associa
+    LEADS ||--o{ SEGURO_AZOS_APOLICES : associa
     LEADS ||--o{ COTAS : origina
     LEADS ||--o| CARTEIRA_CLIENTES : entra
 

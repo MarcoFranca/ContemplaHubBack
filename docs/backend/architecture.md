@@ -6,6 +6,7 @@ O backend do ContemplaHub expõe uma API FastAPI que centraliza regras operacion
 
 - CRM comercial;
 - operacao de consorcio;
+- cotacao e acompanhamento de Seguro de Vida Azos;
 - diagnostico financeiro;
 - comissionamento e repasse;
 - acesso de parceiros.
@@ -40,6 +41,13 @@ O modelo observado no codigo separa o sistema em camadas de dominio.
 
 - `carteira` e uma dimensao operacional de pos-venda;
 - ela nao substitui lead, cota ou contrato.
+
+### 5. Dominio de Seguro de Vida Azos
+
+- o lead pode ser a origem comercial compartilhada, mas cotacao, proposta e apolice de seguro
+  vivem em tabelas e rotas proprias;
+- a integracao calcula cobertura/premio e sincroniza resultados da Azos;
+- nenhuma entidade de seguro usa `cota`, `contrato` ou as comissoes de consorcio como suporte.
 
 Arquivos centrais:
 
@@ -244,6 +252,22 @@ Status para esta documentacao:
 
 - fora do escopo principal do dominio de consorcio solicitado;
 - endpoints documentados na API para completude.
+
+### Seguro de Vida Azos
+
+Responsabilidades:
+
+- consultar profissões e coberturas elegíveis na Azos;
+- calcular e registrar cotação vinculada a um lead da mesma organização;
+- sincronizar propostas e apólices já existentes na Azos;
+- preservar o status externo sem movimentar o funil ou a operação de Consórcio.
+
+Tabelas principais:
+
+- `seguro_azos_cotacoes`
+- `seguro_azos_propostas`
+- `seguro_azos_apolices`
+- `seguro_azos_sync_runs`
 
 ## Regras de dominio importantes
 

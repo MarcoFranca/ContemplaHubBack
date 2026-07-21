@@ -15,6 +15,7 @@ O backend atual e uma API FastAPI que atua como camada de orquestracao do domini
 O sistema cobre principalmente:
 
 - CRM comercial de leads e kanban;
+- Seguro de Vida Azos, com cotação e sincronização externa isoladas;
 - diagnostico financeiro por lead;
 - propostas comerciais com pagina publica e onboarding;
 - cadastro de cotas, contratos e carteira;
@@ -49,6 +50,7 @@ O sistema cobre principalmente:
 - [Comissoes](./modules/comissoes.md)
 - [Parceiros](./modules/parceiros.md)
 - [Carteira](./modules/carteira.md)
+- [Seguro de Vida Azos](./modules/seguros-azos.md)
 
 ## Fontes consideradas
 

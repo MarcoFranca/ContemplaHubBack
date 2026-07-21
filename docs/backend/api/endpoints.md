@@ -28,6 +28,41 @@ O backend usa `HTTPException` do FastAPI e geralmente retorna:
 - `409` para conflito operacional
 - `500` para erro interno ou de integracao
 
+## Seguro de Vida Azos
+
+Todos os endpoints abaixo exigem `Authorization: Bearer <token>` e `X-Org-Id`. A organização do
+header é comparada com a organização resolvida pelo token. A chave `AZOS_API_KEY` nunca sai do
+backend.
+
+### `GET /seguros/azos/profissoes`
+
+Lista o catálogo de profissões da Azos. A rota é destinada a usuários internos e serve para obter
+o `profession_id` usado nas cotações.
+
+### `POST /seguros/azos/leads/{lead_id}/coberturas`
+
+Retorna as coberturas Azos elegíveis para o perfil. Usuário interno; valida que `lead_id` pertence
+à organização autenticada.
+
+Payload: `perfil.data_nascimento`, `perfil.sexo` (`m` ou `f`), `perfil.altura_m`,
+`perfil.peso_kg`, `perfil.fumante`, `perfil.renda_mensal`, `perfil.profissao_id` e
+`perfil.consentimento_confirmado: true`.
+
+### `POST /seguros/azos/leads/{lead_id}/cotacoes`
+
+Calcula o prêmio na Azos e persiste uma fotografia da cotação em
+`seguro_azos_cotacoes`. Usuário interno; valida lead/tenant e requer a confirmação explícita de
+consentimento. Além do mesmo `perfil`, recebe `coberturas`, uma lista com `{ code, capital }`.
+Erros por cobertura retornados pela Azos não são tratados como contratação concluída.
+
+### `POST /seguros/azos/sincronizar`
+
+Sincroniza resultados já existentes na Azos. Exclusivo para `admin` ou `gestor`.
+
+Payload: `recurso` (`propostas` ou `apolices`), `limit` (1 a 100; padrão 50) e `offset`
+(padrão 0). Lê a API da Azos, atualiza a cópia local por `(org_id, azos_id)` e registra a execução
+em `seguro_azos_sync_runs`.
+
 ## Health
 
 ### `GET /health`

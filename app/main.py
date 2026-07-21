@@ -29,6 +29,7 @@ from app.routers.partner_portal import router as partner_portal_router
 from app.routers.meta import router as meta_router
 from app.routers.whatsapp import router as whatsapp_router
 from app.routers.financeiro import router as financeiro_router
+from app.routers.seguros_azos import router as seguros_azos_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -78,6 +79,7 @@ app.include_router(partner_portal_router)
 app.include_router(meta_router)
 app.include_router(whatsapp_router)
 app.include_router(financeiro_router)
+app.include_router(seguros_azos_router)
 
 @app.on_event("startup")
 async def print_routes():

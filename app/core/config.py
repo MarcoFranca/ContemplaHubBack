@@ -14,6 +14,10 @@ class Settings(BaseModel):
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
+    # Azos: a chave fica exclusivamente no backend; jamais no front/mobile.
+    AZOS_API_BASE_URL: str = os.getenv("AZOS_API_BASE_URL", "https://api.gateway.azos.com.br")
+    AZOS_API_KEY: str = os.getenv("AZOS_API_KEY", "")
+
     PARTNER_INVITE_REDIRECT_TO: str = os.getenv(
         "PARTNER_INVITE_REDIRECT_TO",
         "http://localhost:3000/auth/callback",

@@ -1,5 +1,13 @@
 # Multi-tenant e seguranca
 
+## Seguro de Vida Azos
+
+As tabelas `seguro_azos_cotacoes`, `seguro_azos_propostas`, `seguro_azos_apolices` e
+`seguro_azos_sync_runs` usam `org_id` obrigatório, RLS habilitado e política baseada em
+`public.auth_org_id()`. O backend ainda valida o contexto autenticado contra `X-Org-Id` antes de
+consultar ou escrever. A chave da Azos permanece em variável de ambiente do servidor, fora das
+tabelas e do cliente.
+
 ## Principio geral
 
 O backend do ContemplaHub assume que isolamento por tenant e obrigatorio em duas camadas:
