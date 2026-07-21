@@ -117,7 +117,7 @@ def create_quote(
     *,
     org_id: str,
     lead_id: str,
-    created_by: str,
+    created_by: str | None,
     profile: dict[str, Any],
     selected_coverages: list[dict[str, Any]],
     azos: AzosClient,
@@ -138,6 +138,83 @@ def create_quote(
     saved = supa.table("seguro_azos_cotacoes").insert(row).execute()
     data = getattr(saved, "data", None) or []
     return data[0] if data else row
+
+
+def register_whatsapp_handoff(
+    supa: Client,
+    *,
+    org_id: str,
+    lead_id: str,
+    quote_id: str | None = None,
+    summary: str | None = None,
+) -> dict[str, Any]:
+    """Registra o aceite no WhatsApp para o corretor formalizar na Azos.
+
+    Não cria contrato ou proposta na Azos e não escreve em domínios de
+    Consórcio: apenas cria o atendimento pendente de Seguro.
+    """
+    query = (
+        supa.table("seguro_azos_cotacoes")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("lead_id", lead_id)
+    )
+    if quote_id:
+        query = query.eq("id", quote_id)
+    response = query.order("created_at", desc=True).limit(1).execute()
+    quotes = getattr(response, "data", None) or []
+    if not quotes:
+        return {"ok": False, "erro": "Nenhuma cotação Azos foi encontrada para este cliente."}
+
+    quote = quotes[0]
+    supa.table("seguro_azos_cotacoes").update(
+        {"public_status": "interesse_confirmado", "interest_confirmed_at": utcnow_iso()}
+    ).eq("id", quote["id"]).eq("org_id", org_id).execute()
+    supa.table("seguro_azos_atendimentos").upsert(
+        {
+            "org_id": org_id,
+            "lead_id": lead_id,
+            "cotacao_id": quote["id"],
+            "origem": "whatsapp_ia",
+            "updated_at": utcnow_iso(),
+        },
+        on_conflict="cotacao_id",
+    ).execute()
+    try:
+        supa.table("activities").insert(
+            {
+                "id": str(uuid4()),
+                "org_id": org_id,
+                "lead_id": lead_id,
+                "tipo": "whatsapp",
+                "assunto": "Seguro Azos: cliente pediu continuidade com corretor",
+                "conteudo": summary or "Interesse confirmado pelo cliente no WhatsApp. Formalização pendente no canal autorizado da Azos.",
+            }
+        ).execute()
+    except Exception:
+        pass
+    try:
+        lead_response = supa.table("leads").select("nome").eq("org_id", org_id).eq("id", lead_id).maybe_single().execute()
+        org_response = supa.table("orgs").select("email_from").eq("id", org_id).maybe_single().execute()
+        lead = getattr(lead_response, "data", None) or {}
+        org = getattr(org_response, "data", None) or {}
+        destination = org.get("email_from")
+        if destination:
+            lead_url = f"{settings.FRONTEND_SITE_URL.rstrip('/')}/app/leads/{lead_id}/seguro-azos"
+            send_system_email(
+                to=destination,
+                subject=f"Seguro Azos: continuidade solicitada por {lead.get('nome') or 'cliente'}",
+                text_body=(
+                    "O cliente confirmou pelo WhatsApp que deseja seguir com o Seguro de Vida Azos.\n\n"
+                    f"Cliente: {lead.get('nome') or '—'}\n"
+                    "Ação necessária: um corretor deve continuar a formalização pelo canal autorizado da Azos.\n\n"
+                    f"Abrir atendimento: {lead_url}"
+                ),
+            )
+    except Exception:
+        # O handoff e o atendimento pendente não dependem do aviso por e-mail.
+        pass
+    return {"ok": True, "cotacao_id": quote["id"], "atendimento": "pendente"}
 
 
 def _first_name(name: str | None) -> str:

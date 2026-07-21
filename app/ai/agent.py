@@ -49,6 +49,7 @@ _REMARCAR_KEYWORDS = ("remarcar", "reagendar", "mudar horario", "mudar horário"
 _CANCELAR_KEYWORDS = ("cancelar", "desmarcar", "desfazer")
 _SIMULACAO_KEYWORDS = ("simul", "parcela", "valor da carta", "valor de carta", "quanto fica", "cenario", "cenário")
 _PROPOSTA_KEYWORDS = ("proposta", "pdf", "orcamento", "orçamento", "cotacao", "cotação")
+_SEGURO_KEYWORDS = ("seguro", "seguro de vida", "azos", "apolice", "apólice", "cobertura", "protecao", "proteção")
 _HUMANO_KEYWORDS = ("humano", "pessoa", "atendente", "especialista", "consultor")
 _OPTOUT_KEYWORDS = ("nao quero mais", "não quero mais", "pare de mandar", "me remova", "encerrar", "não me chame")
 
@@ -77,6 +78,8 @@ def _infer_turn_intent(text: str) -> str:
         return "desconhecida"
     if _contains_any(normalized, _OPTOUT_KEYWORDS):
         return "opt_out"
+    if _contains_any(normalized, _SEGURO_KEYWORDS):
+        return "seguro_azos"
     if _contains_any(normalized, _REMARCAR_KEYWORDS) and _contains_any(normalized, _REUNIAO_KEYWORDS):
         return "remarcacao_reuniao"
     if _contains_any(normalized, _CANCELAR_KEYWORDS) and _contains_any(normalized, _REUNIAO_KEYWORDS):
@@ -120,6 +123,13 @@ def _build_turn_guidance(last_user_message: str, intent: str) -> str:
                 "- Este turno é sobre números/simulação. Só simule se houver dados mínimos ou se fizer sentido pedir os dados que faltam.",
             ]
         )
+    elif intent == "seguro_azos":
+        rules.extend(
+            [
+                "Este turno é sobre Seguro de Vida Azos. Não use ferramentas, proposta ou números de Consórcio.",
+                "Para cotar, colete somente os dados necessários e confirme consentimento explícito antes de consultar a Azos.",
+            ]
+        )
     elif intent == "opt_out":
         rules.extend(
             [
@@ -156,6 +166,26 @@ def _load_knowledge() -> str:
 # Definição das ferramentas (schema para o Claude)
 # --------------------------------------------------------------------------- #
 _TOOLS = [
+    {
+        "name": "buscar_profissoes_azos",
+        "description": "Busca a profissão atual informada pelo cliente e devolve opções com IDs válidos da Azos. Use antes de consultar coberturas.",
+        "input_schema": {"type": "object", "properties": {"termo": {"type": "string"}}, "required": ["termo"]},
+    },
+    {
+        "name": "consultar_coberturas_azos",
+        "description": "Consulta coberturas elegíveis de Seguro de Vida Azos. Só use após consentimento explícito do cliente para uso dos dados na cotação.",
+        "input_schema": {"type": "object", "properties": {"perfil": {"type": "object", "description": "data_nascimento (YYYY-MM-DD), sexo m/f, altura_m, peso_kg, fumante, renda_mensal, profissao_id e consentimento_confirmado=true"}}, "required": ["perfil"]},
+    },
+    {
+        "name": "gerar_cotacao_vida_azos",
+        "description": "Calcula e publica cotação Azos com prêmio mensal e link público próprio de Seguro. Use apenas com coberturas e capitais escolhidos entre as opções retornadas pela Azos.",
+        "input_schema": {"type": "object", "properties": {"perfil": {"type": "object"}, "coberturas": {"type": "array", "items": {"type": "object", "properties": {"code": {"type": "string"}, "capital": {"type": "number"}}, "required": ["code", "capital"]}}}, "required": ["perfil", "coberturas"]},
+    },
+    {
+        "name": "encaminhar_corretor_azos",
+        "description": "Encaminha ao corretor somente quando o cliente confirmar que quer seguir/finalizar o Seguro Azos. Cria atendimento pendente e encerra a participação da IA.",
+        "input_schema": {"type": "object", "properties": {"cotacao_id": {"type": "string"}, "resumo": {"type": "string"}}, "required": []},
+    },
     {
         "name": "simular_consorcio",
         "description": (
@@ -441,6 +471,9 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Varie a forma de responder. Evite abrir sempre do mesmo jeito, evite repetir a mesma estrutura e prefira "
         "1 ou 2 parágrafos curtos. Quando uma resposta curta resolver, seja breve.\n"
         "- NUNCA invente taxas, administradoras, grupos, prazos ou percentuais. Use as ferramentas e os dados da org.\n"
+        "- SEGURO DE VIDA AZOS é um fluxo separado de Consórcio. Quando o cliente falar de seguro, use somente `buscar_profissoes_azos`, `consultar_coberturas_azos`, `gerar_cotacao_vida_azos` e `encaminhar_corretor_azos`. Nunca use `simular_consorcio` ou `gerar_proposta` para Seguro.\n"
+        "- Para Seguro Azos, informe que a cotação requer data de nascimento, sexo, altura, peso, profissão atual, renda mensal e se fuma. Antes de enviar o perfil, obtenha consentimento explícito do cliente. Não persista dados parciais: consulte a Azos só com todos os campos e consentimento.\n"
+        "- Depois de consultar coberturas, apresente apenas as opções retornadas e peça a escolha de coberturas e capitais. Após `gerar_cotacao_vida_azos`, envie o link e deixe claro que é cotação, não contratação. Quando o cliente quiser seguir, chame `encaminhar_corretor_azos` e avise que o corretor formalizará pelo canal autorizado da Azos.\n"
         "- SIMULAÇÃO com foco no REDUTOR: ao falar de parcela, NÃO use parcela cheia. Trabalhe com a parcela "
         "REDUZIDA (redutor até a contemplação), que dá o maior crédito pelo menor valor. Quando o cliente disser "
         "quanto pode pagar por mês, chame `simular_consorcio` com `parcela_alvo` (não invente a carta): a ferramenta "
@@ -573,6 +606,18 @@ def lead_em_handoff(supa: Client, org_id: str, lead_id: Optional[str]) -> bool:
 def _exec_tool(
     *, name: str, args: dict[str, Any], supa: Client, org_id: str, lead_id: Optional[str], state: dict[str, Any]
 ) -> Any:
+    if name == "buscar_profissoes_azos":
+        return ai_tools.buscar_profissoes_azos(**args)
+    if name == "consultar_coberturas_azos":
+        return ai_tools.consultar_coberturas_azos(**args)
+    if name == "gerar_cotacao_vida_azos":
+        return ai_tools.gerar_cotacao_vida_azos(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
+    if name == "encaminhar_corretor_azos":
+        result = ai_tools.encaminhar_corretor_azos(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
+        if result.get("ok"):
+            state["escalated"] = True
+            state["handoff_reason"] = "Seguro de Vida Azos: cliente pediu continuidade com corretor"
+        return result
     if name == "simular_consorcio":
         return ai_tools.simular_consorcio(supa=supa, org_id=org_id, **args)
     if name == "listar_campanhas":

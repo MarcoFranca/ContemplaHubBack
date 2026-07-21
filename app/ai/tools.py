@@ -16,6 +16,82 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
+# Seguro de Vida Azos (domínio próprio; não reutiliza fluxos de Consórcio)
+# --------------------------------------------------------------------------- #
+def buscar_profissoes_azos(*, termo: str) -> dict[str, Any]:
+    """Busca IDs de profissão Azos sem expor a lista inteira ao modelo."""
+    from app.services.azos_service import get_azos_client
+
+    busca = (termo or "").strip().lower()
+    if len(busca) < 2:
+        return {"ok": False, "erro": "Informe ao menos duas letras da profissão atual."}
+    professions = get_azos_client().list_professions()
+    matches = [
+        {"id": item.get("_id") or item.get("id"), "nome": item.get("name") or item.get("title")}
+        for item in professions
+        if busca in str(item.get("name") or item.get("title") or "").lower()
+    ]
+    return {"ok": True, "profissoes": [item for item in matches if item["id"] and item["nome"]][:8]}
+
+
+def consultar_coberturas_azos(*, perfil: dict[str, Any]) -> dict[str, Any]:
+    """Consulta coberturas elegíveis somente com consentimento explícito."""
+    from app.schemas.seguros_azos import AzosPerfilCotacaoIn
+    from app.services.azos_service import get_azos_client
+
+    profile = AzosPerfilCotacaoIn.model_validate(perfil)
+    coverages = get_azos_client().list_coverages(profile.to_azos())
+    options: list[dict[str, Any]] = []
+    for coverage in coverages:
+        if not coverage.get("available"):
+            continue
+        capital = coverage.get("capital") or {}
+        options.append({
+            "code": coverage.get("coverage_code"),
+            "nome": coverage.get("commercial_name") or coverage.get("coverage_code"),
+            "capital_minimo": capital.get("min_covered_capital"),
+            "capital_maximo": capital.get("max_covered_capital"),
+            "multiplo": capital.get("capital_multiple"),
+            "depende_de": coverage.get("parent") or [],
+        })
+    return {"ok": True, "coberturas": [item for item in options if item["code"]]}
+
+
+def gerar_cotacao_vida_azos(
+    *, supa: Client, org_id: str, lead_id: str, perfil: dict[str, Any], coberturas: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Gera e publica cotação Azos com link próprio de Seguro."""
+    from app.schemas.seguros_azos import AzosCoberturaSelecionadaIn, AzosPerfilCotacaoIn
+    from app.services.azos_service import create_quote, get_azos_client, publish_quote
+
+    profile = AzosPerfilCotacaoIn.model_validate(perfil)
+    selected = [AzosCoberturaSelecionadaIn.model_validate(item).model_dump() for item in coberturas]
+    quote = create_quote(
+        supa, org_id=org_id, lead_id=lead_id, created_by=None,
+        profile=profile.to_azos(), selected_coverages=selected, azos=get_azos_client(),
+    )
+    public = publish_quote(supa, org_id=org_id, quote_id=quote["id"])
+    try:
+        supa.table("lead_interesses").insert({
+            "org_id": org_id, "lead_id": lead_id, "produto": "seguro_vida_azos",
+            "objetivo": "Cotação de Seguro de Vida Azos pelo WhatsApp",
+        }).execute()
+        supa.table("leads").update({"etapa": "proposta", "temperatura": "morno"}).eq("org_id", org_id).eq("id", lead_id).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ia_azos_lead_update_falhou", extra={"org_id": org_id, "error": str(exc)})
+    return {"ok": True, "cotacao_id": quote["id"], "premio_mensal": quote.get("total_premium"), "link": public["public_url"], "mensagem_sugerida": public["whatsapp_message"]}
+
+
+def encaminhar_corretor_azos(
+    *, supa: Client, org_id: str, lead_id: str, cotacao_id: str | None = None, resumo: str | None = None
+) -> dict[str, Any]:
+    """Cria atendimento pendente de Seguro e sinaliza que o corretor assume."""
+    from app.services.azos_service import register_whatsapp_handoff
+
+    return register_whatsapp_handoff(supa, org_id=org_id, lead_id=lead_id, quote_id=cotacao_id, summary=resumo)
+
+
+# --------------------------------------------------------------------------- #
 # Simulador de consórcio (porte de front/.../simuladores/lib/consorcio.ts)
 # --------------------------------------------------------------------------- #
 # Mecânica por produto (embutido, seguro, adesão, prazo). Taxa adm, redutor e FR
