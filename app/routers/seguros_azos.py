@@ -4,12 +4,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from supabase import Client
 
 from app.deps import get_supabase_admin
-from app.schemas.seguros_azos import AzosCoberturasIn, AzosCotacaoIn, AzosPublicInterestIn, AzosSyncIn
+from app.schemas.seguros_azos import AzosCarteiraSyncIn, AzosCoberturasIn, AzosCotacaoIn, AzosPublicInterestIn, AzosSyncIn
 from app.security.auth import AuthContext
 from app.security.permissions import require_internal_user, require_manager
 from app.services.azos_service import (
     confirm_public_interest, create_quote, ensure_lead, get_azos_client,
-    get_public_quote, publish_quote, sync_resource,
+    get_public_quote, list_broker_portfolio, publish_quote, sync_broker_portfolio, sync_resource,
 )
 
 
@@ -115,3 +115,23 @@ def post_sincronizar_azos(
         offset=body.offset,
         azos=get_azos_client(),
     )
+
+
+@router.post("/carteira/sincronizar")
+def post_sincronizar_carteira_azos(
+    body: AzosCarteiraSyncIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    return sync_broker_portfolio(supa, org_id=_org(ctx, x_org_id), limit=body.limit, offset=body.offset, azos=get_azos_client())
+
+
+@router.get("/carteira")
+def get_carteira_azos(
+    status: str | None = None,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_internal_user),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    return list_broker_portfolio(supa, org_id=_org(ctx, x_org_id), status_filter=status)

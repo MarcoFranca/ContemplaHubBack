@@ -63,6 +63,18 @@ Payload: `recurso` (`propostas` ou `apolices`), `limit` (1 a 100; padrão 50) e 
 (padrão 0). Lê a API da Azos, atualiza a cópia local por `(org_id, azos_id)` e registra a execução
 em `seguro_azos_sync_runs`.
 
+### `POST /seguros/azos/carteira/sincronizar`
+
+Sincroniza a carteira da conta de corretor Azos autenticada pela `AZOS_API_KEY`: apólices em
+`seguro_azos_apolices` e comissões em `seguro_azos_comissoes`. Exclusivo para `admin` ou `gestor`.
+Recebe `limit` (1 a 100; padrão 100) e `offset` (padrão 0). Não cria contratos, cotas, repasses ou
+lançamentos de comissão de Consórcio.
+
+### `GET /seguros/azos/carteira`
+
+Lista, para usuário interno, a carteira de apólices e as comissões Azos já sincronizadas na própria
+organização, incluindo um resumo de apólices ativas, em atraso, inativas, comissão paga e a receber.
+
 ## Health
 
 ### `GET /health`

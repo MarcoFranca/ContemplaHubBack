@@ -85,6 +85,14 @@ class AzosClient:
         data = self._request("GET", "/v1/platforms/policies", params={"limit": limit, "offset": offset})
         return data if isinstance(data, dict) else {"items": []}
 
+    def list_broker_policies(self, *, limit: int, offset: int) -> dict[str, Any]:
+        data = self._request("GET", "/v1/brokers/policies", params={"limit": limit, "offset": offset, "sort": "-updated_at"})
+        return data if isinstance(data, dict) else {"items": []}
+
+    def list_broker_commissions(self, *, limit: int, offset: int) -> dict[str, Any]:
+        data = self._request("GET", "/v1/brokers/commissions", params={"limit": limit, "offset": offset})
+        return data if isinstance(data, dict) else {"items": []}
+
 
 def get_azos_client() -> AzosClient:
     if not settings.AZOS_API_KEY.strip():
@@ -299,6 +307,26 @@ def _upsert_external_records(
             "payload": item,
             "synced_at": utcnow_iso(),
         }
+        if resource == "apolices":
+            insured = item.get("insured") or item.get("insured_data") or {}
+            broker = item.get("broker_data") or {}
+            validity = item.get("validity") or {}
+            payload.update({
+                "policy_number": item.get("policy_number") or item.get("external_number"),
+                "policy_url": item.get("policy_url"),
+                "proposal_azos_id": item.get("proposal_id"),
+                "insured_name": item.get("insured_name") or insured.get("name"),
+                "broker_name": item.get("broker_name") or broker.get("name"),
+                "broker_agent_email": item.get("broker_agent_email") or broker.get("agent_email"),
+                "issued_at": item.get("issued_at"),
+                "starts_at": validity.get("start_date") or item.get("start_date"),
+                "ends_at": validity.get("end_date") or item.get("end_date"),
+                "cancelled_at": item.get("cancellation_date"),
+                "total_monthly_premium": item.get("total_monthly_premium") or item.get("premium_monthly"),
+                "total_annual_premium": item.get("total_annual_premium") or item.get("premium"),
+                "late_payment_days": item.get("late_payment_days"),
+                "overdue_invoices_count": item.get("count_overdue_invoices"),
+            })
         if getattr(existing, "data", None):
             supa.table(table).update(payload).eq("id", existing.data["id"]).eq("org_id", org_id).execute()
         else:
@@ -340,3 +368,100 @@ def sync_resource(
         "synced_count": synced,
     }).execute()
     return {"ok": True, "resource": resource, "received": len(items), "synced": synced}
+
+
+def _upsert_broker_commissions(supa: Client, *, org_id: str, items: list[dict[str, Any]]) -> int:
+    synced = 0
+    for item in items:
+        external_id = item.get("id")
+        if not external_id:
+            continue
+        policy = item.get("policy") or {}
+        insured = item.get("insured") or {}
+        invoice = item.get("invoice") or {}
+        row = {
+            "org_id": org_id,
+            "azos_id": external_id,
+            "policy_azos_id": policy.get("id"),
+            "policy_number": policy.get("external_number"),
+            "insured_name": insured.get("name"),
+            "broker_agent_email": item.get("broker_agent_email"),
+            "invoice_azos_id": invoice.get("id"),
+            "invoice_sequence_number": invoice.get("sequence_number"),
+            "invoice_value": invoice.get("value"),
+            "invoice_paid_at": invoice.get("paid_at"),
+            "commission_value": item.get("commission_value") or 0,
+            "commission_percentage": item.get("commission_percentage"),
+            "paid_at": item.get("paid_at"),
+            "status": item.get("status"),
+            "payload": item,
+            "synced_at": utcnow_iso(),
+        }
+        existing = (
+            supa.table("seguro_azos_comissoes").select("id")
+            .eq("org_id", org_id).eq("azos_id", external_id).maybe_single().execute()
+        )
+        if getattr(existing, "data", None):
+            supa.table("seguro_azos_comissoes").update(row).eq("id", existing.data["id"]).eq("org_id", org_id).execute()
+        else:
+            supa.table("seguro_azos_comissoes").insert(row).execute()
+        synced += 1
+    return synced
+
+
+def sync_broker_portfolio(supa: Client, *, org_id: str, limit: int, offset: int, azos: AzosClient) -> dict[str, Any]:
+    try:
+        policies = _fetch_all_broker_items(azos.list_broker_policies, limit=limit, offset=offset)
+        commissions = _fetch_all_broker_items(azos.list_broker_commissions, limit=limit, offset=offset)
+    except HTTPException:
+        supa.table("seguro_azos_sync_runs").insert({
+            "org_id": org_id, "resource": "apolices", "status": "error", "error_message": "Falha ao consultar a carteira da Azos.",
+        }).execute()
+        raise
+    policies_synced = _upsert_external_records(supa, org_id=org_id, resource="apolices", items=policies)
+    commissions_synced = _upsert_broker_commissions(supa, org_id=org_id, items=commissions)
+    for resource, received, synced in (("apolices", len(policies), policies_synced), ("comissoes", len(commissions), commissions_synced)):
+        supa.table("seguro_azos_sync_runs").insert({
+            "org_id": org_id, "resource": resource, "status": "success", "received_count": received, "synced_count": synced,
+        }).execute()
+    return {"ok": True, "apolices": {"received": len(policies), "synced": policies_synced}, "comissoes": {"received": len(commissions), "synced": commissions_synced}}
+
+
+def _fetch_all_broker_items(fetch_page: Any, *, limit: int, offset: int) -> list[dict[str, Any]]:
+    """Percorre as páginas da Azos para evitar uma carteira parcialmente sincronizada."""
+    items: list[dict[str, Any]] = []
+    current_offset = offset
+    while True:
+        response = fetch_page(limit=limit, offset=current_offset)
+        page = response.get("items") if isinstance(response.get("items"), list) else []
+        items.extend(page)
+        total = response.get("total")
+        if not page or len(page) < limit or (isinstance(total, int) and len(items) >= total):
+            return items
+        current_offset += len(page)
+
+
+def list_broker_portfolio(supa: Client, *, org_id: str, status_filter: str | None = None) -> dict[str, Any]:
+    policies_query = supa.table("seguro_azos_apolices").select(
+        "id, azos_id, policy_number, policy_url, insured_name, broker_name, status, starts_at, ends_at, total_monthly_premium, late_payment_days, overdue_invoices_count, external_updated_at"
+    ).eq("org_id", org_id).order("external_updated_at", desc=True).limit(500)
+    commissions_query = supa.table("seguro_azos_comissoes").select(
+        "id, azos_id, policy_azos_id, policy_number, insured_name, commission_value, commission_percentage, paid_at, status, broker_agent_email, invoice_sequence_number"
+    ).eq("org_id", org_id).order("paid_at", desc=True).limit(500)
+    if status_filter:
+        policies_query = policies_query.eq("status", status_filter)
+    policies_response = policies_query.execute()
+    commissions_response = commissions_query.execute()
+    policies = getattr(policies_response, "data", None) or []
+    commissions = getattr(commissions_response, "data", None) or []
+    return {
+        "apolices": policies,
+        "comissoes": commissions,
+        "resumo": {
+            "apolices_ativas": sum(1 for item in policies if item.get("status") == "in_effect"),
+            "apolices_em_atraso": sum(1 for item in policies if item.get("status") == "overdue" or (item.get("overdue_invoices_count") or 0) > 0),
+            "apolices_inativas": sum(1 for item in policies if item.get("status") in {"canceled", "defeated"}),
+            "comissao_paga": sum(float(item.get("commission_value") or 0) for item in commissions if item.get("status") == "paid"),
+            "comissao_a_receber": sum(float(item.get("commission_value") or 0) for item in commissions if item.get("status") != "paid"),
+        },
+    }

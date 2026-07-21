@@ -188,6 +188,8 @@ Tabelas próprias introduzidas na migration `025_seguros_azos.sql`:
   preenchido por associação explícita e segura.
 - `seguro_azos_apolices`: cópia de apólices externas por `(org_id, azos_id)`; não é
   `contratos` do Consórcio.
+- `seguro_azos_comissoes`: lançamentos externos por `(org_id, azos_id)`, com apólice, segurado,
+  fatura, valor e status recebidos da Azos. Não substitui `comissao_lancamentos`.
 - `seguro_azos_sync_runs`: histórico técnico de sincronizações de propostas ou apólices.
 
 Todas recebem `org_id`, RLS e políticas isoladas por organização.

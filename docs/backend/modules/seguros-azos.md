@@ -26,6 +26,23 @@ formalização final permanece no canal autorizado da Azos.
 
 ## Integração
 
+### Carteira de corretor e comissões
+
+Como a credencial configurada pertence ao corretor parceiro, a carteira é sincronizada pelos
+endpoints de corretor da Azos: `GET /v1/brokers/policies` e
+`GET /v1/brokers/commissions`. O endpoint interno
+`POST /seguros/azos/carteira/sincronizar` exige perfil manager e atualiza as cópias locais de
+apólices e comissões para a organização autenticada. `GET /seguros/azos/carteira` exige usuário
+interno e devolve somente os campos operacionais necessários para a interface.
+O sincronismo percorre todas as páginas retornadas pela Azos a partir do `offset` informado, para
+não importar apenas a primeira página de uma carteira maior.
+
+`seguro_azos_apolices` é a carteira de Seguro: traz situação, vigência, prêmio, atraso e URL
+oficial da apólice. A URL da Azos é a referência principal; um upload manual é exceção operacional.
+`seguro_azos_comissoes` guarda os registros externos de comissão, por status Azos, sem escrever em
+`comissao_lancamentos`, repasses ou regras de comissão do Consórcio. Uma futura visão consolidada
+deve apenas somar leituras dos dois domínios, nunca unificar suas tabelas ou status.
+
 - base: `AZOS_API_BASE_URL`, padrão `https://api.gateway.azos.com.br`;
 - autenticação: header server-side `X-API-KEY`, vindo exclusivamente de `AZOS_API_KEY`;
 - nenhuma chave é persistida no banco, retornada por endpoint ou exposta ao frontend/mobile;
