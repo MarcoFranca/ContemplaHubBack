@@ -481,7 +481,7 @@ def list_broker_portfolio(supa: Client, *, org_id: str, status_filter: str | Non
         "id, azos_id, lead_id, policy_number, policy_url, insured_name, broker_name, status, starts_at, ends_at, total_monthly_premium, late_payment_days, overdue_invoices_count, external_updated_at"
     ).eq("org_id", org_id).order("external_updated_at", desc=True).limit(500)
     commissions_query = supa.table("seguro_azos_comissoes").select(
-        "id, azos_id, policy_azos_id, policy_number, insured_name, commission_value, commission_percentage, paid_at, status, broker_agent_email, invoice_sequence_number"
+        "id, azos_id, policy_azos_id, policy_number, insured_name, commission_value, commission_percentage, paid_at, status, broker_agent_email, invoice_sequence_number, invoice_value, invoice_paid_at"
     ).eq("org_id", org_id).order("paid_at", desc=True).limit(500)
     if status_filter:
         policies_query = policies_query.eq("status", status_filter)
@@ -489,14 +489,33 @@ def list_broker_portfolio(supa: Client, *, org_id: str, status_filter: str | Non
     commissions_response = commissions_query.execute()
     policies = getattr(policies_response, "data", None) or []
     commissions = getattr(commissions_response, "data", None) or []
+    active_policies = [item for item in policies if item.get("status") == "in_effect"]
+    overdue_policies = [
+        item for item in policies
+        if item.get("status") == "overdue" or (item.get("overdue_invoices_count") or 0) > 0
+    ]
+    recurring_monthly_premium = sum(float(item.get("total_monthly_premium") or 0) for item in active_policies)
+    premium_at_risk = sum(float(item.get("total_monthly_premium") or 0) for item in overdue_policies)
+    paid_commission = sum(float(item.get("commission_value") or 0) for item in commissions if item.get("status") == "paid")
+    scheduled_commission = sum(float(item.get("commission_value") or 0) for item in commissions if item.get("status") == "scheduled_payment")
+    verification_commission = sum(float(item.get("commission_value") or 0) for item in commissions if item.get("status") == "awaiting_verification")
+    commission_total = paid_commission + scheduled_commission + verification_commission
     return {
         "apolices": policies,
         "comissoes": commissions,
         "resumo": {
-            "apolices_ativas": sum(1 for item in policies if item.get("status") == "in_effect"),
-            "apolices_em_atraso": sum(1 for item in policies if item.get("status") == "overdue" or (item.get("overdue_invoices_count") or 0) > 0),
+            "apolices_ativas": len(active_policies),
+            "apolices_em_atraso": len(overdue_policies),
             "apolices_inativas": sum(1 for item in policies if item.get("status") in {"canceled", "defeated"}),
-            "comissao_paga": sum(float(item.get("commission_value") or 0) for item in commissions if item.get("status") == "paid"),
-            "comissao_a_receber": sum(float(item.get("commission_value") or 0) for item in commissions if item.get("status") != "paid"),
+            "premio_mensal_recorrente": recurring_monthly_premium,
+            "premio_anualizado": recurring_monthly_premium * 12,
+            "premio_mensal_em_risco": premium_at_risk,
+            "ticket_medio_mensal": recurring_monthly_premium / len(active_policies) if active_policies else 0,
+            "comissao_paga": paid_commission,
+            "comissao_programada": scheduled_commission,
+            "comissao_em_conferencia": verification_commission,
+            "comissao_a_receber": scheduled_commission + verification_commission,
+            "comissao_total": commission_total,
+            "realizacao_comissao_pct": (paid_commission / commission_total * 100) if commission_total else 0,
         },
     }

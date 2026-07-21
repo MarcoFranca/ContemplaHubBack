@@ -76,6 +76,9 @@ Lista, para usuário interno, a carteira de apólices e as comissões Azos já s
 organização, incluindo um resumo de apólices ativas, em atraso, inativas, comissão paga e a receber.
 Apólices cujo CPF do segurado tenha correspondência única em `lead_cadastros_pf` retornam o
 respectivo `lead_id`.
+O resumo também contém `premio_mensal_recorrente`, `premio_anualizado`,
+`premio_mensal_em_risco`, `ticket_medio_mensal`, `comissao_programada`,
+`comissao_em_conferencia`, `comissao_total` e `realizacao_comissao_pct`.
 
 ## Health
 

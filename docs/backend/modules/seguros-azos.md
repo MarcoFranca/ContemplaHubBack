@@ -46,6 +46,13 @@ corresponde a um único lead; CPF ausente, inválido ou ambíguo permanece sem a
 `comissao_lancamentos`, repasses ou regras de comissão do Consórcio. Uma futura visão consolidada
 deve apenas somar leituras dos dois domínios, nunca unificar suas tabelas ou status.
 
+### Indicadores gerenciais
+
+O resumo da carteira calcula o prêmio mensal recorrente apenas com apólices `in_effect`, além do
+prêmio anualizado, ticket médio mensal e prêmio mensal em risco por atraso. As comissões são
+separadas em realizadas (`paid`), programadas (`scheduled_payment`) e em conferência
+(`awaiting_verification`), com total mapeado e percentual de realização.
+
 - base: `AZOS_API_BASE_URL`, padrão `https://api.gateway.azos.com.br`;
 - autenticação: header server-side `X-API-KEY`, vindo exclusivamente de `AZOS_API_KEY`;
 - nenhuma chave é persistida no banco, retornada por endpoint ou exposta ao frontend/mobile;
