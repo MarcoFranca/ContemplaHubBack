@@ -260,6 +260,8 @@ Responsabilidades:
 - consultar profissões e coberturas elegíveis na Azos;
 - calcular e registrar cotação vinculada a um lead da mesma organização;
 - sincronizar propostas e apólices já existentes na Azos;
+- sincronizar carteira de corretor e comissões Azos em tabelas próprias, sem reutilizar o
+  comissionamento ou os repasses de Consórcio;
 - preservar o status externo sem movimentar o funil ou a operação de Consórcio.
 
 Tabelas principais:
