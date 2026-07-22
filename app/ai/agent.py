@@ -72,6 +72,16 @@ def _last_user_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _conversation_product(messages: list[dict[str, Any]]) -> str | None:
+    for message in reversed(messages):
+        text = _normalize_text(str(message.get("content") or ""))
+        if _contains_any(text, _SEGURO_KEYWORDS):
+            return "seguro_azos"
+        if _contains_any(text, ("consorcio", "carta de credito", "contemplacao", "lance")):
+            return "consorcio"
+    return None
+
+
 def _infer_turn_intent(text: str) -> str:
     normalized = _normalize_text(text)
     if not normalized:
@@ -178,8 +188,13 @@ _TOOLS = [
     },
     {
         "name": "gerar_cotacao_vida_azos",
-        "description": "Calcula e publica cotação Azos com prêmio mensal e link público próprio de Seguro. Use apenas com coberturas e capitais escolhidos entre as opções retornadas pela Azos.",
-        "input_schema": {"type": "object", "properties": {"perfil": {"type": "object"}, "coberturas": {"type": "array", "items": {"type": "object", "properties": {"code": {"type": "string"}, "capital": {"type": "number"}}, "required": ["code", "capital"]}}}, "required": ["perfil", "coberturas"]},
+        "description": "Calcula e publica cotação Azos com prêmio mensal, justificativas e link público próprio de Seguro. Use apenas com coberturas e capitais escolhidos entre as opções retornadas pela recomendação e confirmados pelo cliente.",
+        "input_schema": {"type": "object", "properties": {"perfil": {"type": "object"}, "coberturas": {"type": "array", "items": {"type": "object", "properties": {"code": {"type": "string"}, "capital": {"type": "number"}}, "required": ["code", "capital"]}}, "recomendacao": {"type": "object"}, "diagnostico": {"type": "object"}}, "required": ["perfil", "coberturas"]},
+    },
+    {
+        "name": "montar_recomendacao_vida_azos",
+        "description": "Monta uma sugestão explicável de coberturas e capitais considerando renda, autonomia profissional, filhos/dependentes, dívidas, reserva e orçamento. Use depois de consultar coberturas e antes de gerar a cotação.",
+        "input_schema": {"type": "object", "properties": {"coberturas": {"type": "array", "items": {"type": "object"}}, "diagnostico": {"type": "object", "description": "renda_mensal, profissao, autonomo, dependentes, filhos, dividas_saldo, reserva_meses e orcamento_mensal"}}, "required": ["coberturas", "diagnostico"]},
     },
     {
         "name": "encaminhar_corretor_azos",
@@ -472,8 +487,10 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "1 ou 2 parágrafos curtos. Quando uma resposta curta resolver, seja breve.\n"
         "- NUNCA invente taxas, administradoras, grupos, prazos ou percentuais. Use as ferramentas e os dados da org.\n"
         "- SEGURO DE VIDA AZOS é um fluxo separado de Consórcio. Quando o cliente falar de seguro, use somente `buscar_profissoes_azos`, `consultar_coberturas_azos`, `gerar_cotacao_vida_azos` e `encaminhar_corretor_azos`. Nunca use `simular_consorcio` ou `gerar_proposta` para Seguro.\n"
-        "- Para Seguro Azos, informe que a cotação requer data de nascimento, sexo, altura, peso, profissão atual, renda mensal e se fuma. Antes de enviar o perfil, obtenha consentimento explícito do cliente. Não persista dados parciais: consulte a Azos só com todos os campos e consentimento.\n"
-        "- Depois de consultar coberturas, apresente apenas as opções retornadas e peça a escolha de coberturas e capitais. Após `gerar_cotacao_vida_azos`, envie o link e deixe claro que é cotação, não contratação. Quando o cliente quiser seguir, chame `encaminhar_corretor_azos` e avise que o corretor formalizará pelo canal autorizado da Azos.\n"
+        "- COLETA GUIADA DE SEGURO: faça UMA pergunta curta por mensagem. Não envie uma lista gigante de campos. Comece entendendo família, trabalho e objetivo; depois colete, um por vez, data de nascimento, sexo, altura, peso, profissão, renda e se fuma. Pergunte também se é autônomo, quantos filhos/dependentes possui, saldo aproximado de dívidas, quantos meses de reserva tem e qual faixa mensal considera confortável. Use respostas já dadas e nunca repita pergunta.\n"
+        "- Antes de enviar o perfil à Azos, obtenha consentimento explícito do cliente. Não persista dados parciais: consulte a Azos só com todos os campos e consentimento.\n"
+        "- Depois de `consultar_coberturas_azos`, chame `montar_recomendacao_vida_azos`. Explique a lógica em linguagem simples e peça confirmação ou ajustes; não recomende automaticamente o menor capital e não empurre coberturas. Respeite o orçamento, mas sinalize quando reduzir capital deixa uma necessidade relevante descoberta.\n"
+        "- Após `gerar_cotacao_vida_azos`, envie o link e deixe claro que é cotação, sujeita à análise da Azos. Diga que coberturas e capitais podem subir ou descer conforme preferência, orçamento e teto liberado. Quando o cliente quiser seguir, chame `encaminhar_corretor_azos`.\n"
         "- SIMULAÇÃO com foco no REDUTOR: ao falar de parcela, NÃO use parcela cheia. Trabalhe com a parcela "
         "REDUZIDA (redutor até a contemplação), que dá o maior crédito pelo menor valor. Quando o cliente disser "
         "quanto pode pagar por mês, chame `simular_consorcio` com `parcela_alvo` (não invente a carta): a ferramenta "
@@ -610,6 +627,8 @@ def _exec_tool(
         return ai_tools.buscar_profissoes_azos(**args)
     if name == "consultar_coberturas_azos":
         return ai_tools.consultar_coberturas_azos(**args)
+    if name == "montar_recomendacao_vida_azos":
+        return ai_tools.montar_recomendacao_vida_azos(**args)
     if name == "gerar_cotacao_vida_azos":
         return ai_tools.gerar_cotacao_vida_azos(supa=supa, org_id=org_id, lead_id=lead_id or "", **args)
     if name == "encaminhar_corretor_azos":
@@ -684,6 +703,7 @@ def run_agent(
 
     last_user_message = _last_user_text(messages)
     turn_intent = _infer_turn_intent(last_user_message)
+    product_context = "seguro_azos" if turn_intent == "seguro_azos" else _conversation_product(messages)
     logger.info(
         "whatsapp_ai_turn_intent",
         extra={"org_id": org_id, "lead_id": lead_id, "intent": turn_intent, "last_user_message": last_user_message[:200]},
@@ -772,4 +792,5 @@ def run_agent(
         "reply": final_text or None,
         "escalated": bool(state.get("escalated")),
         "handoff_reason": state.get("handoff_reason"),
+        "product_context": product_context,
     }

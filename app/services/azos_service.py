@@ -122,6 +122,8 @@ def create_quote(
     profile: dict[str, Any],
     selected_coverages: list[dict[str, Any]],
     azos: AzosClient,
+    recommendation: dict[str, Any] | None = None,
+    recommendation_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_lead(supa, org_id=org_id, lead_id=lead_id)
     result = azos.calculate_quote(profile, selected_coverages)
@@ -135,6 +137,8 @@ def create_quote(
         "total_premium": result.get("total_premium"),
         "consent_obtained_at": utcnow_iso(),
         "created_by": created_by,
+        "recommendation": recommendation,
+        "recommendation_context": recommendation_context,
     }
     saved = supa.table("seguro_azos_cotacoes").insert(row).execute()
     data = getattr(saved, "data", None) or []
@@ -277,7 +281,7 @@ def publish_quote(supa: Client, *, org_id: str, quote_id: str) -> dict[str, Any]
 def get_public_quote(supa: Client, *, public_hash: str) -> dict[str, Any]:
     response = (
         supa.table("seguro_azos_cotacoes")
-        .select("public_status, expires_at, total_premium, result, selected_coverages, created_at, leads(nome)")
+        .select("public_status, expires_at, total_premium, result, selected_coverages, recommendation, recommendation_context, created_at, leads(nome)")
         .eq("public_hash", public_hash)
         .in_("public_status", ["enviada", "interesse_confirmado"])
         .maybe_single()
@@ -301,6 +305,8 @@ def get_public_quote(supa: Client, *, public_hash: str) -> dict[str, Any]:
         "total_premium": quote.get("total_premium") or result.get("total_premium"),
         "discount": result.get("discount"),
         "coverages": result.get("coverages") or [],
+        "recommendation": quote.get("recommendation") or {},
+        "recommendation_context": quote.get("recommendation_context") or {},
     }
 
 

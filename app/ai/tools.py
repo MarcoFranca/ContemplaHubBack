@@ -57,8 +57,16 @@ def consultar_coberturas_azos(*, perfil: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "coberturas": [item for item in options if item["code"]]}
 
 
+def montar_recomendacao_vida_azos(*, coberturas: list[dict[str, Any]], diagnostico: dict[str, Any]) -> dict[str, Any]:
+    """Dimensiona proteção por necessidade e limita cada capital ao teto elegível."""
+    from app.services.azos_recommendation_service import build_azos_recommendation
+
+    return build_azos_recommendation(coberturas=coberturas, diagnostico=diagnostico)
+
+
 def gerar_cotacao_vida_azos(
-    *, supa: Client, org_id: str, lead_id: str, perfil: dict[str, Any], coberturas: list[dict[str, Any]]
+    *, supa: Client, org_id: str, lead_id: str, perfil: dict[str, Any], coberturas: list[dict[str, Any]],
+    recomendacao: dict[str, Any] | None = None, diagnostico: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Gera e publica cotação Azos com link próprio de Seguro."""
     from app.schemas.seguros_azos import AzosCoberturaSelecionadaIn, AzosPerfilCotacaoIn
@@ -69,6 +77,7 @@ def gerar_cotacao_vida_azos(
     quote = create_quote(
         supa, org_id=org_id, lead_id=lead_id, created_by=None,
         profile=profile.to_azos(), selected_coverages=selected, azos=get_azos_client(),
+        recommendation=recomendacao, recommendation_context=diagnostico,
     )
     public = publish_quote(supa, org_id=org_id, quote_id=quote["id"])
     try:

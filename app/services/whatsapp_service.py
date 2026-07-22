@@ -1049,6 +1049,7 @@ def _handle_inbound(
                         as_audio=bool(origem_audio and settings.WHATSAPP_AUDIO_REPLY),
                         escalated=bool(result.get("escalated")),
                         handoff_reason=(result.get("handoff_reason") or None),
+                        product_context=(result.get("product_context") or None),
                         nome_cliente=(lead.get("nome") if lead else None),
                     )
                     ai_replied = True
@@ -1125,6 +1126,7 @@ def _send_ai_reply(
     as_audio: bool,
     escalated: bool,
     handoff_reason: Optional[str],
+    product_context: Optional[str] = None,
     nome_cliente: Optional[str] = None,
 ) -> None:
     """Envia a resposta da IA em áudio (se origem foi áudio) ou texto. Loga o texto."""
@@ -1133,6 +1135,7 @@ def _send_ai_reply(
             "ai": True,
             "ai_handoff": escalated,
             "handoff_reason": handoff_reason,
+            "product": product_context,
         }
     )
     if as_audio:

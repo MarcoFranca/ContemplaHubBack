@@ -84,6 +84,7 @@ class Settings(BaseModel):
     # Templates aprovados p/ reengajar FORA da janela de 24h/72h. Vazio = não envia fora
     # da janela (só dentro). Cada template aprovado na Meta deve ter 1 variável {{1}} = nome.
     FOLLOWUP_TEMPLATE_NAME: str = os.getenv("FOLLOWUP_TEMPLATE_NAME", "")
+    FOLLOWUP_SEGURO_TEMPLATE_NAME: str = os.getenv("FOLLOWUP_SEGURO_TEMPLATE_NAME", "")
     FOLLOWUP_TEMPLATE_LANG: str = os.getenv("FOLLOWUP_TEMPLATE_LANG", "pt_BR")
     REMINDER_TEMPLATE_NAME: str = os.getenv("REMINDER_TEMPLATE_NAME", "")
     REMINDER_TEMPLATE_LANG: str = os.getenv("REMINDER_TEMPLATE_LANG", "pt_BR")

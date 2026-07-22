@@ -28,11 +28,32 @@ _CTWA_WINDOW_HOURS = 72
 _MAX_WINDOW_HOURS = 72
 
 # Cadência de reengajamento (sem prometer link/Google Meet). {nome} = ", Fulano" ou "".
-_FOLLOWUP_MSGS = [
-    "Oi{nome}! Passando para retomar seu atendimento. Seu interesse no consórcio é para comprar imóvel, quitar financiamento ou formar patrimônio?",
-    "Com duas informações eu já consigo te dar um norte melhor: valor aproximado da carta e em quanto tempo você gostaria de usar o crédito. Pode me passar por aqui?",
-    "Se ainda fizer sentido avaliar o consórcio, posso organizar as informações e marcar uma reunião rápida com um corretor especialista. Quer que eu veja um horário disponível?",
-]
+_FOLLOWUP_MSGS = {
+    "consorcio": [
+        "Oi{nome}! Passando para retomar seu atendimento. Seu interesse no consórcio é para comprar imóvel, quitar financiamento ou formar patrimônio?",
+        "Com duas informações eu já consigo te dar um norte melhor: valor aproximado da carta e em quanto tempo gostaria de usar o crédito. Pode me contar?",
+        "Se ainda fizer sentido avaliar o consórcio, posso organizar as informações e marcar uma conversa com o corretor. Quer continuar?",
+    ],
+    "seguro_azos": [
+        "Oi{nome}! Podemos retomar sua análise de Seguro de Vida? Quero entender sua realidade para sugerir uma proteção que faça sentido, sem exageros.",
+        "Para continuar de onde paramos, posso fazer uma pergunta curta por vez sobre família, renda e trabalho. Tudo bem para você?",
+        "Se ainda fizer sentido, posso concluir sua cotação Azos e deixar as coberturas e capitais claros antes de encaminhar ao corretor. Quer continuar?",
+    ],
+}
+
+
+def _ultimo_produto_falado(messages: list[dict[str, Any]]) -> str:
+    """Deriva o produto do contexto mais recente, sem misturar jornadas."""
+    for message in reversed(messages):
+        payload = message.get("payload")
+        if isinstance(payload, dict) and payload.get("product") in {"seguro_azos", "consorcio"}:
+            return payload["product"]
+        text = str(message.get("body") or "").lower()
+        if any(term in text for term in ("seguro de vida", "azos", "apólice", "apolice", "cobertura")):
+            return "seguro_azos"
+        if any(term in text for term in ("consórcio", "consorcio", "carta de crédito", "carta de credito", "contemplação", "contemplacao")):
+            return "consorcio"
+    return "consorcio"
 
 
 def _now() -> datetime:
@@ -251,7 +272,7 @@ def sweep_followups(supa: Client, *, limit: int = 50) -> int:
         since = (now - timedelta(hours=_MAX_WINDOW_HOURS + 1)).isoformat()
         msgs = getattr(
             supa.table("whatsapp_messages")
-            .select("lead_id, direction, created_at, payload")
+            .select("lead_id, direction, body, created_at, payload")
             .eq("org_id", org_id)
             .gte("created_at", since)
             .order("created_at", desc=False)
@@ -266,7 +287,7 @@ def sweep_followups(supa: Client, *, limit: int = 50) -> int:
             if lid:
                 by_lead.setdefault(lid, []).append(m)
 
-        tem_template = bool(settings.FOLLOWUP_TEMPLATE_NAME.strip())
+        tem_template = bool(settings.FOLLOWUP_TEMPLATE_NAME.strip() or settings.FOLLOWUP_SEGURO_TEMPLATE_NAME.strip())
         candidatos: list[tuple[str, int, bool]] = []  # (lead_id, followup_count, janela_aberta)
         for lid, ms in by_lead.items():
             last = ms[-1]
@@ -324,8 +345,10 @@ def sweep_followups(supa: Client, *, limit: int = 50) -> int:
             if not to:
                 continue
             nome = lead.get("nome")
+            product = _ultimo_produto_falado(by_lead.get(lid) or [])
             if aberta:
-                body = _FOLLOWUP_MSGS[min(fups, len(_FOLLOWUP_MSGS) - 1)].format(nome=_nome_curto(nome))
+                sequence = _FOLLOWUP_MSGS[product]
+                body = sequence[min(fups, len(sequence) - 1)].format(nome=_nome_curto(nome))
                 try:
                     wa._send_and_log_reply(
                         supa=supa,
@@ -334,18 +357,25 @@ def sweep_followups(supa: Client, *, limit: int = 50) -> int:
                         lead_id=lid,
                         to=to,
                         body=body,
-                        payload={"ai": True, "followup": True, "attempt": fups + 1},
+                        payload={"ai": True, "followup": True, "attempt": fups + 1, "product": product},
                     )
                     sent += 1
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("followup_envio_falhou", extra={"org_id": org_id, "lead_id": lid, "error": str(exc)})
             else:
                 # janela fechada: template aprovado (opt-in via env)
+                template_name = (
+                    settings.FOLLOWUP_SEGURO_TEMPLATE_NAME.strip()
+                    if product == "seguro_azos"
+                    else settings.FOLLOWUP_TEMPLATE_NAME.strip()
+                )
+                if not template_name:
+                    continue
                 ok = _enviar_template(
                     integ=integ, supa=supa, org_id=org_id, lead_id=lid, to=to, nome=nome,
-                    template_name=settings.FOLLOWUP_TEMPLATE_NAME.strip(),
+                    template_name=template_name,
                     lang=settings.FOLLOWUP_TEMPLATE_LANG.strip() or "pt_BR",
-                    payload_extra={"followup": True, "attempt": fups + 1},
+                    payload_extra={"followup": True, "attempt": fups + 1, "product": product},
                 )
                 if ok:
                     sent += 1
