@@ -21,6 +21,7 @@ from fastapi import HTTPException, status
 from supabase import Client
 
 from app.core.config import settings
+from app.services.whatsapp_quick_replies import extract_quick_replies
 
 logger = logging.getLogger(__name__)
 
@@ -840,6 +841,34 @@ def send_document_message(
     return send_template_message(access_token=access_token, phone_number_id=phone_number_id, payload=payload)
 
 
+def send_interactive_button_message(
+    *, access_token: str, phone_number_id: str, to: str, body: str, buttons: list[str]
+) -> dict[str, Any]:
+    """Envia ate tres respostas rapidas, conforme os limites da Cloud API."""
+    options = [str(title).strip()[:20] for title in buttons if str(title).strip()][:3]
+    if len(options) < 2:
+        raise ValueError("Mensagem interativa exige pelo menos duas opcoes.")
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": (body or "Escolha uma opcao:").strip()[:1024]},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {"id": f"quick_{uuid4().hex[:12]}_{index}", "title": title},
+                    }
+                    for index, title in enumerate(options, start=1)
+                ]
+            },
+        },
+    }
+    return send_template_message(access_token=access_token, phone_number_id=phone_number_id, payload=payload)
+
+
 def _wamid_exists(supa: Client, wamid: Optional[str]) -> bool:
     if not wamid:
         return False
@@ -1138,7 +1167,13 @@ def _send_ai_reply(
             "product": product_context,
         }
     )
-    if as_audio:
+    # Perguntas fechadas precisam permanecer visuais para que os botões sejam
+    # clicáveis; nos demais casos preservamos a resposta em áudio.
+    has_quick_replies = any(
+        extract_quick_replies(part)[1]
+        for part in (text or "").split("|||")
+    )
+    if as_audio and not has_quick_replies:
         try:
             from app.ai import audio as ai_audio
 
@@ -1184,9 +1219,66 @@ def _send_ai_reply(
     # (ex.: mandar a proposta e, em seguida, o convite para reunião).
     partes = [p.strip() for p in (text or "").split("|||") if p.strip()] or [text]
     for parte in partes[:4]:  # limite de segurança
+        body, quick_replies = extract_quick_replies(parte)
+        if quick_replies:
+            try:
+                _send_and_log_interactive_reply(
+                    supa=supa,
+                    integration=integration,
+                    org_id=org_id,
+                    lead_id=lead_id,
+                    to=to,
+                    body=body,
+                    buttons=quick_replies,
+                    payload=base_payload,
+                )
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("whatsapp_ai_quick_reply_falhou", extra={"org_id": org_id, "error": str(exc)})
+                body = f"{body}\n\nResponda com: {' / '.join(quick_replies)}"
         _send_and_log_reply(
-            supa=supa, integration=integration, org_id=org_id, lead_id=lead_id, to=to, body=parte, payload=base_payload
+            supa=supa, integration=integration, org_id=org_id, lead_id=lead_id, to=to, body=body, payload=base_payload
         )
+
+
+def _send_and_log_interactive_reply(
+    *,
+    supa: Client,
+    integration: dict[str, Any],
+    org_id: str,
+    lead_id: Optional[str],
+    to: str,
+    body: str,
+    buttons: list[str],
+    payload: dict[str, Any],
+) -> None:
+    normalized_payload = _normalize_operational_payload(
+        {**payload, "quick_reply": True, "options": buttons}
+    )
+    reply = send_interactive_button_message(
+        access_token=_trim(integration.get("access_token")),
+        phone_number_id=_trim(integration.get("phone_number_id")),
+        to=to,
+        body=body,
+        buttons=buttons,
+    )
+    reply_wamid = None
+    reply_msgs = reply.get("messages") if isinstance(reply, dict) else None
+    if isinstance(reply_msgs, list) and reply_msgs:
+        reply_wamid = reply_msgs[0].get("id")
+    supa.table("whatsapp_messages").insert(
+        {
+            "org_id": org_id,
+            "lead_id": lead_id,
+            "direction": "out",
+            "wa_message_id": reply_wamid,
+            "phone": to,
+            "msg_type": "interactive",
+            "body": body,
+            "status": "sent",
+            "payload": normalized_payload,
+        }
+    ).execute()
 
 
 def _send_and_log_reply(

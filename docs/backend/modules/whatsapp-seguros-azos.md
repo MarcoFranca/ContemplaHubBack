@@ -24,14 +24,23 @@ autorizado da Azos.
 
 ## Coleta guiada e recomendação
 
-O agente coleta uma informação por mensagem e reaproveita o que já foi informado. Além dos dados
+O agente coleta os dados em no máximo três blocos curtos e reaproveita o que já foi informado.
+Perguntas fechadas com duas ou três respostas usam botões interativos do WhatsApp; se a Cloud API
+recusar o formato, o backend envia automaticamente as mesmas opções em texto. Além dos dados
 obrigatórios da API, pergunta sobre autonomia profissional, filhos/dependentes, dívidas, reserva e
 orçamento mensal. Não envia perfis parciais à Azos e exige consentimento explícito antes da consulta.
+
+Conversas de Seguro Azos preservam no mínimo 40 mensagens no contexto do agente. Antes de pedir
+novamente qualquer dado, o agente deve considerar o histórico e resumir o perfil coletado para o
+cliente confirmar ou corrigir.
 
 Após receber as coberturas elegíveis, `montar_recomendacao_vida_azos` dimensiona referências de
 capital por continuidade de renda, compromissos financeiros e perfil familiar/profissional. Cada
 capital é limitado ao mínimo, máximo e múltiplo devolvidos pela Azos. A sugestão é explicável,
 ajustável e não representa aceitação, recomendação da seguradora ou garantia de indenização.
+Quando Doenças Graves 30 estiver disponível para o perfil, ela é a opção padrão. Doenças Graves
+13 só deve ser usada quando DG30 não estiver disponível ou quando o cliente escolher conscientemente
+uma alternativa mais enxuta para reduzir o prêmio.
 
 O follow-up identifica o produto mais recente nas mensagens e usa cadência própria para
 `seguro_azos` ou `consorcio`. Fora da janela de mensagens livres, Seguro pode usar o template Meta
@@ -43,3 +52,6 @@ A migration `030_seguros_azos_recomendacao.sql` adiciona `recommendation` e
 `recommendation_context` à cotação. A página pública mostra a lógica geral, motivo e prioridade de
 cada cobertura, capital sugerido, prêmio calculado e aviso de que os valores podem subir ou descer
 conforme preferência, orçamento, subscrição e teto liberado pela Azos.
+
+Na mensagem enviada antes do link, `CAPITAL SEGURADO` identifica o valor potencial de proteção ou
+indenização de cada cobertura. `PRÊMIO MENSAL` identifica exclusivamente o total pago por mês.

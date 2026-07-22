@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 # Seguro de Vida Azos (domínio próprio; não reutiliza fluxos de Consórcio)
 # --------------------------------------------------------------------------- #
+def _format_brl(value: Any) -> str:
+    try:
+        formatted = f"{float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "não informado"
+    return "R$ " + formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
 def buscar_profissoes_azos(*, termo: str) -> dict[str, Any]:
     """Busca IDs de profissão Azos sem expor a lista inteira ao modelo."""
     from app.services.azos_service import get_azos_client
@@ -54,6 +62,15 @@ def consultar_coberturas_azos(*, perfil: dict[str, Any]) -> dict[str, Any]:
             "multiplo": capital.get("capital_multiple"),
             "depende_de": coverage.get("parent") or [],
         })
+    names = [str(item.get("nome") or "").lower() for item in options]
+    dg30_available = any("doenças graves 30" in name or "doencas graves 30" in name or "dg30" in name for name in names)
+    if dg30_available:
+        for item in options:
+            name = str(item.get("nome") or "").lower()
+            if "doenças graves 30" in name or "doencas graves 30" in name or "dg30" in name:
+                item["recomendacao_padrao"] = True
+            elif "doenças graves 13" in name or "doencas graves 13" in name or "dg13" in name:
+                item["alternativa_enxuta"] = True
     return {"ok": True, "coberturas": [item for item in options if item["code"]]}
 
 
@@ -88,7 +105,55 @@ def gerar_cotacao_vida_azos(
         supa.table("leads").update({"etapa": "proposta", "temperatura": "morno"}).eq("org_id", org_id).eq("id", lead_id).execute()
     except Exception as exc:  # noqa: BLE001
         logger.warning("ia_azos_lead_update_falhou", extra={"org_id": org_id, "error": str(exc)})
-    return {"ok": True, "cotacao_id": quote["id"], "premio_mensal": quote.get("total_premium"), "link": public["public_url"], "mensagem_sugerida": public["whatsapp_message"]}
+    result = quote.get("result") or {}
+    calculated_coverages = result.get("coverages") or []
+    recommended_coverages = (recomendacao or {}).get("coberturas") or []
+    coverage_values = []
+    for selected_coverage in selected:
+        code = selected_coverage.get("code")
+        calculated = next(
+            (
+                item for item in calculated_coverages
+                if (item.get("coverage_code") or item.get("code")) == code
+            ),
+            {},
+        )
+        recommended = next(
+            (item for item in recommended_coverages if item.get("code") == code),
+            {},
+        )
+        coverage_values.append({
+            "code": code,
+            "nome": calculated.get("commercial_name") or calculated.get("name") or recommended.get("nome") or code,
+            "capital_segurado": selected_coverage.get("capital"),
+            "premio_mensal_da_cobertura": calculated.get("premium") or calculated.get("monthly_premium"),
+        })
+    protection_lines = "\n".join(
+        f"• {item['nome']}: {_format_brl(item['capital_segurado'])}"
+        for item in coverage_values
+    )
+    suggested_message = (
+        "Sua cotação de Seguro de Vida Azos está pronta.\n\n"
+        "CAPITAIS SEGURADOS (valores de proteção, não mensalidades):\n"
+        f"{protection_lines}\n\n"
+        "PRÊMIO MENSAL TOTAL (valor pago por mês): "
+        f"{_format_brl(quote.get('total_premium'))}\n\n"
+        f"Veja os detalhes e solicite atendimento do corretor: {public['public_url']}\n\n"
+        "A cotação está sujeita à análise da Azos e pode ser ajustada."
+    )
+    return {
+        "ok": True,
+        "cotacao_id": quote["id"],
+        "premio_mensal": quote.get("total_premium"),
+        "valores": {
+            "premio_mensal_total": quote.get("total_premium"),
+            "explicacao_premio": "Valor total que o cliente paga por mês.",
+            "capitais_segurados": coverage_values,
+            "explicacao_capital": "Valores de proteção ou indenização; não são mensalidades.",
+        },
+        "link": public["public_url"],
+        "mensagem_sugerida": suggested_message,
+    }
 
 
 def encaminhar_corretor_azos(

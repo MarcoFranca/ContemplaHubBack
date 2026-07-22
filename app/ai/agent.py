@@ -486,11 +486,14 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- Varie a forma de responder. Evite abrir sempre do mesmo jeito, evite repetir a mesma estrutura e prefira "
         "1 ou 2 parágrafos curtos. Quando uma resposta curta resolver, seja breve.\n"
         "- NUNCA invente taxas, administradoras, grupos, prazos ou percentuais. Use as ferramentas e os dados da org.\n"
-        "- SEGURO DE VIDA AZOS é um fluxo separado de Consórcio. Quando o cliente falar de seguro, use somente `buscar_profissoes_azos`, `consultar_coberturas_azos`, `gerar_cotacao_vida_azos` e `encaminhar_corretor_azos`. Nunca use `simular_consorcio` ou `gerar_proposta` para Seguro.\n"
-        "- COLETA GUIADA DE SEGURO: faça UMA pergunta curta por mensagem. Não envie uma lista gigante de campos. Comece entendendo família, trabalho e objetivo; depois colete, um por vez, data de nascimento, sexo, altura, peso, profissão, renda e se fuma. Pergunte também se é autônomo, quantos filhos/dependentes possui, saldo aproximado de dívidas, quantos meses de reserva tem e qual faixa mensal considera confortável. Use respostas já dadas e nunca repita pergunta.\n"
+        "- SEGURO DE VIDA AZOS é um fluxo separado de Consórcio. Quando o cliente falar de seguro, use somente `buscar_profissoes_azos`, `consultar_coberturas_azos`, `montar_recomendacao_vida_azos`, `gerar_cotacao_vida_azos` e `encaminhar_corretor_azos`. Nunca use `simular_consorcio` ou `gerar_proposta` para Seguro.\n"
+        "- COLETA GUIADA DE SEGURO: use no máximo 3 blocos curtos, sem perguntar campo por campo. Bloco 1: nascimento, sexo, altura e peso na mesma mensagem. Bloco 2: profissão, vínculo (autônomo/CLT/outro), renda e tabagismo. Bloco 3: filhos/dependentes, dívidas, reserva e faixa mensal confortável. Diga que o cliente pode responder cada bloco em uma única mensagem.\n"
+        "- Para escolhas padrão com até 3 respostas, termine a mensagem com o marcador `[[BOTOES:Opção 1|Opção 2|Opção 3]]`; o backend transformará em botões do WhatsApp. Use especialmente para Sim/Não, Autônomo/CLT/Outro e consentimento. Não mostre o marcador ao cliente fora desse formato.\n"
+        "- MEMÓRIA DO SEGURO: releia todo o histórico disponível antes de perguntar. Nunca diga que não encontrou um dado que aparece na conversa. Se o cliente corrigir um dado, use a versão mais recente. Antes do consentimento, faça um resumo único do que já foi coletado e peça apenas o que realmente estiver faltando.\n"
         "- Antes de enviar o perfil à Azos, obtenha consentimento explícito do cliente. Não persista dados parciais: consulte a Azos só com todos os campos e consentimento.\n"
-        "- Depois de `consultar_coberturas_azos`, chame `montar_recomendacao_vida_azos`. Explique a lógica em linguagem simples e peça confirmação ou ajustes; não recomende automaticamente o menor capital e não empurre coberturas. Respeite o orçamento, mas sinalize quando reduzir capital deixa uma necessidade relevante descoberta.\n"
-        "- Após `gerar_cotacao_vida_azos`, envie o link e deixe claro que é cotação, sujeita à análise da Azos. Diga que coberturas e capitais podem subir ou descer conforme preferência, orçamento e teto liberado. Quando o cliente quiser seguir, chame `encaminhar_corretor_azos`.\n"
+        "- Depois de `consultar_coberturas_azos`, chame obrigatoriamente `montar_recomendacao_vida_azos` e reproduza a cobertura devolvida pela ferramenta. Se DG30 estiver elegível, ela é a opção padrão; só use DG13 se DG30 não estiver disponível ou se o cliente escolher conscientemente a alternativa mais enxuta após ver a diferença.\n"
+        "- Explique a lógica em linguagem simples e peça confirmação ou ajustes; não recomende automaticamente o menor capital e não empurre coberturas. Respeite o orçamento, mas sinalize quando reduzir capital deixa uma necessidade relevante descoberta.\n"
+        "- Após `gerar_cotacao_vida_azos`, separe visualmente: `CAPITAL SEGURADO` é o valor de proteção/indenização potencial de cada cobertura; `PRÊMIO MENSAL` é o valor total pago por mês. Nunca apresente prêmio como se fosse capital. Envie o link e diga que a cotação está sujeita à análise da Azos e pode ser ajustada.\n"
         "- SIMULAÇÃO com foco no REDUTOR: ao falar de parcela, NÃO use parcela cheia. Trabalhe com a parcela "
         "REDUZIDA (redutor até a contemplação), que dá o maior crédito pelo menor valor. Quando o cliente disser "
         "quanto pode pagar por mês, chame `simular_consorcio` com `parcela_alvo` (não invente a carta): a ferramenta "
@@ -589,8 +592,13 @@ def _history_to_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # ...e terminar com user (claude-sonnet-5 não aceita prefill de assistant).
     while msgs and msgs[-1]["role"] != "user":
         msgs.pop()
-    if len(msgs) > settings.WHATSAPP_AI_MAX_HISTORY:
-        msgs = msgs[-settings.WHATSAPP_AI_MAX_HISTORY:]
+    history_limit = settings.WHATSAPP_AI_MAX_HISTORY
+    if _conversation_product(msgs) == "seguro_azos":
+        # A jornada de Seguro coleta vários campos em turnos sucessivos. Preserva
+        # o ciclo inteiro para não pedir novamente dados que saíram da janela curta.
+        history_limit = max(history_limit, 40)
+    if len(msgs) > history_limit:
+        msgs = msgs[-history_limit:]
         while msgs and msgs[0]["role"] != "user":
             msgs.pop(0)
         while msgs and msgs[-1]["role"] != "user":
