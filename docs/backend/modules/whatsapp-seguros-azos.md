@@ -63,3 +63,10 @@ conforme preferência, orçamento, subscrição e teto liberado pela Azos.
 
 Na mensagem enviada antes do link, `CAPITAL SEGURADO` identifica o valor potencial de proteção ou
 indenização de cada cobertura. `PRÊMIO MENSAL` identifica exclusivamente o total pago por mês.
+
+## Sincronização da carteira do corretor
+
+A chave Azos configurada para a organização é uma credencial de corretor. A sincronização usa
+exclusivamente `/v1/brokers/proposals`, `/v1/brokers/policies` e `/v1/brokers/commissions`.
+Endpoints `/v1/platforms/*` não devem ser usados nesse fluxo, pois a Azos os rejeita quando o
+`external_id` da credencial pertence a um corretor. Falhas são registradas separadamente por recurso.

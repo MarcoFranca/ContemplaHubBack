@@ -83,6 +83,10 @@ class AzosClient:
         data = self._request("GET", "/v1/platforms/proposals", params={"limit": limit, "offset": offset})
         return data if isinstance(data, dict) else {"items": []}
 
+    def list_broker_proposals(self, *, limit: int, offset: int) -> dict[str, Any]:
+        data = self._request("GET", "/v1/brokers/proposals", params={"limit": limit, "offset": offset})
+        return data if isinstance(data, dict) else {"items": []}
+
     def list_policies(self, *, limit: int, offset: int) -> dict[str, Any]:
         data = self._request("GET", "/v1/platforms/policies", params={"limit": limit, "offset": offset})
         return data if isinstance(data, dict) else {"items": []}
@@ -448,9 +452,9 @@ def sync_resource(
 ) -> dict[str, Any]:
     try:
         response = (
-            azos.list_proposals(limit=limit, offset=offset)
+            azos.list_broker_proposals(limit=limit, offset=offset)
             if resource == "propostas"
-            else azos.list_policies(limit=limit, offset=offset)
+            else azos.list_broker_policies(limit=limit, offset=offset)
         )
     except HTTPException as exc:
         supa.table("seguro_azos_sync_runs").insert({
@@ -588,15 +592,32 @@ def _upsert_broker_commissions(supa: Client, *, org_id: str, items: list[dict[st
 
 
 def sync_broker_portfolio(supa: Client, *, org_id: str, limit: int, offset: int, azos: AzosClient) -> dict[str, Any]:
-    try:
-        proposals = _fetch_all_broker_items(azos.list_proposals, limit=limit, offset=offset)
-        policies = _fetch_all_broker_items(azos.list_broker_policies, limit=limit, offset=offset)
-        commissions = _fetch_all_broker_items(azos.list_broker_commissions, limit=limit, offset=offset)
-    except HTTPException:
-        supa.table("seguro_azos_sync_runs").insert({
-            "org_id": org_id, "resource": "apolices", "status": "error", "error_message": "Falha ao consultar a carteira da Azos.",
-        }).execute()
-        raise
+    resources = (
+        ("propostas", azos.list_broker_proposals),
+        ("apolices", azos.list_broker_policies),
+        ("comissoes", azos.list_broker_commissions),
+    )
+    fetched: dict[str, list[dict[str, Any]]] = {}
+    for resource_name, fetch_page in resources:
+        try:
+            fetched[resource_name] = _fetch_all_broker_items(fetch_page, limit=limit, offset=offset)
+        except HTTPException as exc:
+            supa.table("seguro_azos_sync_runs").insert({
+                "org_id": org_id,
+                "resource": resource_name,
+                "status": "error",
+                "error_message": f"Falha ao consultar {resource_name} da conta de corretor Azos.",
+            }).execute()
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={
+                    "message": f"A Azos recusou a sincronização de {resource_name}.",
+                    "azos": exc.detail,
+                },
+            ) from exc
+    proposals = fetched["propostas"]
+    policies = fetched["apolices"]
+    commissions = fetched["comissoes"]
     lead_by_cpf = _lead_by_cpf(supa, org_id=org_id)
     proposals_synced = _upsert_external_records(supa, org_id=org_id, resource="propostas", items=proposals, lead_by_cpf=lead_by_cpf)
     proposal_pdfs_sent = _send_pending_azos_proposal_pdfs(supa, org_id=org_id)
