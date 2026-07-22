@@ -42,7 +42,11 @@ def buscar_profissoes_azos(*, termo: str) -> dict[str, Any]:
         "tipo_correspondencia": match_type,
         "profissoes": matches,
     }
-    if match_type == "alternativa":
+    if match_type == "exata" and len(matches) == 1:
+        response["resolvida"] = True
+        response["profissao_selecionada"] = matches[0]
+        response["orientacao"] = "Use este profissao_id e avance para a próxima etapa. Não pergunte novamente."
+    elif match_type == "alternativa":
         response["orientacao"] = (
             "A profissão exata não existe no catálogo Azos. Apresente estas alternativas uma única vez "
             "e peça ao cliente que escolha a que melhor descreve sua atividade principal. Use rotulo_botao "

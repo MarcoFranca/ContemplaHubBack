@@ -25,6 +25,17 @@ def _option(item: dict[str, Any]) -> dict[str, Any]:
     return {"id": item["id"], "nome": name, "rotulo_botao": button_label}
 
 
+def select_profession_option(options: list[dict[str, Any]], selected_text: str) -> dict[str, Any] | None:
+    selected = _normalize(selected_text)
+    return next(
+        (
+            option for option in options
+            if selected in {_normalize(option.get("nome")), _normalize(option.get("rotulo_botao"))}
+        ),
+        None,
+    )
+
+
 def match_azos_professions(
     professions: list[dict[str, Any]], term: str, *, limit: int = 8
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -40,9 +51,13 @@ def match_azos_professions(
         if (item.get("_id") or item.get("id")) and (item.get("name") or item.get("title"))
     ]
 
-    exact = [item for item in records if query in item["normalized"] or item["normalized"] in query]
+    exact = [item for item in records if query == item["normalized"]]
     if exact:
         return "exata", [_option(item) for item in exact[:limit]]
+
+    partial = [item for item in records if query in item["normalized"] or item["normalized"] in query]
+    if partial:
+        return "alternativa", [_option(item) for item in partial[:3]]
 
     alias_targets = next(
         (targets for stem, targets in _PROFESSION_ALIASES.items() if stem in query),

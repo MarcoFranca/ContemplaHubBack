@@ -1080,6 +1080,8 @@ def _handle_inbound(
                         handoff_reason=(result.get("handoff_reason") or None),
                         product_context=(result.get("product_context") or None),
                         nome_cliente=(lead.get("nome") if lead else None),
+                        insurance_profession=(result.get("insurance_profession") or None),
+                        insurance_profession_options=(result.get("insurance_profession_options") or None),
                     )
                     ai_replied = True
                 else:
@@ -1157,6 +1159,8 @@ def _send_ai_reply(
     handoff_reason: Optional[str],
     product_context: Optional[str] = None,
     nome_cliente: Optional[str] = None,
+    insurance_profession: Optional[dict[str, Any]] = None,
+    insurance_profession_options: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     """Envia a resposta da IA em áudio (se origem foi áudio) ou texto. Loga o texto."""
     base_payload = _normalize_operational_payload(
@@ -1165,6 +1169,8 @@ def _send_ai_reply(
             "ai_handoff": escalated,
             "handoff_reason": handoff_reason,
             "product": product_context,
+            "insurance_profession": insurance_profession,
+            "insurance_profession_options": insurance_profession_options,
         }
     )
     # Perguntas fechadas precisam permanecer visuais para que os botões sejam

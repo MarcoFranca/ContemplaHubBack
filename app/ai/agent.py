@@ -607,6 +607,31 @@ def _history_to_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return msgs
 
 
+def _insurance_profession_from_history(history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Recupera o ID Azos sem expô-lo no texto enviado ao cliente."""
+    from app.services.azos_profession_matcher import select_profession_option
+
+    last_user_text = ""
+    for message in reversed(history):
+        if message.get("direction") == "in" and (message.get("body") or "").strip():
+            last_user_text = str(message["body"]).strip()
+            break
+
+    for message in reversed(history):
+        if message.get("direction") != "out":
+            continue
+        payload = message.get("payload") or {}
+        resolved = payload.get("insurance_profession")
+        if isinstance(resolved, dict) and resolved.get("id"):
+            return resolved
+        options = payload.get("insurance_profession_options")
+        if last_user_text and isinstance(options, list):
+            selected = select_profession_option(options, last_user_text)
+            if selected and selected.get("id"):
+                return selected
+    return None
+
+
 def lead_em_handoff(supa: Client, org_id: str, lead_id: Optional[str]) -> bool:
     """True se este lead já foi escalado para humano (IA fica em silêncio).
 
@@ -633,7 +658,12 @@ def _exec_tool(
     *, name: str, args: dict[str, Any], supa: Client, org_id: str, lead_id: Optional[str], state: dict[str, Any]
 ) -> Any:
     if name == "buscar_profissoes_azos":
-        return ai_tools.buscar_profissoes_azos(**args)
+        result = ai_tools.buscar_profissoes_azos(**args)
+        if result.get("resolvida"):
+            state["insurance_profession"] = result.get("profissao_selecionada")
+        elif result.get("tipo_correspondencia") == "alternativa":
+            state["insurance_profession_options"] = result.get("profissoes") or []
+        return result
     if name == "consultar_coberturas_azos":
         return ai_tools.consultar_coberturas_azos(**args)
     if name == "montar_recomendacao_vida_azos":
@@ -718,6 +748,8 @@ def run_agent(
         extra={"org_id": org_id, "lead_id": lead_id, "intent": turn_intent, "last_user_message": last_user_message[:200]},
     )
 
+    saved_profession = _insurance_profession_from_history(history)
+
     # Bloco 1 (estático) fica cacheado; bloco 2 (dados do lead) varia por conversa.
     system_blocks: list[dict[str, Any]] = [
         {"type": "text", "text": system_static, "cache_control": {"type": "ephemeral"}}
@@ -726,11 +758,23 @@ def run_agent(
         system_blocks.append(
             {"type": "text", "text": "===== DADOS JÁ COLETADOS DESTE CLIENTE =====\n" + dados_lead}
         )
+    if saved_profession:
+        system_blocks.append({
+            "type": "text",
+            "text": (
+                "===== PROFISSÃO AZOS JÁ RESOLVIDA =====\n"
+                f"Nome: {saved_profession.get('nome')}\n"
+                f"profissao_id: {saved_profession.get('id')}\n"
+                "Não busque nem confirme novamente. Use este ID na cotação e avance."
+            ),
+        })
     system_blocks.append(
         {"type": "text", "text": _build_turn_guidance(last_user_message, turn_intent)}
     )
 
     state: dict[str, Any] = {"escalated": False}
+    if saved_profession:
+        state["insurance_profession"] = saved_profession
     final_text: Optional[str] = None
 
     for _ in range(6):  # limite de iterações do loop de ferramentas
@@ -802,4 +846,6 @@ def run_agent(
         "escalated": bool(state.get("escalated")),
         "handoff_reason": state.get("handoff_reason"),
         "product_context": product_context,
+        "insurance_profession": state.get("insurance_profession"),
+        "insurance_profession_options": state.get("insurance_profession_options"),
     }

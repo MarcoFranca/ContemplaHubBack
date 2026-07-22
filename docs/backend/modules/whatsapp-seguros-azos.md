@@ -38,6 +38,9 @@ A busca de profissão normaliza acentos e variações de escrita. Quando a ocupa
 no catálogo Azos, o agente apresenta no máximo três alternativas válidas para o cliente escolher.
 Ele não escolhe outro enquadramento silenciosamente, não repete o mesmo termo em loop e encaminha
 ao corretor se uma descrição adicional ainda não produzir correspondência segura.
+As opções carregam o ID oficial da Azos no payload interno da mensagem interativa. Quando o cliente
+seleciona um botão, o backend recupera e preserva esse ID nos turnos seguintes; correspondência por
+igualdade exata sempre tem prioridade sobre nomes apenas parcialmente semelhantes.
 
 Após receber as coberturas elegíveis, `montar_recomendacao_vida_azos` dimensiona referências de
 capital por continuidade de renda, compromissos financeiros e perfil familiar/profissional. Cada
