@@ -70,3 +70,6 @@ A chave Azos configurada para a organização é uma credencial de corretor. A s
 exclusivamente `/v1/brokers/proposals`, `/v1/brokers/policies` e `/v1/brokers/commissions`.
 Endpoints `/v1/platforms/*` não devem ser usados nesse fluxo, pois a Azos os rejeita quando o
 `external_id` da credencial pertence a um corretor. Falhas são registradas separadamente por recurso.
+Uma falha isolada não interrompe os demais recursos: por exemplo, apólices e comissões continuam
+sincronizando se propostas estiverem indisponíveis. A resposta inclui `avisos`; somente a recusa dos
+três recursos encerra a operação com erro.

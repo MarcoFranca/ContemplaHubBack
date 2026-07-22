@@ -598,32 +598,59 @@ def sync_broker_portfolio(supa: Client, *, org_id: str, limit: int, offset: int,
         ("comissoes", azos.list_broker_commissions),
     )
     fetched: dict[str, list[dict[str, Any]]] = {}
+    errors: dict[str, str] = {}
     for resource_name, fetch_page in resources:
         try:
             fetched[resource_name] = _fetch_all_broker_items(fetch_page, limit=limit, offset=offset)
         except HTTPException as exc:
+            detail = exc.detail
+            if isinstance(detail, dict):
+                azos_detail = detail.get("azos")
+                if isinstance(azos_detail, dict):
+                    detail = azos_detail.get("detail") or azos_detail.get("message") or detail
+                else:
+                    detail = detail.get("message") or detail
+            errors[resource_name] = str(detail)
+            fetched[resource_name] = []
             supa.table("seguro_azos_sync_runs").insert({
                 "org_id": org_id,
                 "resource": resource_name,
                 "status": "error",
                 "error_message": f"Falha ao consultar {resource_name} da conta de corretor Azos.",
             }).execute()
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={
-                    "message": f"A Azos recusou a sincronização de {resource_name}.",
-                    "azos": exc.detail,
-                },
-            ) from exc
+    if len(errors) == len(resources):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": "A Azos recusou todos os recursos da sincronização.", "recursos": errors},
+        )
     proposals = fetched["propostas"]
     policies = fetched["apolices"]
     commissions = fetched["comissoes"]
     lead_by_cpf = _lead_by_cpf(supa, org_id=org_id)
-    proposals_synced = _upsert_external_records(supa, org_id=org_id, resource="propostas", items=proposals, lead_by_cpf=lead_by_cpf)
-    proposal_pdfs_sent = _send_pending_azos_proposal_pdfs(supa, org_id=org_id)
-    policies_synced = _upsert_external_records(supa, org_id=org_id, resource="apolices", items=policies, lead_by_cpf=lead_by_cpf)
-    commissions_synced = _upsert_broker_commissions(supa, org_id=org_id, items=commissions)
-    for resource, received, synced in (("propostas", len(proposals), proposals_synced), ("apolices", len(policies), policies_synced), ("comissoes", len(commissions), commissions_synced)):
+    proposals_synced = (
+        _upsert_external_records(supa, org_id=org_id, resource="propostas", items=proposals, lead_by_cpf=lead_by_cpf)
+        if "propostas" not in errors else 0
+    )
+    proposal_pdfs_sent = (
+        _send_pending_azos_proposal_pdfs(supa, org_id=org_id)
+        if "propostas" not in errors else 0
+    )
+    policies_synced = (
+        _upsert_external_records(supa, org_id=org_id, resource="apolices", items=policies, lead_by_cpf=lead_by_cpf)
+        if "apolices" not in errors else 0
+    )
+    commissions_synced = (
+        _upsert_broker_commissions(supa, org_id=org_id, items=commissions)
+        if "comissoes" not in errors else 0
+    )
+    sync_results = (
+        ("propostas", len(proposals), proposals_synced),
+        ("apolices", len(policies), policies_synced),
+        ("comissoes", len(commissions), commissions_synced),
+    )
+    for resource, received, synced in sync_results:
+        if resource in errors:
+            continue
         supa.table("seguro_azos_sync_runs").insert({
             "org_id": org_id, "resource": resource, "status": "success", "received_count": received, "synced_count": synced,
         }).execute()
@@ -633,6 +660,7 @@ def sync_broker_portfolio(supa: Client, *, org_id: str, limit: int, offset: int,
         "propostas": {"received": len(proposals), "synced": proposals_synced, "pdfs_enviados": proposal_pdfs_sent},
         "apolices": {"received": len(policies), "synced": policies_synced, "associadas_por_cpf": associated},
         "comissoes": {"received": len(commissions), "synced": commissions_synced},
+        "avisos": [f"{resource}: {message}" for resource, message in errors.items()],
     }
 
 
