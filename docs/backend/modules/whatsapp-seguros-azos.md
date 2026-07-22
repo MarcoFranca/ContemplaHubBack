@@ -11,6 +11,12 @@ O agente busca a profissão no catálogo Azos, consulta coberturas elegíveis e 
 com coberturas e capitais escolhidos entre as opções retornadas pela Azos. A ferramenta publica a
 cotação em link público próprio de Seguro.
 
+Quando a sincronização de propostas encontra uma `proposal_url` oficial da Azos, a proposta é
+associada ao lead somente por CPF único na mesma organização. Havendo WhatsApp ativo, o backend
+baixa o PDF em domínio Azos, envia-o como documento e marca `pdf_sent_at`; o mesmo PDF não é
+reenviado em sincronizações futuras. Proposta sem CPF, CPF ambíguo ou telefone não recebe envio.
+Essa verificação também ocorre no botão existente de sincronização da carteira Azos.
+
 Quando o cliente confirma que quer seguir, o agente cria ou atualiza o atendimento pendente em
 `seguro_azos_atendimentos` com origem `whatsapp_ia`, registra atividade no CRM e faz handoff para
 o corretor. A IA permanece em silêncio após o handoff e a contratação final ocorre somente no canal

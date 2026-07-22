@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import secrets
 import re
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import HTTPException, status
@@ -386,6 +387,17 @@ def _upsert_external_records(
             "payload": item,
             "synced_at": utcnow_iso(),
         }
+        if resource == "propostas":
+            insured = item.get("insured") or item.get("insured_data") or {}
+            payload.update({
+                "proposal_url": item.get("proposal_url"),
+                "insured_name": item.get("insured_name") or insured.get("name") or insured.get("full_name"),
+                "insured_cpf": _normalize_cpf(insured.get("cpf")),
+            })
+            insured_cpf = payload.get("insured_cpf")
+            matched_lead_id = lead_by_cpf.get(insured_cpf) if insured_cpf and lead_by_cpf else None
+            if matched_lead_id:
+                payload["lead_id"] = matched_lead_id
         if resource == "apolices":
             insured = item.get("insured") or item.get("insured_data") or {}
             broker = item.get("broker_data") or {}
@@ -443,7 +455,9 @@ def sync_resource(
         }).execute()
         raise exc
     items = response.get("items") if isinstance(response.get("items"), list) else []
-    synced = _upsert_external_records(supa, org_id=org_id, resource=resource, items=items)
+    lead_by_cpf = _lead_by_cpf(supa, org_id=org_id) if resource == "propostas" else None
+    synced = _upsert_external_records(supa, org_id=org_id, resource=resource, items=items, lead_by_cpf=lead_by_cpf)
+    pdfs_sent = _send_pending_azos_proposal_pdfs(supa, org_id=org_id) if resource == "propostas" else 0
     supa.table("seguro_azos_sync_runs").insert({
         "org_id": org_id,
         "resource": resource,
@@ -451,7 +465,81 @@ def sync_resource(
         "received_count": len(items),
         "synced_count": synced,
     }).execute()
-    return {"ok": True, "resource": resource, "received": len(items), "synced": synced}
+    return {"ok": True, "resource": resource, "received": len(items), "synced": synced, "pdfs_enviados": pdfs_sent}
+
+
+def _send_pending_azos_proposal_pdfs(supa: Client, *, org_id: str) -> int:
+    """Envia uma única vez o PDF oficial Azos de propostas vinculadas por CPF."""
+    from app.services import whatsapp_service as wa
+
+    integration = wa.get_integration_row(supa=supa, org_id=org_id)
+    if not integration or not integration.get("ativo"):
+        return 0
+    access_token = (integration.get("access_token") or "").strip()
+    phone_number_id = (integration.get("phone_number_id") or "").strip()
+    if not access_token or not phone_number_id:
+        return 0
+
+    response = (
+        supa.table("seguro_azos_propostas")
+        .select("id, lead_id, proposal_url, insured_name, leads(telefone)")
+        .eq("org_id", org_id)
+        .not_.is_("lead_id", "null")
+        .not_.is_("proposal_url", "null")
+        .is_("pdf_sent_at", "null")
+        .limit(50)
+        .execute()
+    )
+    sent = 0
+    for proposal in getattr(response, "data", None) or []:
+        url = str(proposal.get("proposal_url") or "")
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(".azos.com.br"):
+            continue
+        lead = proposal.get("leads") or {}
+        phone = re.sub(r"\D", "", str(lead.get("telefone") or ""))
+        if not phone:
+            continue
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                pdf_response = client.get(url)
+            if pdf_response.status_code >= 400 or not pdf_response.content:
+                continue
+            media_id = wa.upload_media(
+                access_token=access_token,
+                phone_number_id=phone_number_id,
+                data=pdf_response.content,
+                mime="application/pdf",
+                filename="proposta-seguro-azos.pdf",
+            )
+            if not media_id:
+                continue
+            outbound = wa.send_document_message(
+                access_token=access_token,
+                phone_number_id=phone_number_id,
+                to=phone,
+                media_id=media_id,
+                filename="proposta-seguro-azos.pdf",
+                caption="Sua proposta oficial de Seguro de Vida Azos.",
+            )
+            messages = outbound.get("messages") if isinstance(outbound, dict) else []
+            wa_message_id = messages[0].get("id") if isinstance(messages, list) and messages else None
+            supa.table("whatsapp_messages").insert({
+                "org_id": org_id,
+                "lead_id": proposal.get("lead_id"),
+                "direction": "out",
+                "wa_message_id": wa_message_id,
+                "phone": phone,
+                "msg_type": "document",
+                "body": "[PDF Azos] Proposta oficial de Seguro de Vida",
+                "status": "sent",
+                "payload": {"seguro_azos": True, "proposal_pdf": True},
+            }).execute()
+            supa.table("seguro_azos_propostas").update({"pdf_sent_at": utcnow_iso()}).eq("id", proposal["id"]).eq("org_id", org_id).execute()
+            sent += 1
+        except Exception:
+            continue
+    return sent
 
 
 def _upsert_broker_commissions(supa: Client, *, org_id: str, items: list[dict[str, Any]]) -> int:
@@ -495,6 +583,7 @@ def _upsert_broker_commissions(supa: Client, *, org_id: str, items: list[dict[st
 
 def sync_broker_portfolio(supa: Client, *, org_id: str, limit: int, offset: int, azos: AzosClient) -> dict[str, Any]:
     try:
+        proposals = _fetch_all_broker_items(azos.list_proposals, limit=limit, offset=offset)
         policies = _fetch_all_broker_items(azos.list_broker_policies, limit=limit, offset=offset)
         commissions = _fetch_all_broker_items(azos.list_broker_commissions, limit=limit, offset=offset)
     except HTTPException:
@@ -503,14 +592,21 @@ def sync_broker_portfolio(supa: Client, *, org_id: str, limit: int, offset: int,
         }).execute()
         raise
     lead_by_cpf = _lead_by_cpf(supa, org_id=org_id)
+    proposals_synced = _upsert_external_records(supa, org_id=org_id, resource="propostas", items=proposals, lead_by_cpf=lead_by_cpf)
+    proposal_pdfs_sent = _send_pending_azos_proposal_pdfs(supa, org_id=org_id)
     policies_synced = _upsert_external_records(supa, org_id=org_id, resource="apolices", items=policies, lead_by_cpf=lead_by_cpf)
     commissions_synced = _upsert_broker_commissions(supa, org_id=org_id, items=commissions)
-    for resource, received, synced in (("apolices", len(policies), policies_synced), ("comissoes", len(commissions), commissions_synced)):
+    for resource, received, synced in (("propostas", len(proposals), proposals_synced), ("apolices", len(policies), policies_synced), ("comissoes", len(commissions), commissions_synced)):
         supa.table("seguro_azos_sync_runs").insert({
             "org_id": org_id, "resource": resource, "status": "success", "received_count": received, "synced_count": synced,
         }).execute()
     associated = sum(1 for item in policies if _normalize_cpf((item.get("insured_data") or {}).get("cpf")) in lead_by_cpf)
-    return {"ok": True, "apolices": {"received": len(policies), "synced": policies_synced, "associadas_por_cpf": associated}, "comissoes": {"received": len(commissions), "synced": commissions_synced}}
+    return {
+        "ok": True,
+        "propostas": {"received": len(proposals), "synced": proposals_synced, "pdfs_enviados": proposal_pdfs_sent},
+        "apolices": {"received": len(policies), "synced": policies_synced, "associadas_por_cpf": associated},
+        "comissoes": {"received": len(commissions), "synced": commissions_synced},
+    }
 
 
 def _fetch_all_broker_items(fetch_page: Any, *, limit: int, offset: int) -> list[dict[str, Any]]:
