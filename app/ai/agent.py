@@ -178,7 +178,7 @@ def _load_knowledge() -> str:
 _TOOLS = [
     {
         "name": "buscar_profissoes_azos",
-        "description": "Busca a profissão atual informada pelo cliente e devolve opções com IDs válidos da Azos. Use antes de consultar coberturas.",
+        "description": "Busca a profissão informada no catálogo Azos. Pode devolver correspondência exata ou até 3 alternativas próximas para o cliente confirmar. Nunca escolha uma alternativa pelo cliente e nunca repita a mesma busca em loop.",
         "input_schema": {"type": "object", "properties": {"termo": {"type": "string"}}, "required": ["termo"]},
     },
     {
@@ -490,6 +490,7 @@ def _build_system(*, org_administradoras: list[str], nome_cliente: Optional[str]
         "- COLETA GUIADA DE SEGURO: use no máximo 3 blocos curtos, sem perguntar campo por campo. Bloco 1: nascimento, sexo, altura e peso na mesma mensagem. Bloco 2: profissão, vínculo (autônomo/CLT/outro), renda e tabagismo. Bloco 3: filhos/dependentes, dívidas, reserva e faixa mensal confortável. Diga que o cliente pode responder cada bloco em uma única mensagem.\n"
         "- Para escolhas padrão com até 3 respostas, termine a mensagem com o marcador `[[BOTOES:Opção 1|Opção 2|Opção 3]]`; o backend transformará em botões do WhatsApp. Use especialmente para Sim/Não, Autônomo/CLT/Outro e consentimento. Não mostre o marcador ao cliente fora desse formato.\n"
         "- MEMÓRIA DO SEGURO: releia todo o histórico disponível antes de perguntar. Nunca diga que não encontrou um dado que aparece na conversa. Se o cliente corrigir um dado, use a versão mais recente. Antes do consentimento, faça um resumo único do que já foi coletado e peça apenas o que realmente estiver faltando.\n"
+        "- PROFISSÃO AZOS: chame `buscar_profissoes_azos` apenas uma vez para cada termo informado. Se retornar `tipo_correspondencia=alternativa`, explique que o catálogo não possui o nome exato e mostre as opções em botões para o cliente escolher. Nunca selecione ocupação diferente sem confirmação. Se retornar `nao_encontrada`, peça uma única descrição da atividade principal e, persistindo, encaminhe ao corretor; não entre em loop.\n"
         "- Antes de enviar o perfil à Azos, obtenha consentimento explícito do cliente. Não persista dados parciais: consulte a Azos só com todos os campos e consentimento.\n"
         "- Depois de `consultar_coberturas_azos`, chame obrigatoriamente `montar_recomendacao_vida_azos` e reproduza a cobertura devolvida pela ferramenta. Se DG30 estiver elegível, ela é a opção padrão; só use DG13 se DG30 não estiver disponível ou se o cliente escolher conscientemente a alternativa mais enxuta após ver a diferença.\n"
         "- Explique a lógica em linguagem simples e peça confirmação ou ajustes; não recomende automaticamente o menor capital e não empurre coberturas. Respeite o orçamento, mas sinalize quando reduzir capital deixa uma necessidade relevante descoberta.\n"

@@ -28,18 +28,32 @@ def _format_brl(value: Any) -> str:
 
 def buscar_profissoes_azos(*, termo: str) -> dict[str, Any]:
     """Busca IDs de profissão Azos sem expor a lista inteira ao modelo."""
+    from app.services.azos_profession_matcher import match_azos_professions
     from app.services.azos_service import get_azos_client
 
-    busca = (termo or "").strip().lower()
+    busca = (termo or "").strip()
     if len(busca) < 2:
         return {"ok": False, "erro": "Informe ao menos duas letras da profissão atual."}
     professions = get_azos_client().list_professions()
-    matches = [
-        {"id": item.get("_id") or item.get("id"), "nome": item.get("name") or item.get("title")}
-        for item in professions
-        if busca in str(item.get("name") or item.get("title") or "").lower()
-    ]
-    return {"ok": True, "profissoes": [item for item in matches if item["id"] and item["nome"]][:8]}
+    match_type, matches = match_azos_professions(professions, busca)
+    response: dict[str, Any] = {
+        "ok": bool(matches),
+        "termo_informado": busca,
+        "tipo_correspondencia": match_type,
+        "profissoes": matches,
+    }
+    if match_type == "alternativa":
+        response["orientacao"] = (
+            "A profissão exata não existe no catálogo Azos. Apresente estas alternativas uma única vez "
+            "e peça ao cliente que escolha a que melhor descreve sua atividade principal. Use rotulo_botao "
+            "nos botões e não escolha por ele."
+        )
+    elif match_type == "nao_encontrada":
+        response["orientacao"] = (
+            "Não repita a mesma busca. Peça uma única descrição da atividade principal; se ainda não houver "
+            "correspondência, encaminhe ao corretor para enquadramento manual."
+        )
+    return response
 
 
 def consultar_coberturas_azos(*, perfil: dict[str, Any]) -> dict[str, Any]:

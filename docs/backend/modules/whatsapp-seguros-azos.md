@@ -34,6 +34,11 @@ Conversas de Seguro Azos preservam no mínimo 40 mensagens no contexto do agente
 novamente qualquer dado, o agente deve considerar o histórico e resumir o perfil coletado para o
 cliente confirmar ou corrigir.
 
+A busca de profissão normaliza acentos e variações de escrita. Quando a ocupação exata não existe
+no catálogo Azos, o agente apresenta no máximo três alternativas válidas para o cliente escolher.
+Ele não escolhe outro enquadramento silenciosamente, não repete o mesmo termo em loop e encaminha
+ao corretor se uma descrição adicional ainda não produzir correspondência segura.
+
 Após receber as coberturas elegíveis, `montar_recomendacao_vida_azos` dimensiona referências de
 capital por continuidade de renda, compromissos financeiros e perfil familiar/profissional. Cada
 capital é limitado ao mínimo, máximo e múltiplo devolvidos pela Azos. A sugestão é explicável,
