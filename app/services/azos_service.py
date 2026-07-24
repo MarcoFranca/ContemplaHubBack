@@ -31,19 +31,28 @@ class AzosClient:
         self.base_url = base_url.rstrip("/")
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        try:
-            with httpx.Client(timeout=15.0) as client:
-                response = client.request(
-                    method,
-                    f"{self.base_url}{path}",
-                    headers={"X-API-KEY": self.api_key},
-                    **kwargs,
-                )
-        except httpx.HTTPError as exc:
+        # A carteira de corretor pode devolver dezenas de propostas e oscilar
+        # no gateway. GETs são idempotentes, então uma nova tentativa é segura.
+        attempts = 2 if method.upper() == "GET" and path.startswith("/v1/brokers/") else 1
+        response: httpx.Response | None = None
+        last_error: httpx.HTTPError | None = None
+        for _ in range(attempts):
+            try:
+                with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+                    response = client.request(
+                        method,
+                        f"{self.base_url}{path}",
+                        headers={"X-API-KEY": self.api_key},
+                        **kwargs,
+                    )
+                break
+            except httpx.HTTPError as exc:
+                last_error = exc
+        if response is None:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Não foi possível comunicar com a Azos.",
-            ) from exc
+            ) from last_error
 
         if response.status_code >= 400:
             try:

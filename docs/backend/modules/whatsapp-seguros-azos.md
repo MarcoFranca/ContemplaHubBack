@@ -73,3 +73,6 @@ Endpoints `/v1/platforms/*` não devem ser usados nesse fluxo, pois a Azos os re
 Uma falha isolada não interrompe os demais recursos: por exemplo, apólices e comissões continuam
 sincronizando se propostas estiverem indisponíveis. A resposta inclui `avisos`; somente a recusa dos
 três recursos encerra a operação com erro.
+
+As leituras de carteira de corretor usam timeout de 45 segundos e uma segunda tentativa automática,
+pois listas extensas de propostas podem demorar mais que as consultas de apólices ou comissões.
