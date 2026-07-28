@@ -76,7 +76,7 @@ class ContractBaseIn(BaseModel):
     grupo_codigo: str = Field(
         validation_alias=AliasChoices("grupo_codigo", "grupo"),
     )
-    produto: Literal["imobiliario", "auto"] = "imobiliario"
+    produto: Literal["imobiliario", "auto", "pesados"] = "imobiliario"
     valor_carta: str
     prazo: Optional[int] = None
     forma_pagamento: Optional[str] = None

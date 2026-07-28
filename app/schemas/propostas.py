@@ -16,7 +16,7 @@ class ProposalClientInfo(BaseModel):
     origem: Optional[str] = None
 
 
-ProdutoTipo = Literal["imobiliario", "auto", "outro"]
+ProdutoTipo = Literal["imobiliario", "auto", "pesados", "outro"]
 
 
 class ProposalScenario(BaseModel):

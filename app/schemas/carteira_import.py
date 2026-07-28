@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-ImportProduto = Literal["imobiliario", "auto"]
+ImportProduto = Literal["imobiliario", "auto", "pesados"]
 ImportRowStatus = Literal["pronta", "aviso", "erro", "ignorada"]
 ImportLanceTipo = Literal["livre", "fixo"]
 ImportContemplacaoMotivo = Literal["lance", "sorteio", "outro"]

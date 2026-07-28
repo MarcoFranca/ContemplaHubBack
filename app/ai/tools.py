@@ -315,8 +315,8 @@ def simular_consorcio(
 # --------------------------------------------------------------------------- #
 # Proposta: a IA monta e envia uma proposta com base na simulação
 # --------------------------------------------------------------------------- #
-# Simulador usa imovel/auto/pesados; a proposta usa imobiliario/auto/outro.
-_PRODUTO_PROPOSTA = {"imovel": "imobiliario", "auto": "auto", "pesados": "outro"}
+# Simulador usa imovel/auto/pesados; a proposta usa imobiliario/auto/pesados.
+_PRODUTO_PROPOSTA = {"imovel": "imobiliario", "auto": "auto", "pesados": "pesados"}
 
 
 def gerar_proposta(

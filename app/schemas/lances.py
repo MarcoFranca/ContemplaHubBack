@@ -14,7 +14,7 @@ LanceTipo = Literal["livre", "fixo"]
 LancePreferencial = Literal["livre", "fixo", "embutido", "sorteio"]
 LanceBaseCalculo = Literal["saldo_devedor", "valor_carta"]
 ContemplacaoMotivo = Literal["lance", "sorteio", "outro"]
-Produto = Literal["imobiliario", "auto"]
+Produto = Literal["imobiliario", "auto", "pesados"]
 
 
 class CotaLanceFixoOpcaoUpdateIn(BaseModel):
