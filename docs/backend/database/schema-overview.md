@@ -360,7 +360,7 @@ Campos observados no codigo:
 - `administradora_id`
 - `numero_cota`
 - `grupo_codigo`
-- `produto`
+- `produto` (`text`; valores aceitos `imobiliario`, `auto`, `pesados`, validados no backend via `Produto`/`ImportProduto` em `app/schemas/`. Era enum `produto`, convertido para `text` na migration `0013` pelo mesmo motivo do `tipo_lance_preferencial` — cache de schema do PostgREST não reconhece `ALTER TYPE ... ADD VALUE` sem restart do serviço. A mesma conversão foi aplicada em `grupos.produto`, `lead_interesses.produto` e `propostas.tipo`)
 - `valor_carta`
 - `valor_parcela`
 - `prazo`
