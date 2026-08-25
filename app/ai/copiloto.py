@@ -62,7 +62,7 @@ def _resumo_cliente(supa: Client, org_id: str, lead_id: str) -> dict[str, Any]:
         lead = rows[0]
         cotas = getattr(
             supa.table("cotas")
-            .select("numero_cota, grupo_codigo, valor_carta, situacao, tipo_lance_preferencial")
+            .select("numero_cota, grupo_codigo, valor_carta, status, tipo_lance_preferencial")
             .eq("org_id", org_id)
             .eq("lead_id", lead_id)
             .execute(),
@@ -91,6 +91,42 @@ def _contar_cartas(supa: Client, org_id: str, lead_id: str) -> dict[str, Any]:
     try:
         cot = supa.table("cotas").select("id").eq("org_id", org_id).eq("lead_id", lead_id).execute()
         return {"total_cartas": len(getattr(cot, "data", None) or [])}
+    except Exception as exc:  # noqa: BLE001
+        return {"erro": str(exc)}
+
+
+def _valor_cartas(supa: Client, org_id: str, lead_id: str) -> dict[str, Any]:
+    """Valor total das cartas do cliente e o total das contempladas."""
+    try:
+        cotas = getattr(
+            supa.table("cotas").select("id, valor_carta").eq("org_id", org_id).eq("lead_id", lead_id).execute(),
+            "data",
+            None,
+        ) or []
+        ids = [c["id"] for c in cotas]
+        contempladas: set[str] = set()
+        if ids:
+            contr = getattr(
+                supa.table("contratos").select("cota_id, status, data_contemplacao").eq("org_id", org_id).in_("cota_id", ids).execute(),
+                "data",
+                None,
+            ) or []
+            for c in contr:
+                if (c.get("status") == "contemplado") or c.get("data_contemplacao"):
+                    if c.get("cota_id"):
+                        contempladas.add(c["cota_id"])
+
+        def val(c: dict[str, Any]) -> float:
+            return float(c.get("valor_carta") or 0)
+
+        total = sum(val(c) for c in cotas)
+        total_contempladas = sum(val(c) for c in cotas if c["id"] in contempladas)
+        return {
+            "total_cartas": len(cotas),
+            "valor_total": round(total, 2),
+            "contempladas_qtd": len(contempladas),
+            "valor_contempladas": round(total_contempladas, 2),
+        }
     except Exception as exc:  # noqa: BLE001
         return {"erro": str(exc)}
 
@@ -151,6 +187,11 @@ _TOOLS = [
         "input_schema": {"type": "object", "properties": {"lead_id": {"type": "string"}}, "required": ["lead_id"]},
     },
     {
+        "name": "valor_cartas",
+        "description": "Valor total das cartas de um cliente (pelo lead_id) e o total das cartas contempladas (com quantidade). Use para 'valor total das cartas', 'quanto em contempladas', etc.",
+        "input_schema": {"type": "object", "properties": {"lead_id": {"type": "string"}}, "required": ["lead_id"]},
+    },
+    {
         "name": "listar_alertas",
         "description": "Lista alertas de carta pendentes da organização. Use apenas_vencidos=true para os que vencem hoje ou já venceram.",
         "input_schema": {"type": "object", "properties": {"apenas_vencidos": {"type": "boolean"}}, "required": []},
@@ -178,6 +219,8 @@ def _exec_tool(*, name: str, args: dict[str, Any], supa: Client, org_id: str, us
         return _resumo_cliente(supa, org_id, args.get("lead_id", ""))
     if name == "contar_cartas":
         return _contar_cartas(supa, org_id, args.get("lead_id", ""))
+    if name == "valor_cartas":
+        return _valor_cartas(supa, org_id, args.get("lead_id", ""))
     if name == "listar_alertas":
         return _listar_alertas(supa, org_id, bool(args.get("apenas_vencidos")))
     if name == "criar_cliente":

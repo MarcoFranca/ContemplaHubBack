@@ -71,7 +71,8 @@ class Settings(BaseModel):
 
     # Copiloto interno (assistente do corretor dentro do sistema).
     COPILOTO_ENABLED: bool = os.getenv("COPILOTO_ENABLED", "true").lower() in ("1", "true", "yes")
-    COPILOTO_MODEL: str = os.getenv("COPILOTO_MODEL", os.getenv("WHATSAPP_AI_MODEL", "claude-sonnet-5"))
+    # Haiku por padrão: consultas com ferramentas são simples e Haiku custa bem menos.
+    COPILOTO_MODEL: str = os.getenv("COPILOTO_MODEL", "claude-haiku-4-5-20251001")
 
     # Follow-up automático + lembretes de reunião (job embutido no agendador).
     FOLLOWUP_ENABLED: bool = os.getenv("FOLLOWUP_ENABLED", "true").lower() in ("1", "true", "yes")
