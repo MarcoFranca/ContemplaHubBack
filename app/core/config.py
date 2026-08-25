@@ -69,6 +69,10 @@ class Settings(BaseModel):
     # Menos histórico reduz o risco de a IA "imitar" o próprio padrão em conversas longas.
     WHATSAPP_AI_MAX_HISTORY: int = int(os.getenv("WHATSAPP_AI_MAX_HISTORY", "16"))
 
+    # Copiloto interno (assistente do corretor dentro do sistema).
+    COPILOTO_ENABLED: bool = os.getenv("COPILOTO_ENABLED", "true").lower() in ("1", "true", "yes")
+    COPILOTO_MODEL: str = os.getenv("COPILOTO_MODEL", os.getenv("WHATSAPP_AI_MODEL", "claude-sonnet-5"))
+
     # Follow-up automático + lembretes de reunião (job embutido no agendador).
     FOLLOWUP_ENABLED: bool = os.getenv("FOLLOWUP_ENABLED", "true").lower() in ("1", "true", "yes")
     FOLLOWUP_MAX_ATTEMPTS: int = int(os.getenv("FOLLOWUP_MAX_ATTEMPTS", "3"))
