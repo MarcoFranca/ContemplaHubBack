@@ -131,6 +131,74 @@ def _valor_cartas(supa: Client, org_id: str, lead_id: str) -> dict[str, Any]:
         return {"erro": str(exc)}
 
 
+def _buscar_parceiros(supa: Client, org_id: str, termo: str) -> dict[str, Any]:
+    termo = (termo or "").strip()
+    if not termo:
+        return {"erro": "informe um nome de parceiro"}
+    try:
+        resp = (
+            supa.table("parceiros_corretores")
+            .select("id, nome, telefone, ativo")
+            .eq("org_id", org_id)
+            .ilike("nome", f"%{termo}%")
+            .limit(10)
+            .execute()
+        )
+        return {"parceiros": [{"parceiro_id": p["id"], "nome": p.get("nome"), "telefone": p.get("telefone"), "ativo": p.get("ativo")} for p in getattr(resp, "data", None) or []]}
+    except Exception as exc:  # noqa: BLE001
+        return {"erro": str(exc)}
+
+
+def _resumo_parceiro(supa: Client, org_id: str, parceiro_id: str) -> dict[str, Any]:
+    """Clientes em parceria com esse parceiro, valores das cartas e repasses."""
+    try:
+        pr = supa.table("parceiros_corretores").select("nome, telefone").eq("org_id", org_id).eq("id", parceiro_id).limit(1).execute()
+        prows = getattr(pr, "data", None) or []
+        if not prows:
+            return {"erro": "parceiro não encontrado"}
+        nome = prows[0].get("nome")
+
+        vinc = getattr(
+            supa.table("cota_comissao_parceiros").select("cota_id, percentual_parceiro").eq("org_id", org_id).eq("parceiro_id", parceiro_id).eq("ativo", True).execute(),
+            "data",
+            None,
+        ) or []
+        cota_ids = [v["cota_id"] for v in vinc if v.get("cota_id")]
+
+        clientes: dict[str, dict[str, Any]] = {}
+        valor_total = 0.0
+        if cota_ids:
+            cotas = getattr(supa.table("cotas").select("id, lead_id, valor_carta").eq("org_id", org_id).in_("id", cota_ids).execute(), "data", None) or []
+            lead_ids = list({c["lead_id"] for c in cotas if c.get("lead_id")})
+            nomes: dict[str, str] = {}
+            if lead_ids:
+                lr = getattr(supa.table("leads").select("id, nome").eq("org_id", org_id).in_("id", lead_ids).execute(), "data", None) or []
+                nomes = {l["id"]: l.get("nome") for l in lr}
+            for c in cotas:
+                lid = c.get("lead_id") or "sem_lead"
+                v = float(c.get("valor_carta") or 0)
+                valor_total += v
+                cur = clientes.setdefault(lid, {"cliente": nomes.get(lid, "Sem cliente"), "cotas": 0, "valor_cartas": 0.0})
+                cur["cotas"] += 1
+                cur["valor_cartas"] = round(cur["valor_cartas"] + v, 2)
+
+        # repasses pagos ao parceiro
+        rep = getattr(supa.table("repasse_lotes").select("total, quantidade, pago_em").eq("org_id", org_id).eq("parceiro_id", parceiro_id).execute(), "data", None) or []
+        total_repassado = round(sum(float(r.get("total") or 0) for r in rep), 2)
+        ultimo = max((r.get("pago_em") for r in rep if r.get("pago_em")), default=None)
+
+        return {
+            "parceiro": nome,
+            "total_clientes": len(clientes),
+            "total_cotas": len(cota_ids),
+            "valor_total_cartas": round(valor_total, 2),
+            "clientes": list(clientes.values()),
+            "repasses": {"total_repassado": total_repassado, "qtd_lotes": len(rep), "ultimo_pagamento": ultimo},
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"erro": str(exc)}
+
+
 def _listar_alertas(supa: Client, org_id: str, apenas_vencidos: bool = False) -> dict[str, Any]:
     from datetime import date
 
@@ -187,6 +255,16 @@ _TOOLS = [
         "input_schema": {"type": "object", "properties": {"lead_id": {"type": "string"}}, "required": ["lead_id"]},
     },
     {
+        "name": "buscar_parceiros",
+        "description": "Busca PARCEIROS (corretores/indicadores) por nome. Parceiro é diferente de cliente. Use quando o usuário falar 'parceiro', 'em parceria com', 'repasse' ou 'comissão do parceiro'. Se houver mais de um, liste e pergunte qual.",
+        "input_schema": {"type": "object", "properties": {"termo": {"type": "string"}}, "required": ["termo"]},
+    },
+    {
+        "name": "resumo_parceiro",
+        "description": "Resumo de um PARCEIRO pelo parceiro_id: clientes em parceria (com quantas cotas e valor das cartas de cada), total de clientes/cotas/valor, e repasses já pagos (total, quantidade, último pagamento).",
+        "input_schema": {"type": "object", "properties": {"parceiro_id": {"type": "string"}}, "required": ["parceiro_id"]},
+    },
+    {
         "name": "valor_cartas",
         "description": "Valor total das cartas de um cliente (pelo lead_id) e o total das cartas contempladas (com quantidade). Use para 'valor total das cartas', 'quanto em contempladas', etc.",
         "input_schema": {"type": "object", "properties": {"lead_id": {"type": "string"}}, "required": ["lead_id"]},
@@ -221,6 +299,10 @@ def _exec_tool(*, name: str, args: dict[str, Any], supa: Client, org_id: str, us
         return _contar_cartas(supa, org_id, args.get("lead_id", ""))
     if name == "valor_cartas":
         return _valor_cartas(supa, org_id, args.get("lead_id", ""))
+    if name == "buscar_parceiros":
+        return _buscar_parceiros(supa, org_id, args.get("termo", ""))
+    if name == "resumo_parceiro":
+        return _resumo_parceiro(supa, org_id, args.get("parceiro_id", ""))
     if name == "listar_alertas":
         return _listar_alertas(supa, org_id, bool(args.get("apenas_vencidos")))
     if name == "criar_cliente":
@@ -235,6 +317,10 @@ _SYSTEM = (
     "use as ferramentas e responda com o que elas retornarem.\n"
     "- Para perguntas sobre um cliente ('quantas cartas o Lucas tem', 'resumo do fulano'), primeiro use `buscar_clientes`. "
     "Se houver mais de um com o nome, LISTE os encontrados e pergunte qual antes de detalhar.\n"
+    "- PARCEIRO x CLIENTE: parceiro é o corretor/indicador que traz negócios; cliente é o titular da carta. Quando o "
+    "usuário falar 'parceiro', 'em parceria com', 'repasse' ou 'comissão do parceiro', use `buscar_parceiros` e "
+    "`resumo_parceiro` (NÃO `buscar_clientes`). Um parceiro costuma ter VÁRIOS clientes em parceria; não confunda o "
+    "nome do parceiro com um cliente de nome parecido.\n"
     "- AÇÕES DE ESCRITA (ex.: `criar_cliente`): NUNCA execute direto. Primeiro colete os dados que faltam, mostre um "
     "resumo do que vai fazer e peça a confirmação do usuário. Só chame a ferramenta depois de um 'sim'/'confirmo'.\n"
     "- Se faltar informação para uma ação, pergunte apenas o essencial.\n"
