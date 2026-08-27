@@ -27,7 +27,10 @@ from app.schemas.comissoes import (
 
 from app.schemas.comissoes import MarcarRepassePagoIn
 from app.services.comissao_repasse_service import marcar_repasse_pago
-from app.services.pagamentos_service import pular_competencia_por_lancamento
+from app.services.pagamentos_service import (
+    desfazer_pulo_por_lancamento,
+    pular_competencia_por_lancamento,
+)
 from app.schemas.comissoes import ComissaoModeloUpsertIn
 from app.services.comissao_modelos_service import (
     create_modelo,
@@ -105,6 +108,22 @@ def pular_competencia_lancamento(
 ):
     org_id = require_org_id(x_org_id)
     return pular_competencia_por_lancamento(
+        supa,
+        org_id=org_id,
+        lancamento_id=lancamento_id,
+        actor_id=ctx.user_id,
+    )
+
+
+@router.post("/lancamentos/{lancamento_id}/despular")
+def despular_competencia_lancamento(
+    lancamento_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    return desfazer_pulo_por_lancamento(
         supa,
         org_id=org_id,
         lancamento_id=lancamento_id,

@@ -1012,6 +1012,55 @@ def pular_competencia_por_lancamento(
     )
 
 
+def desfazer_pulo_por_lancamento(
+    supa: Client,
+    *,
+    org_id: str,
+    lancamento_id: str,
+    actor_id: str,
+) -> Dict[str, Any]:
+    """Desfaz o pulo de competência associado a um lançamento de comissão.
+
+    Resolve contrato + competência a partir do lançamento e delega para
+    ``desfazer_pulo_competencia``, que remove o registro de pulo e regenera o
+    cronograma (revertendo o deslocamento das parcelas futuras).
+    """
+    resp = (
+        supa.table("comissao_lancamentos")
+        .select("id, contrato_id, competencia_prevista, status")
+        .eq("org_id", org_id)
+        .eq("id", lancamento_id)
+        .limit(1)
+        .execute()
+    )
+    rows = _safe_rows(resp)
+    if not rows:
+        raise HTTPException(404, "Lançamento não encontrado")
+    lanc = rows[0]
+    contrato_id = lanc.get("contrato_id")
+    competencia = _parse_date(lanc.get("competencia_prevista"))
+    if not contrato_id or not competencia:
+        raise HTTPException(400, "Lançamento sem competência/contrato para reprogramar")
+
+    pulos = listar_pulos_contrato(supa, org_id, contrato_id)
+    tem_pulo = any(
+        (_parse_date(p.get("competencia")) or date.min) == competencia for p in pulos
+    )
+    if not tem_pulo:
+        raise HTTPException(
+            409,
+            "Não há pulo registrado nesta competência para desfazer.",
+        )
+
+    return desfazer_pulo_competencia(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        competencia=competencia.isoformat(),
+        actor_id=actor_id,
+    )
+
+
 def cancelar_pagamentos_futuros(
     supa: Client,
     *,
