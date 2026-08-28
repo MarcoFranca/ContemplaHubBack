@@ -760,15 +760,14 @@ def _reconcile_regras_for_config(
         )
 
     regras_obsoletas = [row for row in existing_regras if int(row["ordem"]) not in payload_ordens]
-    regras_referenciadas = [row for row in regras_obsoletas if int(row.get("_usage_count", 0)) > 0]
-    if regras_referenciadas:
-        ordens = ", ".join(str(row["ordem"]) for row in regras_referenciadas)
-        raise HTTPException(
-            409,
-            f"Não é possível remover regras já usadas em lançamentos financeiros. Ordens bloqueadas: {ordens}",
-        )
 
+    # Preserva o histórico financeiro: regras que já geraram lançamentos NÃO são removidas
+    # (mantidas silenciosamente para não afetar o que já foi lançado/pago). Só removemos
+    # regras obsoletas que ainda não foram usadas em nenhum lançamento. Isso permite o
+    # "Reprocessar cronograma" mesmo quando todas as regras já têm lançamentos.
     for row in regras_obsoletas:
+        if int(row.get("_usage_count", 0)) > 0:
+            continue
         (
             supa.table("cota_comissao_regras")
             .delete()
