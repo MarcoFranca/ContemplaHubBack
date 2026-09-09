@@ -1231,6 +1231,14 @@ Query params:
 - `page`
 - `page_size`
 
+Resposta paginada:
+
+- `items` contém somente a página solicitada;
+- `page`, `page_size` e `total` descrevem a paginação;
+- `overview` contém `pendentes`, `planejados`, `baixados`, `sem_lance`,
+  `contempladas` e `total`, calculados sobre **todas** as cotas que atendem aos
+  filtros, independentemente da página atual.
+
 Cada item (`LanceCartaListItem`) inclui `data_adesao` e `forma_pagamento` (necessários para o formulário "Editar carta" pré-carregar os valores já cadastrados e não sobrescrevê-los ao salvar).
 
 Também inclui os componentes financeiros usados para estimar a base do lance fixo (custo total do contrato): `taxa_admin_percentual`, `taxa_admin_valor_mensal`, `fundo_reserva_percentual`, `fundo_reserva_valor_mensal` e `taxa_admin_antecipada_valor_total`. O frontend calcula a base = carta + taxa adm + fundo reserva + taxa adm antecipada e aplica o percentual do lance fixo sobre ela (não sobre o `valor_carta` puro). O seguro prestamista NÃO entra nessa base.

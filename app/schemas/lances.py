@@ -201,11 +201,21 @@ class LanceCartaListItem(BaseModel):
     debug_fixo: Optional[str] = None
 
 
+class LanceOperacaoOverview(BaseModel):
+    pendentes: int
+    planejados: int
+    baixados: int
+    sem_lance: int
+    contempladas: int
+    total: int
+
+
 class LanceCartaListResponse(BaseModel):
     items: list[LanceCartaListItem]
     page: int
     page_size: int
     total: int
+    overview: LanceOperacaoOverview
 
 
 class LancesCartaDetalheOut(BaseModel):

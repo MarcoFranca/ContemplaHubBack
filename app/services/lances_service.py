@@ -10,6 +10,7 @@ from decimal import Decimal
 from math import isclose
 from app.schemas.lances import AtualizarCartaPayload
 from app.services.cota_finance_service import normalize_cota_financial_payload
+from app.services.lances_overview import build_operacao_overview
 
 from app.security.auth import CurrentProfile
 
@@ -686,7 +687,41 @@ def list_cartas_operacao(
 ) -> dict[str, Any]:
     competencia = normalize_competencia(competencia)
 
-    query = (
+    search_filter: str | None = None
+    if q:
+        q_safe = q.replace(",", "").replace("(", "").replace(")", "").strip()
+        or_filters = [f"numero_cota.ilike.%{q_safe}%", f"grupo_codigo.ilike.%{q_safe}%"]
+
+        leads_resp = (
+            sb.table("leads")
+            .select("id")
+            .eq("org_id", profile.org_id)
+            .ilike("nome", f"%{q_safe}%")
+            .execute()
+        )
+        lead_ids = [row["id"] for row in (getattr(leads_resp, "data", None) or [])]
+        if lead_ids:
+            or_filters.append(f"lead_id.in.({','.join(lead_ids)})")
+
+        search_filter = ",".join(or_filters)
+
+    def apply_filters(query: Any) -> Any:
+        query = query.eq("org_id", profile.org_id)
+
+        if status_cota != "all":
+            query = query.eq("status", status_cota)
+        if administradora_id:
+            query = query.eq("administradora_id", administradora_id)
+        if produto:
+            query = query.eq("produto", produto)
+        if somente_autorizadas:
+            query = query.eq("autorizacao_gestao", True)
+        if search_filter:
+            query = query.or_(search_filter)
+
+        return query
+
+    query = apply_filters(
         sb.table("cotas")
         .select("""
             id,
@@ -728,39 +763,7 @@ def list_cartas_operacao(
             leads ( id, nome ),
             administradoras ( id, nome )
         """, count="exact")
-        .eq("org_id", profile.org_id)
     )
-
-    if status_cota != "all":
-        query = query.eq("status", status_cota)
-
-    if administradora_id:
-        query = query.eq("administradora_id", administradora_id)
-
-    if produto:
-        query = query.eq("produto", produto)
-
-    if somente_autorizadas:
-        query = query.eq("autorizacao_gestao", True)
-
-    # busca pelo número da cota, grupo ou nome do cliente
-    if q:
-        q_safe = q.replace(",", "").replace("(", "").replace(")", "").strip()
-
-        or_filters = [f"numero_cota.ilike.%{q_safe}%", f"grupo_codigo.ilike.%{q_safe}%"]
-
-        leads_resp = (
-            sb.table("leads")
-            .select("id")
-            .eq("org_id", profile.org_id)
-            .ilike("nome", f"%{q_safe}%")
-            .execute()
-        )
-        lead_ids = [row["id"] for row in (getattr(leads_resp, "data", None) or [])]
-        if lead_ids:
-            or_filters.append(f"lead_id.in.({','.join(lead_ids)})")
-
-        query = query.or_(",".join(or_filters))
 
     start = (page - 1) * page_size
     end = start + page_size - 1
@@ -768,6 +771,37 @@ def list_cartas_operacao(
     resp = query.order("created_at", desc=True).range(start, end).execute()
     rows = getattr(resp, "data", None) or []
     total = getattr(resp, "count", None) or len(rows)
+
+    overview_cotas: list[dict[str, Any]] = []
+    overview_batch_size = 500
+    for overview_start in range(0, total, overview_batch_size):
+        overview_resp = (
+            apply_filters(sb.table("cotas").select("id,status"))
+            .order("created_at", desc=True)
+            .range(overview_start, overview_start + overview_batch_size - 1)
+            .execute()
+        )
+        overview_batch = getattr(overview_resp, "data", None) or []
+        overview_cotas.extend(overview_batch)
+        if len(overview_batch) < overview_batch_size:
+            break
+
+    controles: list[dict[str, Any]] = []
+    cota_ids = [str(cota["id"]) for cota in overview_cotas]
+    controle_batch_size = 200
+    for controle_start in range(0, len(cota_ids), controle_batch_size):
+        controle_ids = cota_ids[controle_start:controle_start + controle_batch_size]
+        controle_resp = (
+            sb.table("cota_lance_competencias")
+            .select("cota_id,status_mes")
+            .eq("org_id", profile.org_id)
+            .eq("competencia", competencia.isoformat())
+            .in_("cota_id", controle_ids)
+            .execute()
+        )
+        controles.extend(getattr(controle_resp, "data", None) or [])
+
+    overview = build_operacao_overview(overview_cotas, controles)
 
     items: list[dict[str, Any]] = []
     for cota in rows:
@@ -839,6 +873,7 @@ def list_cartas_operacao(
         "page": page,
         "page_size": page_size,
         "total": total,
+        "overview": overview,
     }
 
 
