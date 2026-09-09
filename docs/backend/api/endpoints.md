@@ -1284,6 +1284,11 @@ Atualiza resultado do lance.
 
 ### `POST /lances/cartas/{cota_id}/contemplar`
 
+Registra a contemplação, atualiza a cota para `contemplada` e marca o controle da
+competência. A operação é idempotente: se já houver contemplação, a chamada reutiliza
+o registro existente e repara o status/controle mensal, evitando estados parciais em
+tentativas repetidas.
+
 Marca contemplacao.
 
 ### `POST /lances/cartas/{cota_id}/cancelar`

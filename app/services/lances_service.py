@@ -1087,11 +1087,29 @@ def contemplar_cota(
     competencia: date,
 ) -> dict[str, Any]:
     cota = get_cota_or_404(sb=sb, org_id=profile.org_id, cota_id=cota_id)
-    ensure_cota_ativa(cota)
-
     existing = get_contemplacao(sb=sb, org_id=profile.org_id, cota_id=cota_id)
     if existing:
-        raise HTTPException(409, "Esta cota já possui contemplação registrada")
+        existing_data = date.fromisoformat(str(existing["data"]))
+        (
+            sb.table("cotas")
+            .update({"status": "contemplada"})
+            .eq("org_id", profile.org_id)
+            .eq("id", cota_id)
+            .execute()
+        )
+        upsert_controle_mensal(
+            sb=sb,
+            profile=profile,
+            cota_id=cota_id,
+            competencia=competencia,
+            status_mes="contemplada",
+            observacoes="Cota contemplada",
+            assembleia_prevista=existing_data,
+            lance_id=None,
+        )
+        return existing
+
+    ensure_cota_ativa(cota)
 
     resp = (
         sb.table("contemplacoes")
