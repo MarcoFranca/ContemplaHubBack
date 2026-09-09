@@ -768,7 +768,15 @@ def list_cartas_operacao(
     start = (page - 1) * page_size
     end = start + page_size - 1
 
-    resp = query.order("created_at", desc=True).range(start, end).execute()
+    resp = (
+        query
+        .order("administradoras(nome)", nullsfirst=False)
+        .order("leads(nome)", nullsfirst=False)
+        .order("grupo_codigo")
+        .order("numero_cota")
+        .range(start, end)
+        .execute()
+    )
     rows = getattr(resp, "data", None) or []
     total = getattr(resp, "count", None) or len(rows)
 
