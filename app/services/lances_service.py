@@ -15,6 +15,38 @@ from app.services.lances_overview import build_operacao_overview
 from app.security.auth import CurrentProfile
 
 
+def get_parceiro_nomes_por_cota(
+    *, sb: Client, org_id: str, cota_ids: list[str]
+) -> dict[str, list[str]]:
+    if not cota_ids:
+        return {}
+
+    resp = (
+        sb.table("cota_comissao_parceiros")
+        .select("cota_id, parceiros_corretores(nome)")
+        .eq("org_id", org_id)
+        .in_("cota_id", cota_ids)
+        .order("created_at")
+        .execute()
+    )
+
+    nomes_por_cota: dict[str, list[str]] = {}
+    for row in getattr(resp, "data", None) or []:
+        cota_id = str(row.get("cota_id") or "").strip()
+        parceiro = row.get("parceiros_corretores")
+        if isinstance(parceiro, list):
+            parceiro = parceiro[0] if parceiro else None
+        nome = str((parceiro or {}).get("nome") or "").strip()
+        if not cota_id or not nome:
+            continue
+
+        nomes = nomes_por_cota.setdefault(cota_id, [])
+        if nome not in nomes:
+            nomes.append(nome)
+
+    return nomes_por_cota
+
+
 def to_decimal(value) -> Decimal:
     if value is None or value == "":
         return Decimal("0")
@@ -779,6 +811,11 @@ def list_cartas_operacao(
     )
     rows = getattr(resp, "data", None) or []
     total = getattr(resp, "count", None) or len(rows)
+    parceiro_nomes_por_cota = get_parceiro_nomes_por_cota(
+        sb=sb,
+        org_id=profile.org_id,
+        cota_ids=[str(cota["id"]) for cota in rows],
+    )
 
     overview_cotas: list[dict[str, Any]] = []
     overview_batch_size = 500
@@ -839,6 +876,7 @@ def list_cartas_operacao(
             "administradora_id": cota.get("administradora_id"),
             "administradora_nome": (cota.get("administradoras") or {}).get("nome") if cota.get(
                 "administradoras") else None,
+            "parceiro_nomes": parceiro_nomes_por_cota.get(str(cota_id), []),
             "produto": cota["produto"],
             "grupo_codigo": cota["grupo_codigo"],
             "numero_cota": cota["numero_cota"],

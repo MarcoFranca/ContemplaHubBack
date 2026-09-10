@@ -32,6 +32,56 @@ LEAD_SELECT = (
 )
 
 
+def _commission_delete_conflict_detail(
+    *, lancamentos_count: int | None = None, cotas_count: int | None = None
+) -> str:
+    if lancamentos_count is None or cotas_count is None:
+        return (
+            "Não é possível excluir este cliente porque existem lançamentos de "
+            "comissão vinculados às cartas dele. Transfira as cartas para o cadastro "
+            "correto antes de excluir a duplicidade."
+        )
+
+    return (
+        f"Não é possível excluir este cliente: {lancamentos_count} lançamento(s) de "
+        f"comissão estão vinculados a {cotas_count} carta(s). Transfira as cartas para "
+        "o cadastro correto antes de excluir a duplicidade."
+    )
+
+
+def _get_lead_commission_dependencies(
+    *, supa: Client, org_id: str, lead_id: str
+) -> tuple[int, int] | None:
+    cotas_resp = (
+        supa.table("cotas")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("lead_id", lead_id)
+        .execute()
+    )
+    cota_ids = [row["id"] for row in (getattr(cotas_resp, "data", None) or [])]
+    if not cota_ids:
+        return None
+
+    lancamentos_resp = (
+        supa.table("comissao_lancamentos")
+        .select("id,cota_id", count="exact")
+        .eq("org_id", org_id)
+        .in_("cota_id", cota_ids)
+        .execute()
+    )
+    rows = getattr(lancamentos_resp, "data", None) or []
+    lancamentos_count = getattr(lancamentos_resp, "count", None)
+    if lancamentos_count is None:
+        lancamentos_count = len(rows)
+    if lancamentos_count == 0:
+        return None
+
+    cotas_com_comissao = {row.get("cota_id") for row in rows if row.get("cota_id")}
+    cotas_count = len(cotas_com_comissao) or len(cota_ids)
+    return lancamentos_count, cotas_count
+
+
 def _require_org_id(x_org_id: str | None) -> str:
     if not x_org_id:
         raise HTTPException(
@@ -159,6 +209,22 @@ def api_delete_lead(
     x_org_id = _require_org_id(x_org_id)
 
     try:
+        _get_lead_or_404(supa=supa, org_id=x_org_id, lead_id=lead_id)
+        dependencies = _get_lead_commission_dependencies(
+            supa=supa,
+            org_id=x_org_id,
+            lead_id=lead_id,
+        )
+        if dependencies:
+            lancamentos_count, cotas_count = dependencies
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=_commission_delete_conflict_detail(
+                    lancamentos_count=lancamentos_count,
+                    cotas_count=cotas_count,
+                ),
+            )
+
         resp = (
             supa.table("leads")
             .delete()
@@ -183,6 +249,15 @@ def api_delete_lead(
         raise
     except Exception as e:
         print("\n\nERRO ao deletar lead:", repr(e), "\n\n")
+        error_repr = repr(e)
+        if (
+            "23503" in error_repr
+            and "comissao_lancamentos_cota_id_fkey" in error_repr
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=_commission_delete_conflict_detail(),
+            ) from e
         raise HTTPException(
             status_code=500,
             detail="Erro ao deletar lead e registros associados.",

@@ -388,6 +388,14 @@ Headers:
 Resposta:
 
 - `204` sem corpo
+- `404` quando o lead nao pertence a organizacao informada
+- `409` quando alguma carta do cliente possui lancamentos de comissao
+
+Regras:
+
+- a exclusao nunca remove lancamentos financeiros implicitamente;
+- quando houver comissao vinculada, as cartas devem ser transferidas para o cadastro correto antes da exclusao da duplicidade;
+- o bloqueio e validado antes do `DELETE` e a restricao de chave estrangeira permanece como ultima protecao no banco.
 
 ## Meta Lead Ads
 
@@ -1242,7 +1250,11 @@ Resposta paginada:
 Antes da paginação, as cotas são ordenadas por operadora, nome do cliente, grupo e
 número da cota. Portanto, a ordem alfabética permanece contínua entre as páginas.
 
-Cada item (`LanceCartaListItem`) inclui `data_adesao` e `forma_pagamento` (necessários para o formulário "Editar carta" pré-carregar os valores já cadastrados e não sobrescrevê-los ao salvar).
+Cada item (`LanceCartaListItem`) inclui `data_adesao`, `forma_pagamento` e
+`parceiro_nomes`. Este último contém os nomes dos parceiros vinculados à carta em
+`cota_comissao_parceiros`, respeitando o `org_id`, para identificação antes da operação do lance.
+Os campos `data_adesao` e `forma_pagamento` são necessários para o formulário "Editar carta"
+pré-carregar os valores já cadastrados e não sobrescrevê-los ao salvar.
 
 Também inclui os componentes financeiros usados para estimar a base do lance fixo (custo total do contrato): `taxa_admin_percentual`, `taxa_admin_valor_mensal`, `fundo_reserva_percentual`, `fundo_reserva_valor_mensal` e `taxa_admin_antecipada_valor_total`. O frontend calcula a base = carta + taxa adm + fundo reserva + taxa adm antecipada e aplica o percentual do lance fixo sobre ela (não sobre o `valor_carta` puro). O seguro prestamista NÃO entra nessa base.
 

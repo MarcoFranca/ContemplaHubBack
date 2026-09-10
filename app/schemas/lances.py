@@ -172,6 +172,7 @@ class LanceCartaListItem(BaseModel):
     cliente_nome: Optional[str] = None
     administradora_id: Optional[UUID] = None
     administradora_nome: Optional[str] = None
+    parceiro_nomes: list[str] = Field(default_factory=list)
     produto: str
     grupo_codigo: str
     numero_cota: str

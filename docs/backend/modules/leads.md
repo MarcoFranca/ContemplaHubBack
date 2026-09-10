@@ -78,6 +78,17 @@ Regra de negocio importante:
 
 - ao sair de `novo` pela primeira vez, o backend grava `first_contact_at`.
 
+### Exclusao e duplicidades
+
+Entrada por `DELETE /leads/{lead_id}`.
+
+Regras:
+
+- a exclusao e limitada ao `org_id` informado;
+- se alguma cota do cliente possuir registros em `comissao_lancamentos`, a operacao retorna `409`;
+- comissoes nao sao apagadas em cascata, pois representam historico financeiro;
+- para um cadastro duplicado com carta/comissao, a carta deve ser transferida para o cliente correto antes da exclusao do duplicado.
+
 ### Snapshot do kanban
 
 Entrada por `GET /kanban`.

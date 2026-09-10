@@ -89,6 +89,10 @@ Lances registrados podem ser corrigidos por `PATCH /lances/{lance_id}`. A corre�
 preserva o resultado e a competência operacional, revalida a composição financeira e
 sincroniza a data prevista do controle, a contemplação vinculada e o último lance da cota.
 
+Na listagem operacional, cartas com vínculo em `cota_comissao_parceiros` também
+expõem os nomes dos parceiros. Isso permite confirmar a parceria e contatar o parceiro
+antes de registrar o lance.
+
 ### Contemplacao, cancelamento e reativacao
 
 - `POST /lances/cartas/{cota_id}/contemplar`
