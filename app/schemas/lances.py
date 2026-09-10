@@ -97,6 +97,15 @@ class RegistrarLancePayload(BaseModel):
     cota_lance_fixo_opcao_id: Optional[UUID] = None
 
 
+class AtualizarLancePayload(BaseModel):
+    assembleia_data: date
+    tipo: LanceTipo
+    percentual: Optional[Decimal] = Field(default=None, ge=0)
+    valor: Decimal = Field(gt=0)
+    base_calculo: LanceBaseCalculo = "saldo_devedor"
+    pagamento: dict[str, Any]
+
+
 class AtualizarResultadoLancePayload(BaseModel):
     resultado: Literal["pendente", "contemplado", "nao_contemplado", "cancelado", "desconsiderado"]
 

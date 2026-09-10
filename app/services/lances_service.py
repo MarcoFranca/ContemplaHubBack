@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from supabase import Client
 from decimal import Decimal
 from math import isclose
-from app.schemas.lances import AtualizarCartaPayload
+from app.schemas.lances import AtualizarCartaPayload, AtualizarLancePayload
 from app.services.cota_finance_service import normalize_cota_financial_payload
 from app.services.lances_overview import build_operacao_overview
 
@@ -1060,6 +1060,92 @@ def registrar_lance(
     )
 
     return {"lance": lance, "controle_mes": controle}
+
+
+def atualizar_lance(
+    *,
+    sb: Client,
+    profile: CurrentProfile,
+    lance_id: str,
+    payload: AtualizarLancePayload,
+) -> dict[str, Any]:
+    lance_resp = (
+        sb.table("lances")
+        .select("*")
+        .eq("org_id", profile.org_id)
+        .eq("id", lance_id)
+        .limit(1)
+        .execute()
+    )
+    lances = getattr(lance_resp, "data", None) or []
+    if not lances:
+        raise HTTPException(404, "Lance não encontrado")
+
+    lance_atual = lances[0]
+    cota_id = str(lance_atual["cota_id"])
+    cota = get_cota_or_404(sb=sb, org_id=profile.org_id, cota_id=cota_id)
+    pagamento_normalizado = validate_pagamento_composicao(
+        cota=cota,
+        pagamento=payload.pagamento,
+        valor_total_lance=payload.valor,
+    )
+
+    update_payload = {
+        "assembleia_data": payload.assembleia_data.isoformat(),
+        "tipo": payload.tipo,
+        "percentual": to_jsonable(payload.percentual),
+        "valor": to_jsonable(payload.valor),
+        "base_calculo": payload.base_calculo,
+        "pagamento": to_jsonable(pagamento_normalizado),
+    }
+
+    try:
+        update_resp = (
+            sb.table("lances")
+            .update(update_payload)
+            .eq("org_id", profile.org_id)
+            .eq("id", lance_id)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(409, f"Não foi possível corrigir o lance: {str(exc)}")
+
+    updated_rows = getattr(update_resp, "data", None) or []
+    if not updated_rows:
+        raise HTTPException(404, "Lance não encontrado")
+
+    # A competência é o agrupamento operacional original; apenas a data exibida
+    # acompanha a correção para não criar ou sobrescrever outro mês por acidente.
+    (
+        sb.table("cota_lance_competencias")
+        .update({"assembleia_prevista": payload.assembleia_data.isoformat()})
+        .eq("org_id", profile.org_id)
+        .eq("lance_id", lance_id)
+        .execute()
+    )
+
+    if lance_atual.get("resultado") == "contemplado":
+        (
+            sb.table("contemplacoes")
+            .update({
+                "data": payload.assembleia_data.isoformat(),
+                "lance_percentual": to_jsonable(payload.percentual),
+            })
+            .eq("org_id", profile.org_id)
+            .eq("cota_id", cota_id)
+            .execute()
+        )
+
+    ultimo_lance = get_ultimo_lance(sb=sb, org_id=profile.org_id, cota_id=cota_id)
+    (
+        sb.table("cotas")
+        .update({"data_ultimo_lance": ultimo_lance.get("assembleia_data") if ultimo_lance else None})
+        .eq("org_id", profile.org_id)
+        .eq("id", cota_id)
+        .execute()
+    )
+
+    return {"lance": updated_rows[0]}
 
 
 def get_opcoes_lance_fixo(*, sb: Client, org_id: str, cota_id: str) -> list[dict[str, Any]]:

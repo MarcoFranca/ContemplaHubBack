@@ -9,6 +9,7 @@ from app.deps import get_supabase_admin
 from app.services.porto_pdf_parser import parse_porto_pdf
 from app.schemas.lances import (
     AtualizarCartaPayload,
+    AtualizarLancePayload,
     AtualizarResultadoLancePayload,
     CancelarCotaPayload,
     ContemplarCotaPayload,
@@ -22,6 +23,7 @@ from app.schemas.lances import (
 from app.security.auth import CurrentProfile, get_current_profile
 from app.services.lances_service import (
     atualizar_carta,
+    atualizar_lance,
     cancelar_cota,
     contemplar_cota,
     delete_carta_operacao,
@@ -168,6 +170,21 @@ def post_registrar_lance(
         resultado=payload.resultado,
         observacoes_competencia=payload.observacoes_competencia,
         cota_lance_fixo_opcao_id=str(payload.cota_lance_fixo_opcao_id) if payload.cota_lance_fixo_opcao_id else None,
+    )
+
+
+@router.patch("/{lance_id}")
+def patch_atualizar_lance(
+    lance_id: str,
+    payload: AtualizarLancePayload,
+    sb: Client = Depends(get_supabase_admin),
+    profile: CurrentProfile = Depends(get_current_profile),
+):
+    return atualizar_lance(
+        sb=sb,
+        profile=profile,
+        lance_id=lance_id,
+        payload=payload,
     )
 
 

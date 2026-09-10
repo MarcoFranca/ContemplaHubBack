@@ -1278,6 +1278,18 @@ Upsert do controle do mes.
 
 Registra lance.
 
+### `PATCH /lances/{lance_id}`
+
+Corrige um lance já registrado. Recebe `assembleia_data`, `tipo`, `percentual`,
+`valor`, `base_calculo` e `pagamento`. A rota reaplica as regras de composição,
+embutido e FGTS, sempre limita a operação ao `org_id` autenticado e não altera o
+resultado do lance.
+
+A data prevista do controle mensal vinculado acompanha a correção, mas a competência
+operacional original é preservada para evitar sobrescrever outro mês. Se o lance já
+estiver contemplado, data e percentual da contemplação também são sincronizados. Ao
+final, `cotas.data_ultimo_lance` é recalculada a partir do histórico completo.
+
 ### `PATCH /lances/{lance_id}/resultado`
 
 Atualiza resultado do lance.

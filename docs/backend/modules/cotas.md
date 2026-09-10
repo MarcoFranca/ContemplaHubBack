@@ -85,6 +85,10 @@ Permite alterar campos como:
 
 Mantem o estado do mes operacional.
 
+Lances registrados podem ser corrigidos por `PATCH /lances/{lance_id}`. A correção
+preserva o resultado e a competência operacional, revalida a composição financeira e
+sincroniza a data prevista do controle, a contemplação vinculada e o último lance da cota.
+
 ### Contemplacao, cancelamento e reativacao
 
 - `POST /lances/cartas/{cota_id}/contemplar`
