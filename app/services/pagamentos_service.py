@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from supabase import Client
@@ -20,8 +21,10 @@ from app.services.comissao_service import (
     fetch_cota_context,
     fetch_regras,
 )
+from app.services.contract_partner_sync_service import insert_audit_log
 
 MONEY_Q = Decimal("0.01")
+BUSINESS_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 def _safe_rows(resp: Any) -> List[Dict[str, Any]]:
@@ -49,6 +52,143 @@ def _parse_date(value: Any) -> date | None:
     if isinstance(value, date):
         return value
     return date.fromisoformat(str(value)[:10])
+
+
+def _is_baixa_presumida_candidate(row: Dict[str, Any], as_of: date) -> bool:
+    payload = row.get("payload") or {}
+    vencimento = _parse_date(row.get("vencimento"))
+    return (
+        payload.get("source_module") == "financeiro_cronograma_comissao"
+        and (row.get("status") or "").lower() in {"previsto", "emitido"}
+        and vencimento is not None
+        and vencimento <= as_of
+    )
+
+
+def _assert_reabertura_sem_repasse_pago(supa: Client, *, org_id: str, pagamento_id: str) -> None:
+    resp = (
+        supa.table("comissao_lancamentos")
+        .select("id, beneficiario_tipo, repasse_status")
+        .eq("org_id", org_id)
+        .eq("pagamento_id_origem", pagamento_id)
+        .execute()
+    )
+    bloqueado = any(
+        row.get("beneficiario_tipo") == "parceiro" and row.get("repasse_status") == "pago"
+        for row in _safe_rows(resp)
+    )
+    if bloqueado:
+        raise HTTPException(
+            409,
+            "Não é possível reabrir esta parcela porque o repasse do parceiro já foi pago.",
+        )
+
+
+def _liquidar_lancamentos_do_pagamento(
+    supa: Client,
+    *,
+    org_id: str,
+    pagamento_id: str,
+    pago_em: str,
+    actor_id: Optional[str],
+    presumida: bool,
+) -> int:
+    resp = (
+        supa.table("comissao_lancamentos")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("pagamento_id_origem", pagamento_id)
+        .execute()
+    )
+    atualizados = 0
+    for row in _safe_rows(resp):
+        if row.get("status") == "cancelado":
+            continue
+        observacao = (
+            "Comissão recebida por baixa presumida no vencimento."
+            if presumida
+            else "Comissão recebida pela baixa da operação mensal."
+        )
+        payload = {
+            "status": "pago",
+            "pago_em": pago_em,
+            "competencia_real": row.get("competencia_real") or row.get("competencia_prevista"),
+            "observacoes": observacao,
+            "updated_at": _now_iso(),
+        }
+        (
+            supa.table("comissao_lancamentos")
+            .update(payload)
+            .eq("org_id", org_id)
+            .eq("id", row["id"])
+            .execute()
+        )
+        insert_audit_log(
+            supa,
+            org_id=org_id,
+            actor_id=actor_id,
+            entity="comissao_lancamentos",
+            entity_id=row["id"],
+            action="baixa_presumida_comissao" if presumida else "baixa_operacao_mensal_comissao",
+            diff={"antes": {"status": row.get("status")}, "depois": payload},
+        )
+        atualizados += 1
+    return atualizados
+
+
+def _reabrir_lancamentos_do_pagamento(
+    supa: Client,
+    *,
+    org_id: str,
+    pagamento_id: str,
+    pagamento_status: str,
+    actor_id: Optional[str],
+) -> int:
+    resp = (
+        supa.table("comissao_lancamentos")
+        .select("*")
+        .eq("org_id", org_id)
+        .eq("pagamento_id_origem", pagamento_id)
+        .execute()
+    )
+    atualizados = 0
+    target_status = "cancelado" if pagamento_status == "cancelado" else "previsto"
+    for row in _safe_rows(resp):
+        if row.get("status") != "pago":
+            continue
+        observacao = (
+            "INADIMPLENTE: comissão bloqueada para cobrança."
+            if pagamento_status in {"inadimplente", "atrasado"}
+            else "Comissão bloqueada após correção da operação mensal."
+        )
+        payload = {
+            "status": target_status,
+            "pago_em": None,
+            "competencia_real": None,
+            "liberado_por_evento_em": None,
+            "observacoes": observacao,
+            "updated_at": _now_iso(),
+        }
+        if row.get("beneficiario_tipo") == "parceiro":
+            payload["repasse_previsto_em"] = None
+        (
+            supa.table("comissao_lancamentos")
+            .update(payload)
+            .eq("org_id", org_id)
+            .eq("id", row["id"])
+            .execute()
+        )
+        insert_audit_log(
+            supa,
+            org_id=org_id,
+            actor_id=actor_id,
+            entity="comissao_lancamentos",
+            entity_id=row["id"],
+            action="reverter_baixa_operacao_mensal",
+            diff={"antes": {"status": row.get("status")}, "depois": payload},
+        )
+        atualizados += 1
+    return atualizados
 
 
 def _add_months(d: date, months: int) -> date:
@@ -385,7 +525,12 @@ def _enrich_pagamento_rows(
                 "lancamentos_disponiveis": sum(1 for item in lancamentos if item.get("status") == "disponivel"),
                 "lancamentos_pagos": sum(1 for item in lancamentos if item.get("status") == "pago"),
                 "lancamentos_cancelados": sum(1 for item in lancamentos if item.get("status") == "cancelado"),
-                "repasses_pendentes": sum(1 for item in lancamentos if item.get("repasse_status") == "pendente"),
+                "repasses_pendentes": sum(
+                    1
+                    for item in lancamentos
+                    if item.get("repasse_status") == "pendente"
+                    and item.get("status") in {"disponivel", "pago"}
+                ),
             }
         )
     return enriched
@@ -411,6 +556,15 @@ def create_pagamento(
         pagamento_id=pagamento["id"],
         actor_id=actor_id,
     )
+    if pagamento.get("status") == "pago":
+        _liquidar_lancamentos_do_pagamento(
+            supa,
+            org_id=org_id,
+            pagamento_id=pagamento["id"],
+            pago_em=pagamento.get("pago_em") or _now_iso(),
+            actor_id=actor_id,
+            presumida=False,
+        )
 
     enriched = _enrich_pagamento_rows(supa, org_id, [pagamento])
     return {
@@ -430,10 +584,15 @@ def update_pagamento(
 ) -> Dict[str, Any]:
     current = _get_pagamento_or_404(supa, org_id, pagamento_id)
     _get_contract_or_404(supa, org_id, body.contrato_id)
+    if body.status != "pago":
+        _assert_reabertura_sem_repasse_pago(supa, org_id=org_id, pagamento_id=pagamento_id)
+
     payload = _normalize_pagamento_payload(body=body, org_id=org_id)
     payload["payload"] = {
         **(current.get("payload") or {}),
         "source_module": (current.get("payload") or {}).get("source_module", "financeiro_operacional"),
+        "baixa_presumida": False,
+        "baixa_presumida_revogada_em": _now_iso() if body.status != "pago" else None,
         "updated_by_financeiro": actor_id,
         "updated_at_financeiro": _now_iso(),
     }
@@ -455,11 +614,170 @@ def update_pagamento(
         pagamento_id=pagamento_id,
         actor_id=actor_id,
     )
+    if pagamento.get("status") == "pago":
+        _liquidar_lancamentos_do_pagamento(
+            supa,
+            org_id=org_id,
+            pagamento_id=pagamento_id,
+            pago_em=pagamento.get("pago_em") or _now_iso(),
+            actor_id=actor_id,
+            presumida=False,
+        )
+    else:
+        _reabrir_lancamentos_do_pagamento(
+            supa,
+            org_id=org_id,
+            pagamento_id=pagamento_id,
+            pagamento_status=pagamento.get("status") or "previsto",
+            actor_id=actor_id,
+        )
     enriched = _enrich_pagamento_rows(supa, org_id, [pagamento])
     return {
         "ok": True,
         "item": enriched[0] if enriched else pagamento,
         "processamento": processamento,
+    }
+
+
+def atualizar_pagamento_por_lancamento(
+    supa: Client,
+    *,
+    org_id: str,
+    actor_id: str,
+    lancamento_id: str,
+    status: str,
+    observacoes: Optional[str] = None,
+) -> Dict[str, Any]:
+    lanc_resp = (
+        supa.table("comissao_lancamentos")
+        .select("id, pagamento_id_origem")
+        .eq("org_id", org_id)
+        .eq("id", lancamento_id)
+        .limit(1)
+        .execute()
+    )
+    lancamento = _safe_one(lanc_resp)
+    if not lancamento:
+        raise HTTPException(404, "Lançamento de comissão não encontrado")
+    pagamento_id = lancamento.get("pagamento_id_origem")
+    if not pagamento_id:
+        raise HTTPException(409, "Este lançamento não possui uma parcela mensal vinculada")
+
+    current = _get_pagamento_or_404(supa, org_id, pagamento_id)
+    body = PagamentoUpsertIn(
+        contrato_id=current["contrato_id"],
+        tipo=current.get("tipo") or "parcela_mensal",
+        competencia=current["competencia"],
+        valor=current.get("valor") or 0,
+        status=status,
+        vencimento=current.get("vencimento"),
+        origem=current.get("origem") or "manual",
+        observacoes=observacoes if observacoes is not None else current.get("observacoes"),
+    )
+    return update_pagamento(
+        supa,
+        org_id=org_id,
+        actor_id=actor_id,
+        pagamento_id=pagamento_id,
+        body=body,
+    )
+
+
+def processar_baixas_presumidas(
+    supa: Client,
+    *,
+    as_of: Optional[date] = None,
+    org_id: Optional[str] = None,
+    limit: int = 1000,
+) -> Dict[str, Any]:
+    referencia = as_of or datetime.now(BUSINESS_TZ).date()
+    query = (
+        supa.table("pagamentos")
+        .select("*")
+        .eq("tipo", "parcela_mensal")
+        .eq("origem", "manual")
+        .in_("status", ["previsto", "emitido"])
+        .lte("vencimento", referencia.isoformat())
+    )
+    if org_id:
+        query = query.eq("org_id", org_id)
+    resp = query.limit(limit).execute()
+
+    candidatos = [row for row in _safe_rows(resp) if _is_baixa_presumida_candidate(row, referencia)]
+    processados = 0
+    ignorados = 0
+    erros: List[Dict[str, str]] = []
+
+    for row in candidatos:
+        vencimento = _parse_date(row.get("vencimento"))
+        if not vencimento:
+            ignorados += 1
+            continue
+        pago_em = datetime.combine(vencimento, time(hour=12), tzinfo=BUSINESS_TZ).isoformat()
+        source_payload = {
+            **(row.get("payload") or {}),
+            "baixa_presumida": True,
+            "baixa_presumida_em": _now_iso(),
+            "baixa_presumida_referencia": referencia.isoformat(),
+        }
+        try:
+            updated = (
+                supa.table("pagamentos")
+                .update({"status": "pago", "pago_em": pago_em, "payload": source_payload})
+                .eq("id", row["id"])
+                .eq("org_id", row["org_id"])
+                .in_("status", ["previsto", "emitido"])
+                .execute()
+            )
+            pagamento = _safe_one(updated)
+            if not pagamento:
+                ignorados += 1
+                continue
+
+            processar_pagamento_para_comissao(
+                supa,
+                org_id=row["org_id"],
+                pagamento_id=row["id"],
+                actor_id=None,
+            )
+            _liquidar_lancamentos_do_pagamento(
+                supa,
+                org_id=row["org_id"],
+                pagamento_id=row["id"],
+                pago_em=pago_em,
+                actor_id=None,
+                presumida=True,
+            )
+            processados += 1
+        except Exception as exc:  # noqa: BLE001 - uma parcela não pode interromper o lote
+            retry_payload = {
+                **(row.get("payload") or {}),
+                "baixa_presumida": False,
+                "baixa_presumida_erro_em": _now_iso(),
+                "baixa_presumida_erro": str(exc),
+            }
+            (
+                supa.table("pagamentos")
+                .update(
+                    {
+                        "status": row.get("status") or "previsto",
+                        "pago_em": row.get("pago_em"),
+                        "payload": retry_payload,
+                    }
+                )
+                .eq("id", row["id"])
+                .eq("org_id", row["org_id"])
+                .execute()
+            )
+            erros.append({"pagamento_id": str(row.get("id")), "erro": str(exc)})
+
+    return {
+        "ok": not erros,
+        "referencia": referencia.isoformat(),
+        "candidatos": len(candidatos),
+        "processados": processados,
+        "ignorados": ignorados,
+        "erros": erros,
     }
 
 

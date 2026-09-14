@@ -93,6 +93,7 @@ async def print_routes():
 
 
 _wa_logger = logging.getLogger("whatsapp.scheduler")
+_financeiro_logger = logging.getLogger("financeiro.scheduler")
 
 
 async def _whatsapp_dispatch_loop():
@@ -126,6 +127,22 @@ async def _whatsapp_dispatch_loop():
         await asyncio.sleep(max(interval, 15))
 
 
+async def _financeiro_auto_baixa_loop():
+    """Confirma comissões vencidas por presunção e deixa a equipe atuar nas exceções."""
+    from app.services.pagamentos_service import processar_baixas_presumidas
+
+    interval = settings.FINANCEIRO_AUTO_BAIXA_INTERVAL_SEC
+    while True:
+        try:
+            supa = get_supabase_admin()
+            result = await asyncio.to_thread(processar_baixas_presumidas, supa)
+            if result.get("processados") or result.get("erros"):
+                _financeiro_logger.info("financeiro_auto_baixa_tick", extra={"result": result})
+        except Exception as exc:  # noqa: BLE001
+            _financeiro_logger.warning("financeiro_auto_baixa_loop_error", extra={"error": str(exc)})
+        await asyncio.sleep(max(interval, 60))
+
+
 @app.on_event("startup")
 async def start_whatsapp_scheduler():
     if settings.WHATSAPP_DISPATCH_INTERVAL_SEC and settings.WHATSAPP_DISPATCH_INTERVAL_SEC > 0:
@@ -135,8 +152,27 @@ async def start_whatsapp_scheduler():
         print("[whatsapp] agendador embutido desligado (WHATSAPP_DISPATCH_INTERVAL_SEC=0)")
 
 
+@app.on_event("startup")
+async def start_financeiro_scheduler():
+    if settings.FINANCEIRO_AUTO_BAIXA_INTERVAL_SEC > 0:
+        app.state._financeiro_task = asyncio.create_task(_financeiro_auto_baixa_loop())
+        print(
+            "[financeiro] baixa presumida ativa "
+            f"(a cada {settings.FINANCEIRO_AUTO_BAIXA_INTERVAL_SEC}s)"
+        )
+    else:
+        print("[financeiro] baixa presumida desligada (FINANCEIRO_AUTO_BAIXA_INTERVAL_SEC=0)")
+
+
 @app.on_event("shutdown")
 async def stop_whatsapp_scheduler():
     task = getattr(app.state, "_wa_task", None)
+    if task:
+        task.cancel()
+
+
+@app.on_event("shutdown")
+async def stop_financeiro_scheduler():
+    task = getattr(app.state, "_financeiro_task", None)
     if task:
         task.cancel()

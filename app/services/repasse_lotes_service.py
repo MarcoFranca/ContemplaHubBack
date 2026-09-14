@@ -69,7 +69,7 @@ def create_repasse_lote(
     # Busca os lançamentos elegíveis (do parceiro, repasse pendente, na org).
     resp = (
         supa.table("comissao_lancamentos")
-        .select("id, valor_liquido, repasse_status, beneficiario_tipo, parceiro_id")
+        .select("id, valor_liquido, status, repasse_status, beneficiario_tipo, parceiro_id")
         .eq("org_id", org_id)
         .eq("parceiro_id", parceiro_id)
         .eq("beneficiario_tipo", "parceiro")
@@ -77,7 +77,11 @@ def create_repasse_lote(
         .execute()
     )
     rows = _safe_rows(resp)
-    elegiveis = [r for r in rows if r.get("repasse_status") == "pendente"]
+    elegiveis = [
+        r
+        for r in rows
+        if r.get("repasse_status") == "pendente" and r.get("status") in {"disponivel", "pago"}
+    ]
     if not elegiveis:
         raise HTTPException(409, "Nenhum repasse pendente válido na seleção.")
 

@@ -28,6 +28,7 @@ from app.schemas.comissoes import (
 from app.schemas.comissoes import MarcarRepassePagoIn
 from app.services.comissao_repasse_service import marcar_repasse_pago
 from app.services.pagamentos_service import (
+    atualizar_pagamento_por_lancamento,
     desfazer_pulo_por_lancamento,
     pular_competencia_por_lancamento,
 )
@@ -96,6 +97,47 @@ def processar_pagamento_comissao(
         org_id=org_id,
         pagamento_id=pagamento_id,
         actor_id=ctx.user_id,
+    )
+
+
+@router.post("/lancamentos/{lancamento_id}/registrar-inadimplencia")
+def registrar_inadimplencia_lancamento(
+    lancamento_id: str,
+    body: LancamentoStatusUpdateIn,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    if org_id != ctx.org_id:
+        raise HTTPException(403, "Operação cross-org não permitida")
+    return atualizar_pagamento_por_lancamento(
+        supa,
+        org_id=org_id,
+        actor_id=ctx.user_id,
+        lancamento_id=lancamento_id,
+        status="inadimplente",
+        observacoes=body.observacoes,
+    )
+
+
+@router.post("/lancamentos/{lancamento_id}/regularizar")
+def regularizar_lancamento(
+    lancamento_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = require_org_id(x_org_id)
+    if org_id != ctx.org_id:
+        raise HTTPException(403, "Operação cross-org não permitida")
+    return atualizar_pagamento_por_lancamento(
+        supa,
+        org_id=org_id,
+        actor_id=ctx.user_id,
+        lancamento_id=lancamento_id,
+        status="pago",
+        observacoes="Pagamento regularizado na operação mensal.",
     )
 
 

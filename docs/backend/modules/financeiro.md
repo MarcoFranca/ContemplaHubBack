@@ -14,6 +14,7 @@ Responsabilidades atuais:
 - atualizar numero de contrato sem sair do fluxo financeiro;
 - confirmar cronograma operacional de comissao por contrato;
 - persistir parcelas previstas mes a mes em `public.pagamentos`;
+- baixar automaticamente parcelas neutras no vencimento, inclusive historico vencido ainda previsto;
 - permitir excecoes manuais na operacao mensal:
   - pago
   - inadimplente
@@ -62,6 +63,7 @@ Responsabilidades atuais:
 - `POST /financeiro/pagamentos/{pagamento_id}/cancelar-futuro`
 - `GET /financeiro/contratos/{contrato_id}/pagamentos`
 - `GET /financeiro/cotas/{cota_id}/pagamentos`
+- `POST /financeiro/baixas-presumidas/processar`
 
 ## Regras operacionais
 
@@ -77,6 +79,12 @@ Responsabilidades atuais:
   - inadimplencia
   - cancelamento
   - pulo manual de competencia quando o ciclo do cliente precisa ser empurrado para frente;
+- parcelas com `status = previsto|emitido` e vencimento alcancado recebem baixa presumida pelo agendador;
+- `inadimplente`, `atrasado` e `cancelado` nunca sao sobrescritos pela automacao;
+- a baixa mensal quita os lancamentos de empresa e parceiro; o repasse do parceiro permanece pendente ate sua liquidacao especifica;
+- registrar inadimplencia desfaz a baixa da comissao e retira o parceiro da fila elegivel de repasse;
+- uma parcela nao pode ser reaberta depois que o repasse do parceiro foi efetivamente pago;
+- `FINANCEIRO_AUTO_BAIXA_INTERVAL_SEC` controla o agendador embutido (padrao `3600`; `0` desliga);
 - a tela `/app/financeiro/pagamentos` deixou de ser um CRUD puro de parcelas e passou a operar o fluxo:
   - carta/cota vendida
   - configuracao da comissao

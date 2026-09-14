@@ -602,7 +602,7 @@ def summarize_lancamentos(lancamentos: List[Dict[str, Any]]) -> Dict[str, Any]:
             summary["total_bruto_parceiros"] += bruto
             summary["total_liquido_parceiros"] += liquido
             summary["total_impostos_parceiros"] += imposto
-            if item.get("repasse_status") == "pendente":
+            if item.get("repasse_status") == "pendente" and item.get("status") in {"disponivel", "pago"}:
                 summary["repasses_pendentes"] += 1
             elif item.get("repasse_status") == "pago":
                 summary["repasses_pagos"] += 1
@@ -641,7 +641,7 @@ def parceiros_ranking(
     resp = (
         supa.table("comissao_lancamentos")
         .select(
-            "parceiro_id, cota_id, repasse_status, valor_liquido, competencia_prevista,"
+            "parceiro_id, cota_id, status, repasse_status, valor_liquido, competencia_prevista,"
             " parceiros_corretores(nome),"
             " cotas(status, valor_carta, data_adesao)"
         )
@@ -688,7 +688,7 @@ def parceiros_ranking(
             val = _dec(row.get("valor_liquido"))
             if row.get("repasse_status") == "pago":
                 acc["repasse_pago"] += val
-            elif row.get("repasse_status") == "pendente":
+            elif row.get("repasse_status") == "pendente" and row.get("status") in {"disponivel", "pago"}:
                 acc["repasse_pendente"] += val
 
     result: List[Dict[str, Any]] = []

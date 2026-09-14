@@ -49,6 +49,8 @@ def marcar_repasse_pago(
 
     if lanc.get("status") == "cancelado":
         raise HTTPException(400, "Lançamento cancelado não pode ser pago")
+    if lanc.get("status") not in {"disponivel", "pago"}:
+        raise HTTPException(409, "A comissão ainda não foi recebida; o repasse permanece bloqueado")
     if lanc.get("repasse_status") == "pago":
         return {"ok": True, "item": lanc, "already_paid": True}
 

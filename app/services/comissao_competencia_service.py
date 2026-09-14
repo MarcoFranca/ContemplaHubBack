@@ -428,8 +428,10 @@ def _determine_target_status(
     payload = comp.get("payload") or {}
     status_pagamento = payload.get("status_pagamento")
 
-    if status_pagamento in {"cancelado", "inadimplente"}:
+    if status_pagamento == "cancelado":
         return "cancelado"
+    if status_pagamento in {"inadimplente", "atrasado"}:
+        return "previsto"
     if not comp.get("gera_comissao"):
         return "previsto"
     if _rule_requires_assembleia(regra, config) and comp.get("participou_assembleia") is False:

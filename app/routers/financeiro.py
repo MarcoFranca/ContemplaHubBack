@@ -24,6 +24,7 @@ from app.services.pagamentos_service import (
     list_pagamentos_by_cota,
     listar_pulos_contrato,
     pular_competencia_pagamento,
+    processar_baixas_presumidas,
     update_contrato_numero,
     update_pagamento,
 )
@@ -58,6 +59,16 @@ def post_pagamento(
 ):
     org_id = _resolve_org_id(ctx, x_org_id)
     return create_pagamento(supa, org_id=org_id, actor_id=ctx.user_id, body=body)
+
+
+@router.post("/baixas-presumidas/processar")
+def post_processar_baixas_presumidas(
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return processar_baixas_presumidas(supa, org_id=org_id)
 
 
 @router.post("/contratos/{contrato_id}/cronograma", response_model=CronogramaContratoResponse)

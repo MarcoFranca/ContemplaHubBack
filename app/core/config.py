@@ -86,6 +86,12 @@ class Settings(BaseModel):
     FOLLOWUP_QUIET_END_HOUR: int = int(os.getenv("FOLLOWUP_QUIET_END_HOUR", "8"))
     # Com que frequência a varredura roda (mais lenta que o dispatcher da fila).
     FOLLOWUP_SWEEP_INTERVAL_SEC: int = int(os.getenv("FOLLOWUP_SWEEP_INTERVAL_SEC", "300"))
+
+    # Baixa presumida de comissões vencidas. O processamento é idempotente e respeita
+    # atrasos, inadimplências e cancelamentos já registrados.
+    FINANCEIRO_AUTO_BAIXA_INTERVAL_SEC: int = int(
+        os.getenv("FINANCEIRO_AUTO_BAIXA_INTERVAL_SEC", "3600")
+    )
     # Templates aprovados p/ reengajar FORA da janela de 24h/72h. Vazio = não envia fora
     # da janela (só dentro). Cada template aprovado na Meta deve ter 1 variável {{1}} = nome.
     FOLLOWUP_TEMPLATE_NAME: str = os.getenv("FOLLOWUP_TEMPLATE_NAME", "")
