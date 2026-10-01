@@ -633,6 +633,7 @@ def _upsert_lancamento(
     *,
     org_id: str,
     payload: Dict[str, Any],
+    forcar: bool = False,
 ) -> Dict[str, Any]:
     # O lookup precisa seguir a constraint unq_comissao_lancamento_regra_benef
     # (contrato_id, ordem, beneficiario_tipo, parceiro_id), e não competencia_id/regra_id —
@@ -658,7 +659,10 @@ def _upsert_lancamento(
 
     if existing:
         current = existing[0]
-        if current.get("status") == "pago":
+        # Recálculo completo (forcar=True): corrige os valores mesmo de comissões já
+        # recebidas/baixadas. A ÚNICA coisa que nunca é reescrita é o repasse já pago ao
+        # parceiro (dinheiro que já saiu), tratado no bloco seguinte.
+        if current.get("status") == "pago" and not forcar:
             if _payload_diverges(current, payload):
                 insert_audit_log(
                     supa,
@@ -868,6 +872,7 @@ def processar_comissao_competencia(
     org_id: str,
     competencia_id: str,
     actor_id: Optional[str] = None,
+    forcar: bool = False,
 ) -> Dict[str, Any]:
     comp = get_competencia_by_id_or_404(supa, org_id, competencia_id)
     contrato = fetch_contrato_context(supa, org_id, comp["contrato_id"])
@@ -1024,7 +1029,7 @@ def processar_comissao_competencia(
         valor_empresa_bruto=valor_empresa_bruto,
         status=target_status,
     )
-    items.append(_upsert_lancamento(supa, org_id=org_id, payload=empresa_payload))
+    items.append(_upsert_lancamento(supa, org_id=org_id, payload=empresa_payload, forcar=forcar))
 
     for parceiro, valor_bruto, imposto_pct, valor_imposto, valor_liquido in parceiro_rows:
         parceiro_payload = _build_parceiro_lancamento(
@@ -1041,7 +1046,7 @@ def processar_comissao_competencia(
             valor_liquido=valor_liquido,
             status=target_status,
         )
-        items.append(_upsert_lancamento(supa, org_id=org_id, payload=parceiro_payload))
+        items.append(_upsert_lancamento(supa, org_id=org_id, payload=parceiro_payload, forcar=forcar))
 
     if target_status != "disponivel":
         items = _cancel_or_block_existing_lancamentos(
@@ -1158,6 +1163,7 @@ def reprocessar_comissoes_contrato(
     org_id: str,
     contrato_id: str,
     actor_id: Optional[str] = None,
+    forcar: bool = False,
 ) -> Dict[str, Any]:
     contrato = fetch_contrato_context(supa, org_id, contrato_id)
 
@@ -1177,6 +1183,7 @@ def reprocessar_comissoes_contrato(
             org_id=org_id,
             competencia_id=comp["id"],
             actor_id=actor_id,
+            forcar=forcar,
         )
         processadas.append(
             {

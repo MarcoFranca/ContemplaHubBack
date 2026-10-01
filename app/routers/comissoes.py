@@ -176,16 +176,21 @@ def despular_competencia_lancamento(
 @router.post("/contratos/{contrato_id}/reprocessar-competencias")
 def reprocessar_competencias_contrato(
     contrato_id: str,
+    forcar: bool = False,
     supa: Client = Depends(get_supabase_admin),
     ctx: AuthContext = Depends(require_manager),
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
 ):
+    # forcar=True: recálculo completo — corrige valores inclusive de comissões já
+    # recebidas/baixadas (ex.: ajuste do percentual de repasse). Preserva apenas
+    # repasses já efetivamente pagos ao parceiro.
     org_id = require_org_id(x_org_id)
     return reprocessar_comissoes_contrato(
         supa,
         org_id=org_id,
         contrato_id=contrato_id,
         actor_id=ctx.user_id,
+        forcar=forcar,
     )
 
 
