@@ -1198,10 +1198,44 @@ def pular_competencia_pagamento(
     # já em andamento, os meses anteriores entram como "pago" automaticamente e o usuário
     # pode precisar registrar um pulo mesmo assim. forcar=True libera esse caso; o
     # cronograma é regerado e os valores se ajustam.
-    if not forcar and (pagamento.get("status") or "").lower() == "pago":
+    ja_paga = (pagamento.get("status") or "").lower() == "pago"
+    if ja_paga and not forcar:
         raise HTTPException(
             409,
             "Não é possível pular uma competência já paga. Reverta a baixa antes de pular.",
+        )
+
+    # Pulo forçado de competência paga (ex.: carta cadastrada já em andamento): reabre a
+    # baixa dessa competência ANTES de pular, para que a regeração não ancore a parcela
+    # e o deslocamento (+1 mês) seja aplicado de verdade. Reusa as proteções existentes:
+    # se houver repasse já pago ao parceiro nessa competência, a reabertura é bloqueada.
+    if ja_paga and forcar:
+        _assert_reabertura_sem_repasse_pago(supa, org_id=org_id, pagamento_id=pagamento_id)
+        (
+            supa.table("pagamentos")
+            .update(
+                {
+                    "status": "previsto",
+                    "pago_em": None,
+                    "payload": {
+                        **(pagamento.get("payload") or {}),
+                        "baixa_presumida": False,
+                        "baixa_presumida_revogada_em": _now_iso(),
+                        "updated_by_financeiro": actor_id,
+                        "updated_at_financeiro": _now_iso(),
+                    },
+                }
+            )
+            .eq("org_id", org_id)
+            .eq("id", pagamento_id)
+            .execute()
+        )
+        _reabrir_lancamentos_do_pagamento(
+            supa,
+            org_id=org_id,
+            pagamento_id=pagamento_id,
+            pagamento_status="previsto",
+            actor_id=actor_id,
         )
 
     # Registra a decisão de pulo (idempotente) e regenera o cronograma a partir das
