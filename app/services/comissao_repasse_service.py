@@ -105,3 +105,51 @@ def marcar_repasse_pago(
         "ok": True,
         "item": result,
     }
+
+
+def reverter_repasse_pago(
+    supa: Client,
+    *,
+    org_id: str,
+    lancamento_id: str,
+    actor_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Desfaz um repasse marcado como pago por engano: volta para pendente e devolve a
+    comissão para 'disponivel' (recebida, a repassar). Permite depois pular o mês/corrigir."""
+    lanc = get_lancamento_or_404(supa, org_id=org_id, lancamento_id=lancamento_id)
+
+    if lanc.get("beneficiario_tipo") != "parceiro":
+        raise HTTPException(400, "Somente lançamento de parceiro tem repasse")
+    if lanc.get("repasse_status") != "pago":
+        return {"ok": True, "item": lanc, "already": True}
+
+    payload: Dict[str, Any] = {
+        "repasse_status": "pendente",
+        "repasse_pago_em": None,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    # Pagar o repasse havia quitado a comissão; ao desfazer, volta para 'disponivel'.
+    if lanc.get("status") == "pago":
+        payload["status"] = "disponivel"
+
+    updated = (
+        supa.table("comissao_lancamentos")
+        .update(payload)
+        .eq("org_id", org_id)
+        .eq("id", lancamento_id)
+        .execute()
+    )
+    rows = getattr(updated, "data", None) or []
+    result = rows[0] if rows else {**lanc, **payload}
+
+    insert_audit_log(
+        supa,
+        org_id=org_id,
+        actor_id=actor_id,
+        entity="comissao_lancamentos",
+        entity_id=lancamento_id,
+        action="reverter_repasse_pago",
+        diff={"antes": {"repasse_status": "pago"}, "depois": {"repasse_status": "pendente"}},
+    )
+
+    return {"ok": True, "item": result}

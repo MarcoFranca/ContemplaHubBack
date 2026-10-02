@@ -26,7 +26,7 @@ from app.schemas.comissoes import (
 )
 
 from app.schemas.comissoes import MarcarRepassePagoIn
-from app.services.comissao_repasse_service import marcar_repasse_pago
+from app.services.comissao_repasse_service import marcar_repasse_pago, reverter_repasse_pago
 from app.services.pagamentos_service import (
     atualizar_pagamento_por_lancamento,
     desfazer_pulo_por_lancamento,
@@ -748,6 +748,23 @@ def post_marcar_repasse_pago(
         pago_em=body.pago_em,
         observacoes=body.observacoes,
         forcar=body.forcar,
+    )
+
+
+@router.post("/lancamentos/{lancamento_id}/reverter-repasse")
+def post_reverter_repasse(
+    lancamento_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    # Desfaz um repasse pago por engano (volta para pendente).
+    org_id = require_org_id(x_org_id)
+    return reverter_repasse_pago(
+        supa,
+        org_id=org_id,
+        lancamento_id=lancamento_id,
+        actor_id=ctx.user_id,
     )
 
 
