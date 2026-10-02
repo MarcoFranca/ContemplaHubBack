@@ -1196,49 +1196,44 @@ def refazer_cronograma_do_zero(
     """
     contrato = fetch_contrato_context(supa, org_id, contrato_id)
 
-    # 1) Reabre todas as parcelas do cronograma marcadas como pagas.
+    # Zera de verdade: EXCLUI todos os lançamentos de comissão e as parcelas do cronograma
+    # deste contrato (inclusive os marcados como pagos), sem deixar nada cancelado para trás.
+    # As FKs que apontam para essas tabelas são ON DELETE SET NULL, então a exclusão é segura.
+    lancs_resp = (
+        supa.table("comissao_lancamentos")
+        .select("id")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .execute()
+    )
+    lanc_excluidos = len(_safe_rows(lancs_resp))
     (
+        supa.table("comissao_lancamentos")
+        .delete()
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .execute()
+    )
+
+    pags_resp = (
         supa.table("pagamentos")
-        .update({"status": "previsto", "pago_em": None})
+        .select("id")
         .eq("org_id", org_id)
         .eq("contrato_id", contrato_id)
         .eq("tipo", "parcela_mensal")
-        .eq("status", "pago")
         .execute()
     )
-
-    # 2) Zera os lançamentos de comissão do contrato (desfaz baixa E repasse, inclusive pagos).
-    lancs_resp = (
-        supa.table("comissao_lancamentos")
-        .select("id, beneficiario_tipo")
+    pag_excluidos = len(_safe_rows(pags_resp))
+    (
+        supa.table("pagamentos")
+        .delete()
         .eq("org_id", org_id)
         .eq("contrato_id", contrato_id)
+        .eq("tipo", "parcela_mensal")
         .execute()
     )
-    lanc_reset = 0
-    for row in _safe_rows(lancs_resp):
-        payload: Dict[str, Any] = {
-            "status": "previsto",
-            "pago_em": None,
-            "competencia_real": None,
-            "liberado_por_evento_em": None,
-            "observacoes": None,
-            "updated_at": _now_iso(),
-        }
-        if row.get("beneficiario_tipo") == "parceiro":
-            payload["repasse_status"] = "pendente"
-            payload["repasse_pago_em"] = None
-            payload["repasse_previsto_em"] = None
-        (
-            supa.table("comissao_lancamentos")
-            .update(payload)
-            .eq("org_id", org_id)
-            .eq("id", row["id"])
-            .execute()
-        )
-        lanc_reset += 1
 
-    # 3) Regenera o cronograma pela regra atual (cancela parcelas excedentes da regra antiga).
+    # Reconstrói o cronograma do zero pela regra atual da cota (ex.: 10x).
     resultado = gerar_cronograma_pagamentos_contrato(
         supa,
         org_id=org_id,
@@ -1253,14 +1248,19 @@ def refazer_cronograma_do_zero(
         entity="contratos",
         entity_id=contrato_id,
         action="refazer_cronograma_do_zero",
-        diff={"lancamentos_resetados": lanc_reset, "resultado": resultado},
+        diff={
+            "lancamentos_excluidos": lanc_excluidos,
+            "pagamentos_excluidos": pag_excluidos,
+            "resultado": resultado,
+        },
     )
 
     return {
         "ok": True,
         "contrato_id": contrato_id,
-        "lancamentos_resetados": lanc_reset,
-        "message": "Cronograma refeito do zero. Reveja as baixas e repasses.",
+        "lancamentos_excluidos": lanc_excluidos,
+        "pagamentos_excluidos": pag_excluidos,
+        "message": "Cronograma excluído e refeito do zero.",
     }
 
 

@@ -761,18 +761,36 @@ def _reconcile_regras_for_config(
 
     regras_obsoletas = [row for row in existing_regras if int(row["ordem"]) not in payload_ordens]
 
-    # Preserva o histórico financeiro: regras que já geraram lançamentos NÃO são removidas
-    # (mantidas silenciosamente para não afetar o que já foi lançado/pago). Só removemos
-    # regras obsoletas que ainda não foram usadas em nenhum lançamento. Isso permite o
-    # "Reprocessar cronograma" mesmo quando todas as regras já têm lançamentos.
+    # Regra obsoleta (ex.: reduziu de 12x para 10x): apaga a regra e os lançamentos dela,
+    # PERMITINDO a redução do número de parcelas. Proteção: se algum lançamento dessa regra
+    # tiver repasse JÁ PAGO ao parceiro (dinheiro que saiu), a regra é mantida.
     for row in regras_obsoletas:
-        if int(row.get("_usage_count", 0)) > 0:
-            continue
+        regra_id = row["id"]
+        lancs_resp = (
+            supa.table("comissao_lancamentos")
+            .select("id, repasse_status")
+            .eq("org_id", org_id)
+            .eq("regra_id", regra_id)
+            .execute()
+        )
+        lancs = getattr(lancs_resp, "data", None) or []
+        tem_repasse_pago = any((l.get("repasse_status") == "pago") for l in lancs)
+        if tem_repasse_pago:
+            continue  # mantém: não é possível desfazer repasse já pago
+
+        if lancs:
+            (
+                supa.table("comissao_lancamentos")
+                .delete()
+                .eq("org_id", org_id)
+                .eq("regra_id", regra_id)
+                .execute()
+            )
         (
             supa.table("cota_comissao_regras")
             .delete()
             .eq("org_id", org_id)
-            .eq("id", row["id"])
+            .eq("id", regra_id)
             .execute()
         )
 
