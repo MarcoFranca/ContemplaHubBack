@@ -1209,34 +1209,55 @@ def pular_competencia_pagamento(
     # baixa dessa competência ANTES de pular, para que a regeração não ancore a parcela
     # e o deslocamento (+1 mês) seja aplicado de verdade. Reusa as proteções existentes:
     # se houver repasse já pago ao parceiro nessa competência, a reabertura é bloqueada.
-    if ja_paga and forcar:
-        _assert_reabertura_sem_repasse_pago(supa, org_id=org_id, pagamento_id=pagamento_id)
-        (
+    if forcar:
+        # Reabre TODAS as parcelas pagas a partir da competência pulada (inclusive ela),
+        # para que a regeração desloque todas. Sem isso, as parcelas pagas seguintes ficam
+        # ancoradas e não empurram. Parcelas com repasse já pago ao parceiro bloqueiam a
+        # operação (dinheiro que já saiu não é desfeito).
+        pagos_resp = (
             supa.table("pagamentos")
-            .update(
-                {
-                    "status": "previsto",
-                    "pago_em": None,
-                    "payload": {
-                        **(pagamento.get("payload") or {}),
-                        "baixa_presumida": False,
-                        "baixa_presumida_revogada_em": _now_iso(),
-                        "updated_by_financeiro": actor_id,
-                        "updated_at_financeiro": _now_iso(),
-                    },
-                }
-            )
+            .select("*")
             .eq("org_id", org_id)
-            .eq("id", pagamento_id)
+            .eq("contrato_id", contrato_id)
+            .eq("tipo", "parcela_mensal")
+            .eq("status", "pago")
             .execute()
         )
-        _reabrir_lancamentos_do_pagamento(
-            supa,
-            org_id=org_id,
-            pagamento_id=pagamento_id,
-            pagamento_status="previsto",
-            actor_id=actor_id,
-        )
+        alvos = [
+            pag
+            for pag in _safe_rows(pagos_resp)
+            if (_parse_date(pag.get("competencia")) or date.max) >= competencia_base
+        ]
+        # valida tudo antes de mexer (não deixa estado parcial)
+        for pag in alvos:
+            _assert_reabertura_sem_repasse_pago(supa, org_id=org_id, pagamento_id=pag["id"])
+        for pag in alvos:
+            (
+                supa.table("pagamentos")
+                .update(
+                    {
+                        "status": "previsto",
+                        "pago_em": None,
+                        "payload": {
+                            **(pag.get("payload") or {}),
+                            "baixa_presumida": False,
+                            "baixa_presumida_revogada_em": _now_iso(),
+                            "updated_by_financeiro": actor_id,
+                            "updated_at_financeiro": _now_iso(),
+                        },
+                    }
+                )
+                .eq("org_id", org_id)
+                .eq("id", pag["id"])
+                .execute()
+            )
+            _reabrir_lancamentos_do_pagamento(
+                supa,
+                org_id=org_id,
+                pagamento_id=pag["id"],
+                pagamento_status="previsto",
+                actor_id=actor_id,
+            )
 
     # Registra a decisão de pulo (idempotente) e regenera o cronograma a partir das
     # regras + pulos. Assim o pulo sobrevive a reprocessos e fica auditável.
