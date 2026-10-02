@@ -1180,6 +1180,90 @@ def gerar_cronograma_pagamentos_contrato(
     }
 
 
+def refazer_cronograma_do_zero(
+    supa: Client,
+    *,
+    org_id: str,
+    contrato_id: str,
+    actor_id: str,
+) -> Dict[str, Any]:
+    """Operação destrutiva: DESFAZ todas as baixas e repasses (inclusive os marcados como
+    pagos por engano) e RECONSTRÓI o cronograma pela regra atual da cota.
+
+    Uso: correção de erro grave (ex.: regra estava 12x mas era 10x e as parcelas foram
+    baixadas/repassadas sem querer). Reabre tudo e regera; as parcelas excedentes da regra
+    antiga são canceladas pela própria regeração.
+    """
+    contrato = fetch_contrato_context(supa, org_id, contrato_id)
+
+    # 1) Reabre todas as parcelas do cronograma marcadas como pagas.
+    (
+        supa.table("pagamentos")
+        .update({"status": "previsto", "pago_em": None})
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .eq("tipo", "parcela_mensal")
+        .eq("status", "pago")
+        .execute()
+    )
+
+    # 2) Zera os lançamentos de comissão do contrato (desfaz baixa E repasse, inclusive pagos).
+    lancs_resp = (
+        supa.table("comissao_lancamentos")
+        .select("id, beneficiario_tipo")
+        .eq("org_id", org_id)
+        .eq("contrato_id", contrato_id)
+        .execute()
+    )
+    lanc_reset = 0
+    for row in _safe_rows(lancs_resp):
+        payload: Dict[str, Any] = {
+            "status": "previsto",
+            "pago_em": None,
+            "competencia_real": None,
+            "liberado_por_evento_em": None,
+            "observacoes": None,
+            "updated_at": _now_iso(),
+        }
+        if row.get("beneficiario_tipo") == "parceiro":
+            payload["repasse_status"] = "pendente"
+            payload["repasse_pago_em"] = None
+            payload["repasse_previsto_em"] = None
+        (
+            supa.table("comissao_lancamentos")
+            .update(payload)
+            .eq("org_id", org_id)
+            .eq("id", row["id"])
+            .execute()
+        )
+        lanc_reset += 1
+
+    # 3) Regenera o cronograma pela regra atual (cancela parcelas excedentes da regra antiga).
+    resultado = gerar_cronograma_pagamentos_contrato(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        actor_id=actor_id,
+    )
+
+    insert_audit_log(
+        supa,
+        org_id=org_id,
+        actor_id=actor_id,
+        entity="contratos",
+        entity_id=contrato_id,
+        action="refazer_cronograma_do_zero",
+        diff={"lancamentos_resetados": lanc_reset, "resultado": resultado},
+    )
+
+    return {
+        "ok": True,
+        "contrato_id": contrato_id,
+        "lancamentos_resetados": lanc_reset,
+        "message": "Cronograma refeito do zero. Reveja as baixas e repasses.",
+    }
+
+
 def pular_competencia_pagamento(
     supa: Client,
     *,

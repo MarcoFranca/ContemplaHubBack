@@ -24,6 +24,7 @@ from app.services.pagamentos_service import (
     list_pagamentos_by_cota,
     listar_pulos_contrato,
     pular_competencia_pagamento,
+    refazer_cronograma_do_zero,
     processar_baixas_presumidas,
     update_contrato_numero,
     update_pagamento,
@@ -80,6 +81,23 @@ def post_cronograma_contrato(
 ):
     org_id = _resolve_org_id(ctx, x_org_id)
     return gerar_cronograma_pagamentos_contrato(
+        supa,
+        org_id=org_id,
+        contrato_id=contrato_id,
+        actor_id=ctx.user_id,
+    )
+
+
+@router.post("/contratos/{contrato_id}/refazer-do-zero")
+def post_refazer_cronograma_do_zero(
+    contrato_id: str,
+    supa: Client = Depends(get_supabase_admin),
+    ctx: AuthContext = Depends(require_manager),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+):
+    # DESTRUTIVO: desfaz todas as baixas/repasses (inclusive pagos) e reconstrói o cronograma.
+    org_id = _resolve_org_id(ctx, x_org_id)
+    return refazer_cronograma_do_zero(
         supa,
         org_id=org_id,
         contrato_id=contrato_id,
