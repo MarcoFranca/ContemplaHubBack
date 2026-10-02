@@ -41,6 +41,7 @@ def marcar_repasse_pago(
     actor_id: Optional[str] = None,
     pago_em: Optional[str] = None,
     observacoes: Optional[str] = None,
+    forcar: bool = False,
 ) -> Dict[str, Any]:
     lanc = get_lancamento_or_404(supa, org_id=org_id, lancamento_id=lancamento_id)
 
@@ -49,7 +50,10 @@ def marcar_repasse_pago(
 
     if lanc.get("status") == "cancelado":
         raise HTTPException(400, "Lançamento cancelado não pode ser pago")
-    if lanc.get("status") not in {"disponivel", "pago"}:
+    # Normalmente o repasse só é liberado após a comissão ser recebida. Com forcar=True
+    # (fluxo do parceiro, onde o cliente conta como pago por padrão), paga mesmo assim e
+    # quita a comissão junto (ver abaixo).
+    if not forcar and lanc.get("status") not in {"disponivel", "pago"}:
         raise HTTPException(409, "A comissão ainda não foi recebida; o repasse permanece bloqueado")
     if lanc.get("repasse_status") == "pago":
         return {"ok": True, "item": lanc, "already_paid": True}

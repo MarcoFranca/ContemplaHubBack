@@ -229,6 +229,9 @@ class ComissaoListFilters(BaseModel):
 class MarcarRepassePagoIn(BaseModel):
     pago_em: Optional[str] = None
     observacoes: Optional[str] = None
+    # forcar=True libera o repasse mesmo quando a comissão ainda consta como "prevista"
+    # (modelo: cliente conta como pago por padrão). Pagar o repasse quita a comissão junto.
+    forcar: bool = False
 
 
 class MarcarRepassePagoOut(BaseModel):

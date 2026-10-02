@@ -747,6 +747,7 @@ def post_marcar_repasse_pago(
         actor_id=ctx.user_id,
         pago_em=body.pago_em,
         observacoes=body.observacoes,
+        forcar=body.forcar,
     )
 
 
