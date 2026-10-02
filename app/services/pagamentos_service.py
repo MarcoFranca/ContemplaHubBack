@@ -1186,6 +1186,7 @@ def pular_competencia_pagamento(
     org_id: str,
     pagamento_id: str,
     actor_id: str,
+    forcar: bool = False,
 ) -> Dict[str, Any]:
     pagamento = _get_pagamento_or_404(supa, org_id, pagamento_id)
     contrato_id = pagamento.get("contrato_id")
@@ -1193,7 +1194,11 @@ def pular_competencia_pagamento(
     if not contrato_id or not competencia_base:
         raise HTTPException(400, "Pagamento inválido para reprogramação")
 
-    if (pagamento.get("status") or "").lower() == "pago":
+    # Normalmente não se pula uma competência já paga. Mas quando a carta foi cadastrada
+    # já em andamento, os meses anteriores entram como "pago" automaticamente e o usuário
+    # pode precisar registrar um pulo mesmo assim. forcar=True libera esse caso; o
+    # cronograma é regerado e os valores se ajustam.
+    if not forcar and (pagamento.get("status") or "").lower() == "pago":
         raise HTTPException(
             409,
             "Não é possível pular uma competência já paga. Reverta a baixa antes de pular.",

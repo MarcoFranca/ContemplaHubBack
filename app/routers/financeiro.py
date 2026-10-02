@@ -108,16 +108,20 @@ def put_pagamento(
 @router.post("/pagamentos/{pagamento_id}/pular", response_model=PagamentoOperacaoResponse)
 def post_pular_pagamento(
     pagamento_id: str,
+    forcar: bool = False,
     supa: Client = Depends(get_supabase_admin),
     ctx: AuthContext = Depends(require_manager),
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
 ):
+    # forcar=True permite pular competência já marcada como paga (ex.: carta cadastrada
+    # já em andamento, com meses anteriores entrando como pagos automaticamente).
     org_id = _resolve_org_id(ctx, x_org_id)
     return pular_competencia_pagamento(
         supa,
         org_id=org_id,
         pagamento_id=pagamento_id,
         actor_id=ctx.user_id,
+        forcar=forcar,
     )
 
 
